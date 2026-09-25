@@ -1,0 +1,25 @@
+{
+  "source": "developer-v1-rig.glb",
+  "fps": 30,
+  "inPlace": true,
+  "clips": [
+    {
+      "name": "idle",
+      "duration": 3.0,
+      "loop": true,
+      "speed": 0
+    },
+    {
+      "name": "walk",
+      "duration": 1.0,
+      "loop": true,
+      "speed": 0.7
+    },
+    {
+      "name": "run",
+      "duration": 0.6666666666666666,
+      "loop": true,
+      "speed": 2.1315789473684217
+    }
+  ]
+}

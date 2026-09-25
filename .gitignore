@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+*.tsbuildinfo
+__pycache__/
+*.pyc
+*.blend1
+*.blend2
+assets/renders/drafts/
+test-results/
+playwright-report/
+
+# Private reference images and the review sheets built from them stay local.
+assets/reference/
+assets/renders/**/compare-*.png
