@@ -9,19 +9,37 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 REFERENCE = ROOT / 'assets' / 'reference' / 'room' / 'room-reference.jpg'
-CHARACTER = ROOT / 'assets' / 'blender' / 'developer-v4-rig.blend'
+CHARACTER = ROOT / 'assets' / 'blender' / 'developer-v4-interactions.blend'
+# shot: (clip, frame, anchor the character stands at). Seat anchors carry the stand_offset used by the clips.
+SHOTS = {
+    'diorama-empty': None,
+    'diorama': ('idle', 20, 'Spawn'),
+    'diorama-typing': ('typing_chair', 30, 'Anchor_ChairSeat'),
+    'diorama-bed': ('typing_bed', 30, 'Anchor_BedSeat'),
+}
 
 
-def add_character(location, heading, clip='idle', frame=20):
-    with bpy.data.libraries.load(str(CHARACTER), link=False) as (source, target):
-        target.objects = list(source.objects)
-        target.actions = list(source.actions)
-    for obj in target.objects:
-        if obj is not None and obj.type != 'CAMERA' and obj.type != 'LIGHT':
-            bpy.context.scene.collection.objects.link(obj)
+def stand_point(anchor_name):
+    anchor = bpy.data.objects[anchor_name]
+    heading = anchor.matrix_world.to_euler().z
+    location = anchor.matrix_world.translation.copy()
+    offset = anchor.get('stand_offset', 0.0)
+    location.x += math.sin(heading) * offset  # the character faces -Y at heading 0
+    location.y -= math.cos(heading) * offset
+    location.z = 0.0
+    return location, heading
+
+
+def add_character(anchor_name, clip, frame):
+    if 'Developer' not in bpy.data.objects:
+        with bpy.data.libraries.load(str(CHARACTER), link=False) as (source, target):
+            target.objects = list(source.objects)
+            target.actions = list(source.actions)
+        for obj in target.objects:
+            if obj is not None and obj.type not in {'CAMERA', 'LIGHT'}:
+                bpy.context.scene.collection.objects.link(obj)
     root = bpy.data.objects['Developer']
-    root.location = location
-    root.rotation_euler.z = heading
+    root.location, root.rotation_euler.z = stand_point(anchor_name)
     rig = bpy.data.objects['DeveloperRig']
     action = bpy.data.actions[clip]
     rig.animation_data.action = action
@@ -58,7 +76,7 @@ def main():
     parser.add_argument('--replace-generated', action='store_true')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else [])
     output = Path(args.output).resolve()
-    shots = ['diorama-empty', 'diorama']
+    shots = list(SHOTS)
     if any((output / f'{s}.png').exists() for s in shots) and not args.replace_generated:
         raise RuntimeError('Room renders exist. Review them before using --replace-generated.')
     output.mkdir(parents=True, exist_ok=True)
@@ -72,8 +90,9 @@ def main():
     scene.view_settings.view_transform = 'AgX'
     scene.view_settings.look = 'AgX - Medium High Contrast'
     for shot in shots:
-        if shot == 'diorama':
-            add_character((0.75, -0.55, 0.0), math.radians(45))
+        if SHOTS[shot]:
+            clip, frame, anchor_name = SHOTS[shot]
+            add_character(anchor_name, clip, frame)
         path = output / f'{shot}.png'
         scene.render.filepath = str(path)
         bpy.ops.render.render(write_still=True)

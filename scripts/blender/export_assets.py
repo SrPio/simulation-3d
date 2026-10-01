@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--replace-generated', action='store_true')
-    parser.add_argument('--variant', choices=['v1', 'v2', 'v3', 'v4', 'v1-rig', 'v4-rig', 'v1-interactions'], default='v1')
+    parser.add_argument('--variant', choices=['v1', 'v2', 'v3', 'v4', 'v1-rig', 'v4-rig', 'v1-interactions', 'v4-interactions'], default='v1')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else [])
     model = 'developer' if args.variant == 'v1' else f'developer-{args.variant}'
     source = ROOT / 'assets' / 'blender' / f'{model}.blend'
@@ -49,7 +49,7 @@ def main():
     destination.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.export_scene.gltf(filepath=str(destination), export_format='GLB',
                               use_selection=True, export_apply=True, export_yup=True,
-                              export_animations=args.variant in {'v1-rig', 'v4-rig', 'v1-interactions'}, export_extras=True,
+                              export_animations=args.variant in {'v1-rig', 'v4-rig', 'v1-interactions', 'v4-interactions'}, export_extras=True,
                               export_animation_mode='ACTIONS', export_force_sampling=True,
                               export_cameras=False, export_lights=False)
     print(f'Character GLB: {destination} ({destination.stat().st_size} bytes)')

@@ -1,6 +1,6 @@
 import './styles.css';
 import { defaultModelVersion, isModelVersionId, modelVersions, type ModelVersionId, type SceneId } from './core/loadAssets';
-import { CharacterViewer, type AnimationState, type LightPreset, type ViewPreset, type ViewerStatus } from './viewer/CharacterViewer';
+import { CharacterViewer, type AnimationState, type LightPreset, type MovementState, type ViewPreset, type ViewerStatus } from './viewer/CharacterViewer';
 
 const sceneCopy: Record<SceneId, string> = {
   studio: 'Estudio · El personaje sobre la peana para revisar silueta, materiales y animación.',
@@ -100,6 +100,14 @@ app.innerHTML = `
       <div class="viewport-overlay" id="viewer-overlay">
         <div class="overlay-card"><span class="loading-ring" id="loading-ring" aria-hidden="true"></span><h2 id="overlay-title">Cargando modelo</h2><p id="overlay-detail">Preparando el estudio y las proporciones del personaje.</p><button type="button" class="retry-button" id="retry" hidden>Volver a intentar <span aria-hidden="true">↗</span></button></div>
       </div>
+      <section class="room-hud" id="room-hud" aria-label="Movimiento en la habitación" hidden>
+        <p id="hud-hint" role="status" aria-live="polite"></p>
+        <div class="hud-actions">
+          <button type="button" id="hud-help" aria-expanded="false" aria-controls="hud-help-text">Ayuda</button>
+          <button type="button" id="hud-reset">Restablecer posición</button>
+        </div>
+        <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Mantén Shift: correr. Arrastra para girar la cámara: el movimiento sigue la vista. Las teclas no actúan mientras usas un desplegable o un control deslizante.</p>
+      </section>
       <div class="view-caption"><span class="caption-line" aria-hidden="true"></span><span id="view-label">Vista tres cuartos</span><span class="orbit-label">ÓRBITA 360°</span></div>
       <footer class="viewport-footer"><p><span class="interaction-icon" aria-hidden="true">↔</span> Arrastrar para girar <span class="hint-divider">/</span> Scroll para zoom</p><p id="model-stats" aria-label="Estadísticas del modelo">— mallas <span aria-hidden="true">·</span> — triángulos</p></footer>
     </main>
@@ -129,6 +137,23 @@ const animationSpeed = element<HTMLSelectElement>('#animation-speed');
 const animationTimeline = element<HTMLInputElement>('#animation-timeline');
 const animationTime = element<HTMLOutputElement>('#animation-time');
 const stats = element<HTMLParagraphElement>('#model-stats');
+const roomHud = element<HTMLElement>('#room-hud');
+const hudHint = element<HTMLParagraphElement>('#hud-hint');
+const hudHelp = element<HTMLButtonElement>('#hud-help');
+const hudHelpText = element<HTMLParagraphElement>('#hud-help-text');
+const hudReset = element<HTMLButtonElement>('#hud-reset');
+const movementHints: Record<MovementState, string> = {
+  ready: 'W A S D o flechas para caminar · Shift para correr',
+  unavailable: 'Elige V1 Animada o V4 Animada para moverte por la habitación.',
+  seated: 'Está sentado: elige Reposo en Animación para volver a caminar.',
+};
+
+function updateMovement(state: MovementState | null): void {
+  roomHud.hidden = !state;
+  roomHud.dataset.state = state ?? 'none';
+  if (state) hudHint.textContent = movementHints[state];
+  hudReset.disabled = state !== 'ready';
+}
 const viewLabel = element<HTMLSpanElement>('#view-label');
 const wireframe = element<HTMLInputElement>('#wireframe');
 const viewButtons = Array.from(app.querySelectorAll<HTMLButtonElement>('[data-view]'));
@@ -159,9 +184,18 @@ function updateAnimation(state: AnimationState | null): void {
     animationTimeline.setAttribute('aria-valuetext', animationTime.value);
     return;
   }
-  if (state.clips.length !== animationClip.options.length || state.clips.some((clip, index) => animationClip.options[index]?.value !== clip)) {
-    const labels: Record<string, string> = { idle: 'Reposo', walk: 'Caminar', run: 'Correr' };
-    animationClip.replaceChildren(...state.clips.map((clip) => new Option(labels[clip.toLowerCase()] ? `${labels[clip.toLowerCase()]} (${clip})` : clip, clip)));
+  const order = ['idle', 'walk', 'run', ...['chair', 'bed'].flatMap((seat) => ['sit_down', 'seated', 'laptop_draw', 'typing', 'laptop_stow', 'stand_up'].map((action) => `${action}_${seat}`))];
+  const rank = (clip: string) => (order.includes(clip) ? order.indexOf(clip) : order.length);
+  const clips = [...state.clips].sort((a, b) => rank(a) - rank(b));
+  if (clips.length !== animationClip.options.length || clips.some((clip, index) => animationClip.options[index]?.value !== clip)) {
+    const labels: Record<string, string> = {
+      idle: 'Reposo', walk: 'Caminar', run: 'Correr',
+      sit_down_chair: 'Sentarse · silla', seated_chair: 'Sentado · silla', stand_up_chair: 'Levantarse · silla',
+      laptop_draw_chair: 'Abrir portátil · silla', typing_chair: 'Escribir · silla', laptop_stow_chair: 'Guardar portátil · silla',
+      sit_down_bed: 'Sentarse · cama', seated_bed: 'Sentado · cama', stand_up_bed: 'Levantarse · cama',
+      laptop_draw_bed: 'Sacar portátil · cama', typing_bed: 'Escribir · cama', laptop_stow_bed: 'Guardar portátil · cama',
+    };
+    animationClip.replaceChildren(...clips.map((clip) => new Option(labels[clip.toLowerCase()] ? `${labels[clip.toLowerCase()]} (${clip})` : clip, clip)));
   }
   animationClip.value = state.clip;
   animationPlay.textContent = state.playing ? 'Pausar' : 'Reproducir';
@@ -201,6 +235,7 @@ function mount(): void {
   const current = () => !disposed && currentGeneration === generation;
   viewer?.dispose();
   viewer = undefined;
+  updateMovement(null);
   const version = modelVersions[selectedModel];
   for (const button of modelButtons) button.setAttribute('aria-pressed', String(button.dataset.model === selectedModel));
   element<HTMLParagraphElement>('#version-copy').textContent = version.copy;
@@ -226,6 +261,7 @@ function mount(): void {
     },
     orbit: () => { if (current()) setViewSelection(null); },
     animation: (state) => { if (current()) updateAnimation(state); },
+    movement: (state) => { if (current()) updateMovement(state); },
   }, { modelId: selectedModel, view: selectedView, light: selectedLight, wireframe: wireframe.checked, scene: selectedScene });
 }
 
@@ -269,6 +305,11 @@ wireframe.addEventListener('change', () => viewer?.setWireframe(wireframe.checke
 element<HTMLButtonElement>('#zoom-in').addEventListener('click', () => viewer?.zoom(1.15), { signal: listeners.signal });
 element<HTMLButtonElement>('#zoom-out').addEventListener('click', () => viewer?.zoom(1 / 1.15), { signal: listeners.signal });
 retry.addEventListener('click', mount, { signal: listeners.signal });
+hudReset.addEventListener('click', () => viewer?.resetPosition(), { signal: listeners.signal });
+hudHelp.addEventListener('click', () => {
+  hudHelpText.hidden = !hudHelpText.hidden;
+  hudHelp.setAttribute('aria-expanded', String(!hudHelpText.hidden));
+}, { signal: listeners.signal });
 
 function dispose(): void {
   if (disposed) return;

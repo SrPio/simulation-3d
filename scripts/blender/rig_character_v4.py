@@ -23,6 +23,7 @@ CLIPS = {'idle': 90, 'walk': 30, 'run': 20}
 FPS = 30
 WALK_STRIDE, RUN_STRIDE, RUN_STANCE = 0.42, 0.54, 0.38
 FINGERS = [(-0.052, 0.140), (-0.018, 0.155), (0.015, 0.146), (0.045, 0.120)]
+WEB_FACES, WEB_MIN_RATIO = 3500, 0.10
 HEAD_PARTS = ('Head', 'Lips', 'Eye_', 'Eyebrows', 'Moustache', 'Beard', 'Hair', 'Cap')
 
 
@@ -214,6 +215,10 @@ def prepare_meshes(root):
     bpy.ops.object.select_all(action='DESELECT')
     objects = [obj for obj in root.children_recursive if obj.type in {'CURVE', 'MESH'}]
     for obj in objects:
+        if obj.type == 'CURVE':
+            # Laces and stitching read the same at web distance with far fewer segments.
+            obj.data.resolution_u = min(obj.data.resolution_u, 4)
+            obj.data.bevel_resolution = min(obj.data.bevel_resolution, 1)
         obj.select_set(True)
     bpy.context.view_layer.objects.active = objects[0]
     bpy.ops.object.convert(target='MESH')
@@ -221,10 +226,11 @@ def prepare_meshes(root):
     objects = list(bpy.context.selected_objects)
     depsgraph = bpy.context.evaluated_depsgraph_get()
     for obj in objects:
-        # Web-weight copy: the static V4 blend keeps the sculpt-dense meshes.
-        if len(obj.data.polygons) > 6000:
+        # Web-weight copy for the real-time scene (the static V4 blend keeps the sculpt-dense meshes).
+        # Smooth SDF surfaces keep their shading with ~10% of the faces; the budget is per part.
+        if len(obj.data.polygons) > WEB_FACES:
             mod = obj.modifiers.new('Reduce', 'DECIMATE')
-            mod.ratio = max(0.22, 6000 / len(obj.data.polygons))
+            mod.ratio = max(WEB_MIN_RATIO, WEB_FACES / len(obj.data.polygons))
             depsgraph = bpy.context.evaluated_depsgraph_get()
             reduced = bpy.data.meshes.new_from_object(obj.evaluated_get(depsgraph))
             obj.modifiers.clear()

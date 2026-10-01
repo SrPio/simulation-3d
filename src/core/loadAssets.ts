@@ -49,11 +49,11 @@ export const modelVersions = {
   },
   v4rig: {
     label: 'V4 Animada',
-    file: 'models/developer-v4-rig.glb',
-    revision: 'V4 / RIG',
-    status: 'V4 Animada · rig y ciclos',
+    file: 'models/developer-v4-interactions.glb',
+    revision: 'V4 / RIG + ASIENTOS',
+    status: 'V4 Animada · rig, ciclos y asientos',
     stage: 'V4 RIG',
-    copy: 'V4 Animada · Copia con rig de V4: reposo, caminar y correr en el sitio. La V4 estática se conserva sin cambios.',
+    copy: 'V4 Animada · Reposo, caminar y correr, más sentarse, portátil y escribir en silla y cama. En Habitación se coloca en el asiento de cada clip.',
     paused: false,
   },
 } as const;

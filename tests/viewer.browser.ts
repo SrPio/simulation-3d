@@ -14,7 +14,7 @@ const versions = {
   v2: { label: 'V2 Model sheet', file: 'developer-v2.glb', status: 'V2 estudio anterior inacabado', revision: 'V2 / ESTUDIO ANTERIOR', stage: 'V2 CONSERVADA', copy: 'Estudio anterior inacabado' },
   v1rig: { label: 'V1 Animada', file: 'developer-v1-rig.glb', status: 'V1 Animada · Fase 2A', revision: 'V1 / FASE 2A', stage: 'FASE 2A', copy: 'Rig y ciclos en el sitio' },
   v4: { label: 'V4 Pulida', file: 'developer-v4.glb', status: 'V4 pulida · fiel a la referencia', revision: 'V4 / REFERENCIA', stage: 'V4 PULIDA', copy: 'Modelo independiente fiel a las fotos de referencia' },
-  v4rig: { label: 'V4 Animada', file: 'developer-v4-rig.glb', status: 'V4 Animada · rig y ciclos', revision: 'V4 / RIG', stage: 'V4 RIG', copy: 'reposo, caminar y correr en el sitio' },
+  v4rig: { label: 'V4 Animada', file: 'developer-v4-interactions.glb', status: 'V4 Animada · rig, ciclos y asientos', revision: 'V4 / RIG + ASIENTOS', stage: 'V4 RIG', copy: 'sentarse, portátil y escribir' },
 } as const;
 
 async function expectModel(page: Page, version: keyof typeof versions) {
@@ -369,7 +369,9 @@ test('Habitación places the selected character in the isometric diorama and Est
   await expect(page.locator('[data-view="front"]')).toBeEnabled();
   await expect(page.locator('#model-stats')).toContainText('mallas');
   const meshes = Number((await page.locator('#model-stats').textContent())!.split(' ')[0].replace(/\./g, ''));
-  assert.ok(meshes > 150, `Room and character meshes: ${meshes}`);
+  assert.ok(meshes > 20 && meshes < 100, `Room merged by material for fewer draw calls: ${meshes} meshes`);
+  const ratio = Number(await page.locator('#canvas-host').getAttribute('data-pixel-ratio'));
+  assert.ok(ratio >= 1 && ratio <= 1.5, `Pixel ratio capped for fill rate: ${ratio}`);
   const diorama = await frame(page);
   assert.ok(!studio.equals(diorama), 'The diorama must render differently from the studio');
   await page.locator('[data-view="front"]').click();
@@ -384,8 +386,131 @@ test('Habitación places the selected character in the isometric diorama and Est
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-scene', 'studio');
   await expect(page.locator('.orbit-label')).toHaveText('ÓRBITA 360°');
   await expect(page.locator('[data-view="back"]')).toBeEnabled();
-  assert.deepEqual(requests, ['developer.glb', 'developer.glb', 'room.glb', 'developer-v4-rig.glb', 'room.glb', 'developer-v4-rig.glb']);
+  assert.deepEqual(requests, ['developer.glb', 'developer.glb', 'room.glb', 'developer-v4-interactions.glb', 'room.glb', 'developer-v4-interactions.glb']);
   assert.deepEqual(errors, []);
+});
+
+test('in the room, chair and bed clips move V4 to their seat and locomotion returns to the spawn', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+  t.after(() => page.close());
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await ready(page);
+  await page.getByRole('button', { name: 'Habitación', exact: true }).click();
+  await expectModel(page, 'v1');
+  await page.getByRole('button', { name: 'V4 Animada', exact: true }).click();
+  await expectModel(page, 'v4rig');
+  const clip = page.getByLabel('Clip', { exact: true });
+  await expect(page.locator('#animation-clip option')).toHaveCount(15);
+  await expect(page.locator('#animation-clip option').nth(3)).toHaveText('Sentarse · silla (sit_down_chair)');
+  await expect(page.locator('#canvas-host')).toHaveAttribute('data-seat', 'spawn');
+  const frames: Record<string, Buffer> = {};
+  for (const [name, seat] of [['typing_chair', 'chair'], ['typing_bed', 'bed'], ['walk', 'spawn']] as const) {
+    await clip.selectOption(name);
+    await expect(page.locator('#canvas-host')).toHaveAttribute('data-seat', seat);
+    await scrub(page, 400);
+    frames[name] = await frame(page);
+  }
+  assert.ok(!frames.typing_chair.equals(frames.typing_bed) && !frames.typing_bed.equals(frames.walk));
+  await clip.selectOption('typing_chair');
+  await scrub(page, 400);
+  assert.ok(frames.typing_chair.equals(await frame(page)), 'Returning to the chair reproduces the same seated pose and placement');
+  await page.screenshot({ path: new URL('room-typing.png', output).pathname.replace(/^\/([A-Za-z]:)/, '$1'), fullPage: true });
+  assert.deepEqual(errors, []);
+});
+
+async function roomWithV4(page: Page) {
+  await ready(page);
+  await page.getByRole('button', { name: 'Habitación', exact: true }).click();
+  await expectModel(page, 'v1');
+  await page.getByRole('button', { name: 'V4 Animada', exact: true }).click();
+  await expectModel(page, 'v4rig');
+  await expect(page.locator('#room-hud')).toHaveAttribute('data-state', 'ready');
+  await page.locator('#hud-help').focus();
+  await page.locator('#hud-help').blur();
+}
+
+const position = async (page: Page) => (await page.locator('#canvas-host').getAttribute('data-position'))!.split(',').map(Number);
+
+test('in the room WASD walks, Shift runs, releasing stops and Restablecer returns to the spawn', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  t.after(() => page.close());
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await roomWithV4(page);
+  await expect(page.locator('#hud-hint')).toHaveText('W A S D o flechas para caminar · Shift para correr');
+  const spawn = await position(page);
+  await page.keyboard.down('KeyW');
+  await expect(page.locator('#canvas-host')).toHaveAttribute('data-locomotion', 'walk');
+  await expect(page.locator('#animation-clip')).toHaveValue('walk');
+  await page.waitForTimeout(500);
+  const walked = await position(page);
+  assert.ok(Math.hypot(walked[0] - spawn[0], walked[1] - spawn[1]) > 0.1, `W moves the character: ${walked} from ${spawn}`);
+  await page.keyboard.down('Shift');
+  await expect(page.locator('#canvas-host')).toHaveAttribute('data-locomotion', 'run');
+  await expect(page.locator('#animation-clip')).toHaveValue('run');
+  await page.keyboard.up('Shift');
+  await page.keyboard.up('KeyW');
+  await expect(page.locator('#canvas-host')).toHaveAttribute('data-locomotion', 'idle');
+  await expect(page.locator('#animation-clip')).toHaveValue('idle');
+  const rested = await position(page);
+  await page.waitForTimeout(300);
+  assert.deepEqual(await position(page), rested, 'idle stays put');
+  await page.keyboard.down('ArrowLeft');
+  await page.waitForTimeout(400);
+  await page.keyboard.up('ArrowLeft');
+  assert.notDeepEqual(await position(page), rested, 'arrow keys move too');
+  await page.getByRole('button', { name: 'Restablecer posición', exact: true }).click();
+  assert.deepEqual(await position(page), spawn);
+  await expect(page.locator('#canvas-host')).toHaveAttribute('data-locomotion', 'idle');
+  await page.getByRole('button', { name: 'Ayuda', exact: true }).click();
+  await expect(page.locator('#hud-help-text')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Ayuda', exact: true })).toHaveAttribute('aria-expanded', 'true');
+  await page.screenshot({ path: new URL('room-hud.png', output).pathname.replace(/^\/([A-Za-z]:)/, '$1'), fullPage: true });
+  assert.deepEqual(errors, []);
+});
+
+test('movement keys are ignored inside controls and released when the window loses focus', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  t.after(() => page.close());
+  await roomWithV4(page);
+  const start = await position(page);
+  await page.getByLabel('Velocidad de animación', { exact: true }).focus();
+  await page.keyboard.down('KeyW');
+  await page.waitForTimeout(400);
+  await page.keyboard.up('KeyW');
+  assert.deepEqual(await position(page), start, 'keys typed into a select do not walk');
+  await page.locator('#hud-help').focus();
+  await page.keyboard.down('KeyD');
+  await expect(page.locator('#canvas-host')).toHaveAttribute('data-locomotion', 'walk');
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  await expect(page.locator('#canvas-host')).toHaveAttribute('data-locomotion', 'idle');
+  await page.keyboard.up('KeyD');
+});
+
+test('the HUD explains when movement is unavailable: seated, static versions and the studio', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  t.after(() => page.close());
+  await roomWithV4(page);
+  await page.getByLabel('Clip', { exact: true }).selectOption('typing_chair');
+  await expect(page.locator('#room-hud')).toHaveAttribute('data-state', 'seated');
+  await expect(page.locator('#hud-hint')).toContainText('Está sentado');
+  await expect(page.getByRole('button', { name: 'Restablecer posición', exact: true })).toBeDisabled();
+  await page.locator('#hud-help').focus();
+  await page.keyboard.down('KeyW');
+  await page.waitForTimeout(300);
+  await page.keyboard.up('KeyW');
+  await expect(page.locator('#canvas-host')).toHaveAttribute('data-seat', 'chair');
+  await expect(page.locator('#animation-clip')).toHaveValue('typing_chair');
+  await page.getByLabel('Clip', { exact: true }).selectOption('idle');
+  await expect(page.locator('#room-hud')).toHaveAttribute('data-state', 'ready');
+  await page.getByRole('button', { name: 'V4 Pulida', exact: true }).click();
+  await expectModel(page, 'v4');
+  await expect(page.locator('#room-hud')).toHaveAttribute('data-state', 'unavailable');
+  await expect(page.locator('#hud-hint')).toContainText('Elige V1 Animada o V4 Animada');
+  await page.getByRole('button', { name: 'Estudio', exact: true }).click();
+  await expectModel(page, 'v4');
+  await expect(page.locator('#room-hud')).toBeHidden();
 });
 
 test('a missing room GLB reports the room, not the character, and Estudio still works', async (t) => {
@@ -408,7 +533,7 @@ test('V4 Animada exposes idle, walk and run and every clip changes the pose', as
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await ready(page);
-  const response = page.waitForResponse('**/models/developer-v4-rig.glb');
+  const response = page.waitForResponse('**/models/developer-v4-interactions.glb');
   await page.getByRole('button', { name: 'V4 Animada', exact: true }).click();
   assert.equal((await response).status(), 200);
   await expectModel(page, 'v4rig');

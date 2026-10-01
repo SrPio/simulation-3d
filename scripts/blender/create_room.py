@@ -28,6 +28,9 @@ HALF, WALL_T, WALL_H, BASE = 2.9, 0.18, 3.5, 0.34
 # corner (-X wall, +Y wall), so enlarging HALF opens floor space without resizing the furniture.
 LAYOUT = 2.2
 SHIFT = (-(HALF - LAYOUT), HALF - LAYOUT, 0.0)
+# The desk and everything on it sits this far in front of its original spot (+X, away from the chair)
+# so V4's hands stay on the laptop keyboard instead of reaching into the screen.
+DESK_FORWARD = 0.14
 WINDOW = (0.25, 1.65, 1.75, 3.0)  # x0, x1, z0, z1 on the +Y wall, in layout coordinates
 LED = (1.0, 0.16, 0.86)
 random.seed(11)
@@ -296,7 +299,7 @@ def build_desk(m, root):
     mat_lo, mat_hi = (-0.95, -1.62, top), (-0.2, -0.3, top + 0.006)
     box('DeskMat', mat_lo, mat_hi, m['desk_mat'], root, uv=planar_uv(1, 0, (mat_lo[1], mat_lo[0]), (mat_hi[1], mat_hi[0]), flip_u=True))
     # Laptop, open towards the chair (the user sits on the -X side facing +X).
-    lx0, lx1, ly0, ly1, lz = -0.84, -0.52, -1.2, -0.72, top + 0.006
+    lx0, lx1, ly0, ly1, lz = -0.98, -0.66, -1.24, -0.76, top + 0.006
     box('LaptopBase', (lx0, ly0, lz), (lx1, ly1, lz + 0.022), m['aluminium'], root, bevel=0.006)
     box('LaptopKeys', (lx0 + 0.13, ly0 + 0.04, lz + 0.022), (lx1 - 0.02, ly1 - 0.04, lz + 0.024), m['laptop_keys'], root)
     hinge = Vector((lx1, 0, lz + 0.02))
@@ -329,7 +332,7 @@ def build_desk(m, root):
 
 
 def build_chair(m, root):
-    cx, cy, seat = -1.62, -1.0, 0.64
+    cx, cy, seat = -1.40, -1.0, 0.64
     box('ChairSeat', (cx - 0.25, cy - 0.25, seat - 0.05), (cx + 0.25, cy + 0.25, seat), m['chair'], root, bevel=0.02, segments=3)
     back = box('ChairBack', (cx - 0.3, cy - 0.23, seat + 0.08), (cx - 0.26, cy + 0.23, seat + 0.62), m['chair'], root, bevel=0.015, segments=3)
     pivot = Vector((cx - 0.28, cy, seat))
@@ -371,23 +374,23 @@ def build_wall_decor(m, root):
 
 def build_anchors(root):
     anchor('Spawn', (0.9, -0.9, 0), root, math.radians(45))
-    anchor('Anchor_ChairSeat', (-1.62, -1.0, 0.64), root, math.radians(90), seat='chair')
-    anchor('Anchor_ChairApproach', (-1.62, 0.25, 0), root, math.radians(180), seat='chair')
-    anchor('Anchor_BedSeat', (0.7, 1.05, 0.6), root, 0.0, seat='bed')
+    anchor('Anchor_ChairSeat', (-1.40, -1.0, 0.64), root, math.radians(90), seat='chair', stand_offset=0.20)
+    anchor('Anchor_ChairApproach', (-1.20, 0.25, 0), root, math.radians(180), seat='chair')
+    anchor('Anchor_BedSeat', (0.7, 1.05, 0.63), root, 0.0, seat='bed', stand_offset=0.25)
     anchor('Anchor_BedApproach', (0.7, 0.35, 0), root, 0.0, seat='bed')
-    anchor('Anchor_DeskLaptop', (-0.68, -0.96, 1.056), root, math.radians(90), laptop='desk')
-    anchor('Anchor_BedLaptop', (0.7, 0.8, 0.95), root, 0.0, laptop='bed')
+    anchor('Anchor_DeskLaptop', (-0.82 + DESK_FORWARD, -1.0, 1.056), root, math.radians(90), laptop='desk')
+    anchor('Anchor_BedLaptop', (0.7, 0.70, 0.90), root, 0.0, laptop='bed')
     lights = (('Lamp', (-1.33, 1.93, 1.02), (1.0, 0.62, 0.32), 5.0),
               ('BedGlow', (0.7, 0.85, 0.06), LED, 9.0),
               ('WallGlow', (0.7, 2.05, 0.45), LED, 7.0),
-              ('Screen', (-0.8, -0.96, 1.3), (0.55, 0.6, 1.0), 1.2),
+              ('Screen', (-0.94 + DESK_FORWARD, -1.0, 1.3), (0.55, 0.6, 1.0), 1.2),
               ('Window', (0.95, 1.9, 2.4), (0.4, 0.5, 1.0), 1.0))
     for name, location, color, intensity in lights:
         anchor(f'Light_{name}', location, root, light='point', color=list(color), intensity=intensity)
     collider('Bed', (-0.72, 1.0, 0), (2.12, 2.17, 0.66), root)
     collider('Nightstand', (-1.58, 1.47, 0), (-0.77, LAYOUT, 0.75), root)
-    collider('Desk', (-1.0, -2.0, 0), (-0.12, -0.05, 1.05), root)
-    collider('Chair', (-1.9, -1.25, 0), (-1.37, -0.75, 1.28), root)
+    collider('Desk', (-1.0 + DESK_FORWARD, -2.0, 0), (-0.12 + DESK_FORWARD, -0.05, 1.05), root)
+    collider('Chair', (-1.70, -1.25, 0), (-1.15, -0.75, 1.28), root)
 
 
 def build_lighting():
@@ -414,7 +417,7 @@ def build_lighting():
     light('UnderBed', 'AREA', (0.7, 1.58, 0.1), LED, 700, (2.8, 1.1), (math.pi, 0, 0))
     light('BedFrontSpill', 'AREA', (0.7, 0.9, 0.12), LED, 420, (2.6, 0.2), (math.radians(150), 0, 0))
     light('WallWash', 'AREA', (0.7, 2.05, 0.4), LED, 520, (2.8, 0.3), (math.radians(-80), 0, 0))
-    light('Screen', 'AREA', (-0.56, -0.96, 1.25), (0.55, 0.6, 1.0), 12, (0.3, 0.45), (0, math.radians(-90), 0))
+    light('Screen', 'AREA', (-0.70 + DESK_FORWARD, -1.0, 1.25), (0.55, 0.6, 1.0), 12, (0.3, 0.45), (0, math.radians(-90), 0))
     light('Moon', 'AREA', (0.95, 2.6, 2.4), (0.45, 0.55, 1.0), 40, (1.3, 1.2), (math.radians(90), 0, 0))
     light('PosterWash', 'AREA', (-0.8, -1.0, 3.3), (1.0, 0.9, 0.95), 70, (0.6, 2.2), (0, math.radians(40), 0))
 
@@ -464,7 +467,10 @@ def main():
     shell = set(root.children)
     build_bed(m, root)
     build_nightstand(m, root)
+    before_desk = set(root.children)
     build_desk(m, root)
+    for obj in set(root.children) - before_desk:
+        obj.location.x += DESK_FORWARD
     build_chair(m, root)
     build_wall_decor(m, root)
     build_anchors(root)

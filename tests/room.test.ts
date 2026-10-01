@@ -96,7 +96,7 @@ test('room keeps its editable source, texture sources and review renders', async
   }
   const reference = existsSync(new URL('assets/reference/room/room-reference.jpg', root));
   if (!reference) t.diagnostic('Private room reference not present; skipping the comparison sheet check');
-  for (const name of ['diorama', 'diorama-empty', ...(reference ? ['compare-diorama'] : [])]) {
+  for (const name of ['diorama', 'diorama-empty', 'diorama-typing', 'diorama-bed', ...(reference ? ['compare-diorama'] : [])]) {
     const png = await readFile(new URL(`assets/renders/room/${name}.png`, root));
     assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10], name);
   }

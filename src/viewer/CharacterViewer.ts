@@ -1,14 +1,19 @@
 import {
   AnimationMixer, Box3, CircleGeometry, Color, DirectionalLight, Group, HemisphereLight, InstancedMesh, LoopRepeat, PointLight,
-  Mesh, MeshStandardMaterial, OrthographicCamera, Scene, SkinnedMesh, Vector3, type AnimationAction, type Object3D,
+  Mesh, MeshStandardMaterial, OrthographicCamera, Quaternion, Scene, SkinnedMesh, Vector3, type AnimationAction, type Object3D,
   type WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { createRenderer } from '../core/renderer';
+import { createRenderer, MAX_PIXEL_RATIO } from '../core/renderer';
+import { mergeSkinnedMeshes, mergeStaticMeshes } from '../scene/mergeStatic.ts';
+import { CharacterController, type Locomotion } from '../character/CharacterController';
+import { KeyboardInput } from '../input/KeyboardInput';
+import type { Box2 } from '../world/collisions';
 import { disposeObjects, loadCharacter, loadRoom, modelVersions, roomFile, type ModelVersionId, type SceneId } from '../core/loadAssets';
 
 export type ViewPreset = 'front' | 'left' | 'right' | 'back' | 'three-quarter';
 export type LightPreset = 'neutral' | 'violet';
+export type MovementState = 'ready' | 'unavailable' | 'seated';
 export type ViewerStatus = { kind: 'loading' | 'ready' | 'error'; title: string; detail: string };
 export type ModelStats = { meshes: number; triangles: number };
 export type AnimationState = {
@@ -38,7 +43,11 @@ type ViewerEvents = {
   stats: (stats: ModelStats | null) => void;
   orbit: () => void;
   animation: (state: AnimationState | null) => void;
+  movement?: (state: MovementState | null) => void;
 };
+
+const LOCOMOTION = new Set(['idle', 'walk', 'run']);
+const SHADOWLESS = /^(FloorPlank|Platform|Wall|Baseboard|Poster|NightCity|WindowGlass)/;
 
 export class CharacterViewer {
   private readonly scene = new Scene();
@@ -56,6 +65,16 @@ export class CharacterViewer {
   private floor?: Mesh<CircleGeometry, MeshStandardMaterial>;
   private room?: Group;
   private readonly roomLights: PointLight[] = [];
+  private readonly standPoints = new Map<string, { position: Vector3; quaternion: Quaternion }>();
+  private controller?: CharacterController;
+  private keyboard?: KeyboardInput;
+  /** True while keyboard movement owns the clip choice; a clip picked by hand is left alone otherwise. */
+  private driving = false;
+  private movementState: MovementState | null = null;
+  /** Adaptive resolution: drop the pixel ratio when frames are slow (fill-rate bound), raise it back when there is headroom. */
+  private pixelRatio = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
+  private frameAverage = 1000 / 60;
+  private framesSinceAdjust = 0;
   private readonly bounds = new Vector3(1, 2.5, 1);
   private readonly center = new Vector3(0, 1.25, 0);
   private cameraDistance = 7;
@@ -83,6 +102,7 @@ export class CharacterViewer {
     this.events.animation(null);
     try {
       document.addEventListener('visibilitychange', this.resetDelta, { signal: this.abort.signal });
+      if (this.inRoom) this.keyboard = new KeyboardInput(window, this.abort.signal);
       this.renderer = createRenderer();
       this.host.append(this.renderer.domElement);
       this.renderer.domElement.addEventListener('webglcontextlost', this.onContextLost);
@@ -153,7 +173,20 @@ export class CharacterViewer {
       }
       this.assetRoots = [...gltf.scenes, ...(roomGltf?.scenes ?? [])];
       this.model = gltf.scene;
-      if (roomGltf) this.placeInRoom(roomGltf.scene);
+      if (roomGltf) {
+        this.placeInRoom(roomGltf.scene);
+        // Everything receives shadows; only furniture casts them. Floor, walls, posters and the
+        // window backdrop cannot shadow anything visible, so they stay out of the shadow pass.
+        roomGltf.scene.traverse((object) => {
+          if (!(object instanceof Mesh)) return;
+          object.receiveShadow = true;
+          object.castShadow = !SHADOWLESS.test(object.name);
+        });
+        mergeStaticMeshes(roomGltf.scene);
+      }
+      // Fewer draw calls: static and skinned parts are merged by material (they render identically).
+      mergeStaticMeshes(this.model);
+      mergeSkinnedMeshes(this.model);
       if (gltf.animations.length) {
         this.mixer = new AnimationMixer(this.model);
         for (const [index, clip] of gltf.animations.entries()) {
@@ -176,8 +209,10 @@ export class CharacterViewer {
       const stats: ModelStats = { meshes: 0, triangles: 0 };
       const count = (object: Object3D) => {
         if (!(object instanceof Mesh)) return;
-        object.castShadow = true;
-        object.receiveShadow = true;
+        if (!this.room || !this.isInRoom(object)) {
+          object.castShadow = true; // room pieces got their shadow flags before merging
+          object.receiveShadow = true;
+        }
         if (object instanceof SkinnedMesh && this.mixer) object.frustumCulled = false;
         stats.meshes += 1;
         const geometry = object.geometry;
@@ -233,11 +268,33 @@ export class CharacterViewer {
   private placeInRoom(room: Group): void {
     this.room = room;
     room.updateMatrixWorld(true);
-    const spawn = room.getObjectByName('Spawn');
-    if (spawn && this.model) {
-      spawn.getWorldPosition(this.model.position);
-      spawn.getWorldQuaternion(this.model.quaternion);
+    // Stand points: the spawn, and for each seat the spot in front of it where its clips start.
+    // Seat anchors carry stand_offset: the clips move the hips that far back onto the seat.
+    room.traverse((object) => {
+      const data = object.userData as { seat?: string; stand_offset?: number };
+      const key = object.name === 'Spawn' ? 'spawn' : data.stand_offset !== undefined ? data.seat : undefined;
+      if (!key) return;
+      const quaternion = object.getWorldQuaternion(new Quaternion());
+      const position = object.getWorldPosition(new Vector3()).setY(0);
+      position.add(new Vector3(0, 0, data.stand_offset ?? 0).applyQuaternion(quaternion));
+      this.standPoints.set(key, { position, quaternion });
+    });
+    const boxes: Box2[] = [];
+    room.traverse((object) => {
+      const data = object.userData as { collider?: string; size?: number[] };
+      if (data.collider !== 'box' || !data.size) return;
+      const centre = object.getWorldPosition(new Vector3());
+      // Sizes are stored in Blender axes: X stays X, Blender Y becomes three.js -Z.
+      const [sx, sy] = data.size;
+      boxes.push({ name: object.name, minX: centre.x - sx / 2, maxX: centre.x + sx / 2, minZ: centre.z - sy / 2, maxZ: centre.z + sy / 2 });
+    });
+    const spawn = this.standPoints.get('spawn');
+    if (spawn) {
+      const facing = new Vector3(0, 0, 1).applyQuaternion(spawn.quaternion);
+      const halfSize = Number(room.getObjectByName('Room')?.userData.half_size ?? 2.9);
+      this.controller = new CharacterController({ position: { x: spawn.position.x, z: spawn.position.z }, yaw: Math.atan2(facing.x, facing.z) }, boxes, halfSize);
     }
+    this.placeForClip('');
     room.traverse((object) => {
       const data = object.userData as { light?: string; color?: number[]; intensity?: number };
       if (data.light !== 'point' || !data.color) return;
@@ -247,6 +304,77 @@ export class CharacterViewer {
       this.roomLights.push(light);
       this.scene.add(light);
     });
+  }
+
+  private placeForClip(clip: string): void {
+    if (!this.room || !this.model) return;
+    const seat = clip.endsWith('_chair') ? 'chair' : clip.endsWith('_bed') ? 'bed' : 'spawn';
+    const point = this.standPoints.get(seat) ?? this.standPoints.get('spawn');
+    if (seat === 'spawn' && this.controller) {
+      this.applyController();
+    } else if (point) {
+      this.model.position.copy(point.position);
+      this.model.quaternion.copy(point.quaternion);
+    }
+    this.host.dataset.seat = seat;
+  }
+
+  private isInRoom(object: Object3D): boolean {
+    for (let node: Object3D | null = object; node; node = node.parent) if (node === this.room) return true;
+    return false;
+  }
+
+  private applyController(): void {
+    if (!this.model || !this.controller) return;
+    this.model.position.set(this.controller.position.x, 0, this.controller.position.z);
+    this.model.quaternion.setFromAxisAngle(new Vector3(0, 1, 0), this.controller.yaw);
+    const position = `${this.controller.position.x.toFixed(2)},${this.controller.position.z.toFixed(2)}`;
+    if (this.host.dataset.position !== position) this.host.dataset.position = position;
+  }
+
+  private setMovement(state: MovementState | null): void {
+    if (state === this.movementState) return;
+    this.movementState = state;
+    this.host.dataset.movement = state ?? 'none';
+    this.events.movement?.(state);
+  }
+
+  /** Back to the spawn point, standing idle. */
+  resetPosition(): void {
+    if (!this.controller || this.disposed) return;
+    this.controller.reset();
+    this.driving = false;
+    this.keyboard?.clear();
+    if (this.actions.has('idle')) this.selectClip('idle');
+    this.placeForClip(this.activeClip);
+    this.host.dataset.locomotion = 'idle';
+  }
+
+  /** Keyboard locomotion for the room: camera-relative movement with colliders and matched clip rates. */
+  private drive(delta: number): void {
+    if (!this.controller || !this.controls) return;
+    if (!this.mixer || !this.actions.has('walk') || !this.actions.has('idle')) {
+      this.setMovement('unavailable');
+      return;
+    }
+    if (!LOCOMOTION.has(this.activeClip)) {
+      this.setMovement('seated');
+      return;
+    }
+    this.setMovement('ready');
+    const keys = this.keyboard?.active ?? false;
+    if (!keys && !this.driving) return;
+    if (keys && !this.driving) {
+      this.driving = true;
+      if (!this.playing) this.setPlaying(true);
+    }
+    const mode: Locomotion = this.controller.update(delta, this.keyboard!.intent, this.controls.getAzimuthalAngle());
+    const clip = this.actions.has(mode) ? mode : 'walk';
+    if (clip !== this.activeClip) this.selectClip(clip);
+    if (this.fadeRemaining <= 0) this.actions.get(clip)?.setEffectiveTimeScale(this.controller.clipRate());
+    this.applyController();
+    this.host.dataset.locomotion = mode;
+    if (!keys && mode === 'idle') this.driving = false;
   }
 
   private createFloor(y: number): void {
@@ -356,8 +484,11 @@ export class CharacterViewer {
     const previous = this.actions.get(this.activeClip);
     this.finishFade();
     this.activeClip = name;
+    const seat = (clip: string) => clip.match(/_(chair|bed)$/)?.[1] ?? 'spawn';
+    const moved = !!this.room && seat(name) !== seat(previous?.getClip().name ?? '');
+    this.placeForClip(name);
     action.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).play();
-    if (previous && this.playing) {
+    if (previous && this.playing && !moved) {
       action.crossFadeFrom(previous, 0.2, false);
       this.fadeRemaining = 0.2;
     } else {
@@ -445,8 +576,9 @@ export class CharacterViewer {
     this.camera.top = span / 2;
     this.camera.bottom = -span / 2;
     this.camera.updateProjectionMatrix();
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.setSize(width, height, false);
+    this.host.dataset.pixelRatio = this.pixelRatio.toFixed(2);
   };
 
   private readonly animate = (time: number): void => {
@@ -454,8 +586,11 @@ export class CharacterViewer {
       this.resetDelta();
       return;
     }
-    const delta = this.lastFrame === undefined ? 0 : Math.min(Math.max((time - this.lastFrame) / 1000, 0), 0.05);
+    const frame = this.lastFrame === undefined ? undefined : time - this.lastFrame;
+    const delta = frame === undefined ? 0 : Math.min(Math.max(frame / 1000, 0), 0.05);
     this.lastFrame = time;
+    if (frame !== undefined) this.adaptResolution(frame);
+    if (this.ready && this.room) this.drive(delta);
     if (this.ready && this.mixer && this.playing) {
       this.mixer.update(delta);
       if (this.fadeRemaining > 0) {
@@ -467,6 +602,20 @@ export class CharacterViewer {
     this.controls?.update();
     this.renderer.render(this.scene, this.camera);
   };
+
+  private adaptResolution(frame: number): void {
+    if (frame > 250) return; // a stall (tab switch, GC) is not a steady frame rate
+    this.frameAverage += (frame - this.frameAverage) * 0.05;
+    if (++this.framesSinceAdjust < 90) return;
+    const ceiling = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
+    let next = this.pixelRatio;
+    if (this.frameAverage > 21 && this.pixelRatio > 1) next = Math.max(1, this.pixelRatio - 0.25);
+    else if (this.frameAverage < 14 && this.pixelRatio < ceiling) next = Math.min(ceiling, this.pixelRatio + 0.25);
+    this.framesSinceAdjust = 0;
+    if (next === this.pixelRatio) return;
+    this.pixelRatio = next;
+    this.resize();
+  }
 
   private readonly onOrbit = (): void => {
     this.events.orbit();
@@ -512,6 +661,7 @@ export class CharacterViewer {
     this.mixer = undefined;
     this.activeClip = '';
     this.events.animation(null);
+    this.events.movement?.(null);
     disposeObjects([...this.assetRoots, this.scene]);
     this.key.shadow.dispose();
     this.fill.shadow.dispose();
