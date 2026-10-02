@@ -98,14 +98,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--views', nargs='+', choices=[*VIEWS, *DETAIL_VIEWS], default=list(VIEWS))
     parser.add_argument('--replace-generated', action='store_true')
-    parser.add_argument('--variant', choices=['v1', 'v2', 'v3'], default='v1')
-    parser.add_argument('--head-study', action='store_true')
+    parser.add_argument('--variant', choices=['v1', 'v2'], default='v1')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else [])
     output = ROOT / 'assets' / 'renders' / ('character' if args.variant == 'v1' else f'character-{args.variant}')
     source = ROOT / 'assets' / 'blender' / ('developer.blend' if args.variant == 'v1' else f'developer-{args.variant}.blend')
-    if args.head_study:
-        source = ROOT / 'test-results' / 'head-v3.blend'
-        output = ROOT / 'test-results' / 'head-v3'
     for name in args.views:
         if (output / f'{name}.png').exists() and not args.replace_generated:
             raise RuntimeError(f'Render {name} already exists. Use --replace-generated after review.')
@@ -132,10 +128,8 @@ def main():
             camera.location = VIEWS[name]
             target = (0, 0, 1.29)
             camera.data.ortho_scale = 3.38
-            bpy.context.scene.render.resolution_x = 1100 if args.variant == 'v3' else 900
-            bpy.context.scene.render.resolution_y = 1100 if args.variant == 'v3' else 1050
-            if args.variant == 'v3' and name in ['front', 'back', 'left', 'right']:
-                camera.location.z = 1.29
+            bpy.context.scene.render.resolution_x = 900
+            bpy.context.scene.render.resolution_y = 1050
         aim(camera, target)
         bpy.context.scene.render.filepath = str(output / f'{name}.png')
         bpy.ops.render.render(write_still=True)

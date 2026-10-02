@@ -23,7 +23,7 @@ const yawOf = (quaternion: Quaternion) => {
 export function readRoom(room: Object3D): RoomData {
   room.updateMatrixWorld(true);
   const boxes: Box2[] = [];
-  const approaches = new Map<Seat, Point2>();
+  const approaches = new Map<Seat, Point2[]>();
   const seatPlacements = new Map<Seat, Placement>();
   const laptopSpots = new Map<'desk' | 'lap', Placement>();
   let spawn = { position: { x: 0, z: 0 }, yaw: 0 };
@@ -41,16 +41,17 @@ export function readRoom(room: Object3D): RoomData {
       // Seat anchors carry stand_offset: the clips move the hips that far back onto the seat.
       const stand = position.clone().setY(0).add(new Vector3(0, 0, data.stand_offset).applyQuaternion(quaternion));
       seatPlacements.set(data.seat, { position: stand, quaternion });
-    } else if (data.seat && object.name.endsWith('Approach')) {
-      approaches.set(data.seat, { x: position.x, z: position.z });
+    } else if (data.seat && object.name.includes('Approach')) {
+      // One approach point per free side of the seat (the chair has two).
+      approaches.set(data.seat, [...(approaches.get(data.seat) ?? []), { x: position.x, z: position.z }]);
     } else if (data.laptop === 'desk' || data.laptop === 'lap' || data.laptop === 'bed') {
       laptopSpots.set(data.laptop === 'desk' ? 'desk' : 'lap', { position, quaternion });
     }
   });
   const seats: SeatSpot[] = [];
   for (const [seat, placement] of seatPlacements) {
-    const approach = approaches.get(seat);
-    if (approach) seats.push({ seat, approach, stand: { x: placement.position.x, z: placement.position.z }, yaw: yawOf(placement.quaternion) });
+    const sides = approaches.get(seat);
+    if (sides?.length) seats.push({ seat, approaches: sides, stand: { x: placement.position.x, z: placement.position.z }, yaw: yawOf(placement.quaternion) });
   }
   const halfSize = Number(room.getObjectByName('Room')?.userData.half_size ?? 2.9);
   return { spawn, seats, seatPlacements, laptopSpots, boxes, halfSize };

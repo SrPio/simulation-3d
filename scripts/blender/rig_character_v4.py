@@ -1,4 +1,4 @@
-"""Separate rigged V4 copy with in-place idle, walk and run clips.
+"""Separate rigged V4 copy with in-place idle, walk, run and jump clips.
 
 The V4 source is modelled in a T-pose, so every clip lowers the arms through the clavicle and shoulder.
 Weights are procedural smooth fields tuned to the V4 garment layout.
@@ -19,9 +19,17 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'assets' / 'blender' / 'developer-v4.blend'
 TARGET = ROOT / 'assets' / 'blender' / 'developer-v4-rig.blend'
 MANIFEST = ROOT / 'public' / 'models' / 'developer-v4-rig.manifest.json'
-CLIPS = {'idle': 90, 'walk': 30, 'run': 20}
+CLIPS = {'idle': 90, 'walk': 28, 'run': 20, 'jump': 24}
+LOOPING = {'idle', 'walk', 'run'}
 FPS = 30
-WALK_STRIDE, RUN_STRIDE, RUN_STANCE = 0.42, 0.54, 0.38
+WALK_STRIDE, RUN_STRIDE, RUN_STANCE = 0.45, 0.54, 0.38
+# Jump: in place; the viewer moves the character JUMP_DISTANCE forward while the feet are off the floor.
+JUMP_AIR = (0.26, 0.70)
+JUMP_DISTANCE = 0.45
+# The upper arm only drops as far as the sleeve clears the hoodie; the forearm drops further at the
+# elbow so the hands hang by the hips.
+ARM_LOWER = 1.12
+ARM_HANG = 0.36
 FINGERS = [(-0.052, 0.140), (-0.018, 0.155), (0.015, 0.146), (0.045, 0.120)]
 WEB_FACES, WEB_MIN_RATIO = 3500, 0.10
 HEAD_PARTS = ('Head', 'Lips', 'Eye_', 'Eyebrows', 'Moustache', 'Beard', 'Hair', 'Cap')
@@ -264,6 +272,8 @@ def pose_matrices(defs, clip, phase):
     out = {'root': rest['root']}
     idle = clip == 'idle'
     running = clip == 'run'
+    if clip == 'jump':
+        return jump_matrices(defs, phase, rest, head_of)
     if idle:
         body = Matrix.Translation((0.006 * math.sin(wave), 0, 0.002 * math.sin(2 * wave)))
         chest = body @ rot_about(head_of['chest'], rx(0.012 * math.sin(2 * wave)))
@@ -284,24 +294,15 @@ def pose_matrices(defs, clip, phase):
     for side, label, shift in ((-1, 'L', 0.0), (1, 'R', 0.5)):
         # Arms: lower from the T-pose, then swing opposite to the legs.
         if idle:
-            lower, swing, flex, curl = 1.06 + 0.012 * math.sin(2 * wave), 0.03 * math.sin(wave + side), 0.16, 0.30
+            lower, swing, flex, curl = ARM_LOWER + 0.012 * math.sin(2 * wave), 0.03 * math.sin(wave + side), 0.16, 0.30
+            hang = ARM_HANG
         else:
-            lower = 1.10
-            swing = (0.60 if running else 0.30) * math.cos(wave + shift * 2 * math.pi)
+            lower = ARM_LOWER + 0.02
+            swing = (0.55 if running else 0.24) * math.cos(wave + shift * 2 * math.pi)
             flex = (1.15 if running else 0.22) + 0.08 * math.sin(wave + shift * 2 * math.pi)
             curl = 0.55 if running else 0.35
-        clav = chest @ rot_about(head_of[f'clavicle_{label}'], ry(side * 0.10))
-        upper = clav @ rot_about(head_of[f'upper_arm_{label}'], rx(swing) @ ry(side * (lower - 0.10)))
-        fore = upper @ rot_about(head_of[f'forearm_{label}'], rz(-side * flex))
-        hand = fore @ rot_about(head_of[f'hand_{label}'], rz(-side * 0.08))
-        out[f'clavicle_{label}'] = clav @ rest[f'clavicle_{label}']
-        out[f'upper_arm_{label}'] = upper @ rest[f'upper_arm_{label}']
-        out[f'forearm_{label}'] = fore @ rest[f'forearm_{label}']
-        out[f'hand_{label}'] = hand @ rest[f'hand_{label}']
-        for i in range(len(FINGERS)):
-            name = f'finger_{label}_{i}'
-            out[name] = hand @ rot_about(head_of[name], ry(side * curl * (0.85 + 0.1 * i))) @ rest[name]
-        out[f'thumb_{label}'] = hand @ rot_about(head_of[f'thumb_{label}'], rz(side * 0.25)) @ rest[f'thumb_{label}']
+            hang = ARM_HANG * (0.45 if running else 0.9)
+        arm_pose(out, chest, rest, head_of, side, label, lower, swing, flex, hang, curl)
         # Legs: in-place foot path with analytic knee IK.
         hip_rest, knee_rest, _ = defs[f'thigh_{label}']
         _, ankle_rest, _ = defs[f'shin_{label}']
@@ -328,6 +329,65 @@ def pose_matrices(defs, clip, phase):
         out[f'thigh_{label}'] = matrix_between(hip, knee, (1, 0, 0))
         out[f'shin_{label}'] = matrix_between(knee, ankle, (1, 0, 0))
         out[f'foot_{label}'] = Matrix.Translation(ankle) @ rx(pitch).to_4x4() @ Matrix.Translation(-ankle_rest) @ rest[f'foot_{label}']
+    return out
+
+
+def arm_pose(out, chest, rest, head_of, side, label, lower, swing, flex, hang, curl):
+    clav = chest @ rot_about(head_of[f'clavicle_{label}'], ry(side * 0.10))
+    upper = clav @ rot_about(head_of[f'upper_arm_{label}'], rx(swing) @ ry(side * (lower - 0.10)))
+    fore = upper @ rot_about(head_of[f'forearm_{label}'], ry(side * hang) @ rz(-side * flex))
+    hand = fore @ rot_about(head_of[f'hand_{label}'], rz(-side * 0.08))
+    out[f'clavicle_{label}'] = clav @ rest[f'clavicle_{label}']
+    out[f'upper_arm_{label}'] = upper @ rest[f'upper_arm_{label}']
+    out[f'forearm_{label}'] = fore @ rest[f'forearm_{label}']
+    out[f'hand_{label}'] = hand @ rest[f'hand_{label}']
+    for i in range(len(FINGERS)):
+        name = f'finger_{label}_{i}'
+        out[name] = hand @ rot_about(head_of[name], ry(side * curl * (0.85 + 0.1 * i))) @ rest[name]
+    out[f'thumb_{label}'] = hand @ rot_about(head_of[f'thumb_{label}'], rz(side * 0.25)) @ rest[f'thumb_{label}']
+
+
+def smooth(value):
+    value = max(0.0, min(1.0, value))
+    return value * value * (3 - 2 * value)
+
+
+def bump(phase, start, peak, end):
+    if phase <= start or phase >= end:
+        return 0.0
+    return smooth((phase - start) / (peak - start)) if phase < peak else 1 - smooth((phase - peak) / (end - peak))
+
+
+def jump_matrices(defs, phase, rest, head_of):
+    """Short forward hop: crouch, push off, airborne with the knees tucked, land and recover.
+    The first and last frames equal idle frame 0 (same arms, feet planted)."""
+    take_off, landing = JUMP_AIR
+    prepare = bump(phase, 0.0, 0.16, take_off)
+    absorb = bump(phase, landing, landing + 0.08, 1.0)
+    crouch = prepare + 0.8 * absorb
+    u = (phase - take_off) / (landing - take_off)
+    air = math.sin(math.pi * u) if 0 < u < 1 else 0.0
+    lean = 0.20 * crouch + 0.10 * air
+    body = Matrix.Translation((0, 0, -0.11 * crouch + 0.17 * air)) @ rot_about(head_of['pelvis'], rx(lean))
+    chest = body @ rot_about(head_of['spine'], rx(0.05 * crouch))
+    head = chest @ rot_about(head_of['neck'], rx(-lean * 0.7))
+    out = {'root': rest['root'], 'pelvis': body @ rest['pelvis'], 'spine': body @ rest['spine'],
+           'chest': chest @ rest['chest'], 'neck': chest @ rest['neck'], 'head': head @ rest['head']}
+    for side, label, split in ((-1, 'L', -0.11), (1, 'R', 0.07)):
+        # Arms swing back while crouching, forward through the push and the flight, settle on landing.
+        swing = 0.55 * prepare - 0.75 * air - 0.25 * absorb
+        arm_pose(out, chest, rest, head_of, side, label, ARM_LOWER - 0.22 * air, swing, 0.16 + 0.35 * air,
+                 ARM_HANG * (1 - 0.6 * air), 0.30 + 0.15 * air)
+        hip_rest, knee_rest, _ = defs[f'thigh_{label}']
+        _, ankle_rest, _ = defs[f'shin_{label}']
+        hip = body @ hip_rest
+        # Feet rise more than the hips so the knees tuck; one foot leads (-Y is forward).
+        lift = 0.23 * air
+        ankle = Vector((ankle_rest.x, ankle_rest.y + split * air, ankle_rest.z + lift))
+        knee = knee_position(hip, ankle, (knee_rest - hip_rest).length, (ankle_rest - knee_rest).length)
+        out[f'thigh_{label}'] = matrix_between(hip, knee, (1, 0, 0))
+        out[f'shin_{label}'] = matrix_between(knee, ankle, (1, 0, 0))
+        out[f'foot_{label}'] = Matrix.Translation(ankle) @ rx(0.9 * lift).to_4x4() @ Matrix.Translation(-ankle_rest) @ rest[f'foot_{label}']
     return out
 
 
@@ -389,7 +449,7 @@ def render_reviews(rig, destination):
         rig.animation_data.action_slot = action.slots[0]
         for view, fraction in (('three-quarter', 0.15), ('left', 0.15)):
             frame(camera, rig_empty, view)
-            scene.frame_set(round(CLIPS[clip] * (0.25 if clip == 'idle' else fraction)))
+            scene.frame_set(round(CLIPS[clip] * {'idle': 0.25, 'jump': 0.48}.get(clip, fraction)))
             scene.render.filepath = str(destination / f'{clip}-{view}.png')
             bpy.ops.render.render(write_still=True)
     rig.animation_data.action = None
@@ -409,15 +469,16 @@ def main():
     rig = build_armature(root, defs)
     for obj in objects:
         bind(obj, rig)
-    rig['clips'] = 'idle,walk,run'
+    rig['clips'] = ','.join(CLIPS)
     rig['locomotion'] = 'in-place'
     root['stage'] = '04B-v4-rig'
     bpy.context.scene.render.fps = FPS
     create_actions(rig, defs)
     bpy.ops.wm.save_as_mainfile(filepath=str(TARGET), compress=True)
-    speeds = {'idle': 0, 'walk': WALK_STRIDE / (0.60 * CLIPS['walk'] / FPS), 'run': RUN_STRIDE / (RUN_STANCE * CLIPS['run'] / FPS)}
-    manifest = {'source': 'developer-v4-rig.glb', 'fps': FPS, 'inPlace': True, 'clips': [
-        {'name': name, 'duration': frames / FPS, 'loop': True, 'speed': speeds[name]} for name, frames in CLIPS.items()]}
+    speeds = {'idle': 0, 'walk': WALK_STRIDE / (0.60 * CLIPS['walk'] / FPS), 'run': RUN_STRIDE / (RUN_STANCE * CLIPS['run'] / FPS), 'jump': 0}
+    clips = [{'name': name, 'duration': frames / FPS, 'loop': name in LOOPING, 'speed': speeds[name]} for name, frames in CLIPS.items()]
+    next(clip for clip in clips if clip['name'] == 'jump').update({'distance': JUMP_DISTANCE, 'air': list(JUMP_AIR)})
+    manifest = {'source': 'developer-v4-rig.glb', 'fps': FPS, 'inPlace': True, 'clips': clips}
     MANIFEST.write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
     print(f'V4 rig: {TARGET}')
     if args.render:

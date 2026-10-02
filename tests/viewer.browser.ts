@@ -17,6 +17,8 @@ async function loadModel(name: string) {
 }
 
 const baseURL = process.env.VIEWER_URL ?? 'http://127.0.0.1:5173/';
+/** The character studio lives at /study/; the root is the room page (tests/home.browser.ts). */
+const studyURL = new URL('study/', baseURL).href;
 const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL ?? 'msedge', headless: true });
 const output = new URL('../test-results/', import.meta.url);
 await mkdir(output, { recursive: true });
@@ -33,9 +35,7 @@ const versions = {
 async function expectModel(page: Page, version: keyof typeof versions) {
   await expect(page.locator('.status')).toHaveAttribute('data-state', 'ready', { timeout: 30000 });
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-model', version);
-  await expect(page.locator('.version-selector button')).toHaveCount(6);
-  await expect(page.locator('[data-model="v3"]')).toBeDisabled();
-  await expect(page.locator('[data-model="v3"]')).toContainText('PAUSADA');
+  await expect(page.locator('.version-selector button')).toHaveCount(5);
   if (!version.endsWith('rig')) await expect(page.locator('#animation-controls')).toBeHidden();
   await expect(page.locator('.version-selector [aria-pressed="true"]')).toHaveCount(1);
   await expect(page.getByRole('button', { name: versions[version].label, exact: true })).toHaveAttribute('aria-pressed', 'true');
@@ -51,8 +51,7 @@ async function expectModel(page: Page, version: keyof typeof versions) {
 
 async function expectVersionSelectorFits(page: Page) {
   for (const button of await page.locator('.version-selector button').all()) {
-    if (await button.getAttribute('data-model') === 'v3') await expect(button).toBeDisabled();
-    else await expect(button).toBeEnabled();
+    await expect(button).toBeEnabled();
     assert.ok(await button.evaluate((element) => {
       const bounds = element.getBoundingClientRect();
       const parent = element.closest('.version-selector')!.getBoundingClientRect();
@@ -64,7 +63,7 @@ async function expectVersionSelectorFits(page: Page) {
 
 async function ready(page: Page) {
   const response = page.waitForResponse('**/models/developer.glb');
-  await page.goto(baseURL);
+  await page.goto(studyURL);
   assert.equal((await response).status(), 200);
   await expectModel(page, 'v1');
   await expectVersionSelectorFits(page);
@@ -151,7 +150,7 @@ test('missing V1 GLB shows an error and retry recovers without duplicate canvase
   t.after(() => page.close());
   const pattern = '**/models/developer.glb';
   await page.route(pattern, (route) => route.fulfill({ status: 404, body: '' }));
-  await page.goto(baseURL);
+  await page.goto(studyURL);
   await expect(page.locator('.status')).toHaveAttribute('data-state', 'error', { timeout: 15000 });
   await expect(page.locator('#overlay-title')).toHaveText('No se pudo cargar V1 Original');
   await expect(page.locator('#overlay-detail')).toContainText('Falta el archivo models/developer.glb');
@@ -173,7 +172,7 @@ test('a corrupt V1 GLB is reported instead of displaying a placeholder', async (
     if (request.url().endsWith('.glb')) requests.push(request.url().split('/').at(-1)!);
   });
   await page.route('**/models/developer.glb', (route) => route.fulfill({ status: 200, body: 'not a binary model' }));
-  await page.goto(baseURL);
+  await page.goto(studyURL);
   await expect(page.locator('.status')).toHaveAttribute('data-state', 'error', { timeout: 15000 });
   await expect(page.locator('#overlay-detail')).toContainText('models/developer.glb no está disponible o no es un GLB válido');
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-model', 'v1');
@@ -342,22 +341,6 @@ async function scrub(page: Page, progress: number) {
   await expect(page.locator('#animation-timeline')).toHaveValue(String(progress));
 }
 
-test('V3 stays visibly paused and cannot request its GLB even through a synthetic click', async (t) => {
-  const page = await browser.newPage();
-  t.after(() => page.close());
-  const requests: string[] = [];
-  page.on('request', (request) => { if (request.url().endsWith('.glb')) requests.push(request.url().split('/').at(-1)!); });
-  await ready(page);
-  const paused = page.locator('[data-model="v3"]');
-  await expect(paused).toBeDisabled();
-  await expect(paused).toContainText('PAUSADA');
-  await expect(page.locator('#paused-copy')).toContainText('No se carga ningún archivo de V3');
-  await paused.dispatchEvent('click');
-  await page.waitForTimeout(250);
-  await expectModel(page, 'v1');
-  assert.deepEqual(requests, ['developer.glb']);
-});
-
 test('Habitación places the selected character in the isometric diorama and Estudio restores the pedestal', async (t) => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
   t.after(() => page.close());
@@ -399,7 +382,7 @@ test('Habitación places the selected character in the isometric diorama and Est
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-scene', 'studio');
   await expect(page.locator('.orbit-label')).toHaveText('ÓRBITA 360°');
   await expect(page.locator('[data-view="back"]')).toBeEnabled();
-  assert.deepEqual(requests, ['developer.glb', 'developer.glb', 'room.glb', 'laptop.glb', 'developer-v4-interactions.glb', 'room.glb', 'laptop.glb', 'developer-v4-interactions.glb']);
+  assert.deepEqual(requests, ['developer.glb', 'developer.glb', 'room.glb', 'laptop.glb', 'outside.glb', 'developer-v4-interactions.glb', 'room.glb', 'laptop.glb', 'outside.glb', 'developer-v4-interactions.glb']);
   assert.deepEqual(errors, []);
 });
 
@@ -414,8 +397,9 @@ test('in the room, chair and bed clips move V4 to their seat and locomotion retu
   await page.getByRole('button', { name: 'V4 Animada', exact: true }).click();
   await expectModel(page, 'v4rig');
   const clip = page.getByLabel('Clip', { exact: true });
-  await expect(page.locator('#animation-clip option')).toHaveCount(15);
-  await expect(page.locator('#animation-clip option').nth(3)).toHaveText('Sentarse · silla (sit_down_chair)');
+  await expect(page.locator('#animation-clip option')).toHaveCount(12);
+  await expect(page.locator('#animation-clip option').nth(3)).toHaveText('Saltar (jump)');
+  await expect(page.locator('#animation-clip option').nth(4)).toHaveText('Sentarse · silla (sit_down_chair)');
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-seat', 'spawn');
   const frames: Record<string, Buffer> = {};
   for (const [name, seat] of [['typing_chair', 'chair'], ['typing_bed', 'bed'], ['walk', 'spawn']] as const) {
@@ -474,7 +458,7 @@ test('in the room WASD walks, Shift runs, releasing stops and Restablecer return
   await page.keyboard.up('ArrowLeft');
   assert.notDeepEqual(await position(page), rested, 'arrow keys move too');
   await walkTo(page, { x: 2.2, z: 2.2 });
-  await expect(page.locator('#hud-hint')).toHaveText('W A S D o flechas para caminar · Shift para correr');
+  await expect(page.locator('#hud-hint')).toHaveText('W A S D o flechas para caminar · Shift para correr · Espacio para saltar');
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-prompt', 'none');
   await page.getByRole('button', { name: 'Restablecer posición', exact: true }).click();
   assert.deepEqual(await position(page), spawn);
@@ -556,7 +540,7 @@ async function walkTo(page: Page, target: { x: number; z: number }, until?: () =
 const interaction = (page: Page) => page.locator('#canvas-host');
 const press = async (page: Page, key: 'KeyE' | 'KeyL') => { await page.keyboard.press(key); };
 
-test('E sits on the bed from the spawn, L explains the laptop is on the desk, E stands back up', async (t) => {
+test('E sits on the bed from the spawn, L makes a laptop appear on the lap, E closes it and stands back up', async (t) => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   t.after(() => page.close());
   const errors: string[] = [];
@@ -564,7 +548,7 @@ test('E sits on the bed from the spawn, L explains the laptop is on the desk, E 
   await roomWithV4(page);
   await expect(interaction(page)).toHaveAttribute('data-prompt', 'bed');
   await expect(page.locator('#hud-hint')).toHaveText('E: sentarse en la cama');
-  await expect(interaction(page)).toHaveAttribute('data-laptop', 'desk');
+  await expect(interaction(page)).toHaveAttribute('data-laptop', 'none');
   await press(page, 'KeyE');
   await expect(interaction(page)).toHaveAttribute('data-interaction', /approaching|aligning/);
   await page.keyboard.down('KeyW');
@@ -574,19 +558,24 @@ test('E sits on the bed from the spawn, L explains the laptop is on the desk, E 
   await expect(page.locator('#animation-clip')).toHaveValue('seated_bed');
   await expect(interaction(page)).toHaveAttribute('data-seat', 'bed');
   await expect(page.locator('#hud-hint')).toContainText('Sentado en la cama');
-  await press(page, 'KeyL');
-  await expect(page.locator('#hud-hint')).toContainText('El portátil está en el escritorio');
-  await expect(interaction(page)).toHaveAttribute('data-interaction', 'seated');
   await page.screenshot({ path: new URL('room-bed-seated.png', output).pathname.replace(/^\/([A-Za-z]:)/, '$1'), fullPage: true });
+  await press(page, 'KeyL');
+  await expect(interaction(page)).toHaveAttribute('data-laptop', 'lap');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'typing', { timeout: 3000 });
+  await expect(interaction(page)).toHaveAttribute('data-lid', 'open');
+  await expect(page.locator('#animation-clip')).toHaveValue('typing_bed');
+  await page.screenshot({ path: new URL('room-bed-typing.png', output).pathname.replace(/^\/([A-Za-z]:)/, '$1'), fullPage: true });
   await press(page, 'KeyE');
-  await expect(interaction(page)).toHaveAttribute('data-interaction', 'standing');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', /closing|standing/);
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'standing', { timeout: 3000 });
+  await expect(interaction(page)).toHaveAttribute('data-laptop', 'none');
   await expect(interaction(page)).toHaveAttribute('data-interaction', 'free', { timeout: 15000 });
   await expect(interaction(page)).toHaveAttribute('data-locomotion', 'idle');
   await expect(page.locator('#animation-clip')).toHaveValue('idle');
   assert.deepEqual(errors, []);
 });
 
-test('the laptop goes from the desk to the lap only by being carried, and is never duplicated', async (t) => {
+test('the chair is reachable from both sides and its desk laptop just opens and closes', async (t) => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   t.after(() => page.close());
   const errors: string[] = [];
@@ -594,19 +583,18 @@ test('the laptop goes from the desk to the lap only by being carried, and is nev
   await roomWithV4(page);
   const room = readRoom((await loadModel('room')).scene);
   const chair = room.seats.find((seat) => seat.seat === 'chair')!;
-  const bed = room.seats.find((seat) => seat.seat === 'bed')!;
-  // Around the desk: along the bed side, then up to the end of the desk where the chair's corridor starts.
+  const [left, right] = [...chair.approaches].sort((a, b) => a.z - b.z);
+  // Left side: around the desk along the bed side, then up to the end of the desk where the chair's corridor starts.
   await walkTo(page, { x: -0.3, z: -1.25 });
-  await walkTo(page, { x: chair.approach.x + 0.3, z: chair.approach.z - 0.3 }, async () => (await interaction(page).getAttribute('data-prompt')) === 'chair');
+  await walkTo(page, { x: left.x + 0.3, z: left.z - 0.3 }, async () => (await interaction(page).getAttribute('data-prompt')) === 'chair');
   await expect(interaction(page)).toHaveAttribute('data-prompt', 'chair');
   await press(page, 'KeyE');
   await expect(interaction(page)).toHaveAttribute('data-interaction', 'seated', { timeout: 15000 });
   await expect(interaction(page)).toHaveAttribute('data-seat', 'chair');
   await press(page, 'KeyL');
-  await expect(interaction(page)).toHaveAttribute('data-interaction', 'drawing');
-  await expect(interaction(page)).toHaveAttribute('data-interaction', 'typing', { timeout: 10000 });
-  await expect(page.locator('#animation-clip')).toHaveValue('typing_chair');
   await expect(interaction(page)).toHaveAttribute('data-laptop', 'desk');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'typing', { timeout: 3000 });
+  await expect(page.locator('#animation-clip')).toHaveValue('typing_chair');
   await expect(interaction(page)).toHaveAttribute('data-lid', 'open');
   await page.keyboard.down('KeyW');
   await page.waitForTimeout(300);
@@ -614,26 +602,23 @@ test('the laptop goes from the desk to the lap only by being carried, and is nev
   await expect(interaction(page)).toHaveAttribute('data-interaction', 'typing');
   await page.screenshot({ path: new URL('room-desk-typing.png', output).pathname.replace(/^\/([A-Za-z]:)/, '$1'), fullPage: true });
   await press(page, 'KeyL');
-  await expect(interaction(page)).toHaveAttribute('data-interaction', 'stowing');
-  await expect(interaction(page)).toHaveAttribute('data-interaction', 'seated', { timeout: 10000 });
-  await expect(interaction(page)).toHaveAttribute('data-laptop', 'stowed');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'seated', { timeout: 3000 });
+  await expect(interaction(page)).toHaveAttribute('data-laptop', 'none');
+  await expect(interaction(page)).toHaveAttribute('data-lid', 'closed');
   await press(page, 'KeyE');
   await expect(interaction(page)).toHaveAttribute('data-interaction', 'free', { timeout: 15000 });
+  // Right side: back between the desk and the bed, past the open end of the desk, and in from the front of the room.
   await walkTo(page, { x: -0.3, z: -1.25 });
-  await walkTo(page, { x: bed.approach.x, z: bed.approach.z + 0.3 }, async () => (await interaction(page).getAttribute('data-prompt')) === 'bed');
+  await walkTo(page, { x: -0.3, z: 2.3 });
+  await walkTo(page, { x: right.x + 0.4, z: right.z + 0.4 }, async () => (await interaction(page).getAttribute('data-prompt')) === 'chair');
+  await expect(interaction(page)).toHaveAttribute('data-prompt', 'chair');
   await press(page, 'KeyE');
   await expect(interaction(page)).toHaveAttribute('data-interaction', 'seated', { timeout: 15000 });
-  await press(page, 'KeyL');
-  await expect(interaction(page)).toHaveAttribute('data-interaction', 'typing', { timeout: 10000 });
-  await expect(interaction(page)).toHaveAttribute('data-laptop', 'lap');
-  await expect(interaction(page)).toHaveAttribute('data-lid', 'open');
-  await page.screenshot({ path: new URL('room-bed-typing.png', output).pathname.replace(/^\/([A-Za-z]:)/, '$1'), fullPage: true });
-  // E while typing puts the laptop away first, then stands.
+  await expect(interaction(page)).toHaveAttribute('data-seat', 'chair');
   await press(page, 'KeyE');
-  await expect(interaction(page)).toHaveAttribute('data-interaction', 'stowing');
-  await expect(interaction(page)).toHaveAttribute('data-interaction', 'standing', { timeout: 10000 });
-  await expect(interaction(page)).toHaveAttribute('data-laptop', 'stowed');
   await expect(interaction(page)).toHaveAttribute('data-interaction', 'free', { timeout: 15000 });
+  const [x, z] = await position(page);
+  assert.ok(Math.hypot(x - right.x, z - right.z) < 0.05, `left by the right side: ${x},${z}`);
   assert.deepEqual(errors, []);
 });
 
@@ -645,7 +630,7 @@ test('picking a clip by hand or resetting abandons the seat without stranding th
   await expect(interaction(page)).toHaveAttribute('data-interaction', 'seated', { timeout: 15000 });
   await page.getByLabel('Clip', { exact: true }).selectOption('walk');
   await expect(interaction(page)).toHaveAttribute('data-interaction', 'free');
-  await expect(interaction(page)).toHaveAttribute('data-laptop', 'desk');
+  await expect(interaction(page)).toHaveAttribute('data-laptop', 'none');
   await press(page, 'KeyE');
   await expect(interaction(page)).toHaveAttribute('data-interaction', /approaching|aligning|seated|sitting/);
   await page.getByRole('button', { name: 'Restablecer posición', exact: true }).click();
@@ -880,7 +865,7 @@ test('missing WebGL2 produces an actionable message', async () => {
       return kind === 'webgl2' ? null : original.apply(this, [kind, ...args]);
     } as typeof original;
   });
-  await page.goto(baseURL);
+  await page.goto(studyURL);
   await expect(page.locator('#overlay-title')).toHaveText('WebGL 2 no está disponible');
   await expect(page.locator('#retry')).toBeVisible();
   await page.close();

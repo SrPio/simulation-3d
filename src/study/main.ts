@@ -1,7 +1,7 @@
-import './styles.css';
-import { defaultModelVersion, isModelVersionId, modelVersions, type ModelVersionId, type SceneId } from './core/loadAssets';
-import { QUALITY, isQualityId, readPreferences, savePreferences, type QualityId } from './core/quality.ts';
-import { CharacterViewer, type AnimationState, type LightPreset, type MovementState, type RenderStats, type ViewPreset, type ViewerStatus } from './viewer/CharacterViewer';
+import '../styles.css';
+import { defaultModelVersion, isModelVersionId, modelVersions, type ModelVersionId, type SceneId } from '../core/loadAssets';
+import { QUALITY, isQualityId, readPreferences, savePreferences, type QualityId } from '../core/quality.ts';
+import { CharacterViewer, type AnimationState, type LightPreset, type MovementState, type RenderStats, type ViewPreset, type ViewerStatus } from '../viewer/CharacterViewer';
 
 const sceneCopy: Record<SceneId, string> = {
   studio: 'Estudio · El personaje sobre la peana para revisar silueta, materiales y animación.',
@@ -22,7 +22,7 @@ app.innerHTML = `
       <div class="sidebar-intro">
         <p class="eyebrow accent">01 / PROPORCIONES</p>
         <h1>Developer <span>/ Character study</span></h1>
-        <p class="intro-copy">Continuamos desde V1: rig y ciclos en el sitio.<br>El original se conserva. V3 está PAUSADA.</p>
+        <p class="intro-copy">Continuamos desde V1: rig y ciclos en el sitio.<br>El original se conserva.</p>
       </div>
       <fieldset class="control-section scene-controls" aria-describedby="scene-copy">
         <legend>Escena <span>FASE 3</span></legend>
@@ -35,10 +35,9 @@ app.innerHTML = `
       <fieldset class="control-section version-controls" aria-describedby="version-copy">
         <legend>Versión <span>COMPARAR</span></legend>
         <div class="segmented version-selector">
-          ${Object.entries(modelVersions).map(([id, version]) => `<button type="button" data-model="${id}" aria-pressed="${id === defaultModelVersion}" ${version.paused ? 'disabled aria-describedby="paused-copy"' : ''}>${version.label}</button>`).join('')}
+          ${Object.entries(modelVersions).map(([id, version]) => `<button type="button" data-model="${id}" aria-pressed="${id === defaultModelVersion}">${version.label}</button>`).join('')}
         </div>
         <p id="version-copy" class="version-copy">${modelVersions[defaultModelVersion].copy}</p>
-        <p id="paused-copy" class="version-copy">${modelVersions.v3.copy}</p>
       </fieldset>
       <fieldset class="control-section animation-controls" id="animation-controls" aria-describedby="animation-copy" hidden disabled>
         <legend>Animación <span>FASE 2A</span></legend>
@@ -117,7 +116,7 @@ app.innerHTML = `
           <button type="button" id="hud-help" aria-expanded="false" aria-controls="hud-help-text">Ayuda</button>
           <button type="button" id="hud-reset">Restablecer posición</button>
         </div>
-        <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Mantén Shift: correr. Cerca de la silla o la cama, E: sentarse y levantarse. Sentado, L: sacar o guardar el portátil (en la cama solo si lo llevas contigo). Arrastra para girar la cámara: el movimiento sigue la vista. Las teclas no actúan mientras usas un desplegable o un control deslizante.</p>
+        <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Mantén Shift: correr. Espacio: saltar. Cerca de la silla (por cualquiera de sus lados) o la cama, E: sentarse y levantarse. Sentado, L: abrir o cerrar el portátil. Sal por los lados abiertos y pisa las láminas para abrir el portafolio o GitHub. Arrastra para girar la cámara: el movimiento sigue la vista. Las teclas no actúan mientras usas un desplegable o un control deslizante.</p>
       </section>
       <div class="view-caption"><span class="caption-line" aria-hidden="true"></span><span id="view-label">Vista tres cuartos</span><span class="orbit-label">ÓRBITA 360°</span></div>
       <footer class="viewport-footer"><p><span class="interaction-icon" aria-hidden="true">↔</span> Arrastrar para girar <span class="hint-divider">/</span> Scroll para zoom</p><p id="model-stats" aria-label="Estadísticas del modelo">— mallas <span aria-hidden="true">·</span> — triángulos</p></footer>
@@ -154,7 +153,7 @@ const hudHelp = element<HTMLButtonElement>('#hud-help');
 const hudHelpText = element<HTMLParagraphElement>('#hud-help-text');
 const hudReset = element<HTMLButtonElement>('#hud-reset');
 const movementHints: Record<MovementState, string> = {
-  ready: 'W A S D o flechas para caminar · Shift para correr',
+  ready: 'W A S D o flechas para caminar · Shift para correr · Espacio para saltar',
   unavailable: 'Elige V1 Animada o V4 Animada para moverte por la habitación.',
   seated: 'Está sentado: elige Reposo en Animación para volver a caminar.',
   interacting: 'E: sentarse o levantarse · L: portátil',
@@ -225,16 +224,14 @@ function updateAnimation(state: AnimationState | null): void {
     animationTimeline.setAttribute('aria-valuetext', animationTime.value);
     return;
   }
-  const order = ['idle', 'walk', 'run', ...['chair', 'bed'].flatMap((seat) => ['sit_down', 'seated', 'laptop_draw', 'typing', 'laptop_stow', 'stand_up'].map((action) => `${action}_${seat}`))];
+  const order = ['idle', 'walk', 'run', 'jump', ...['chair', 'bed'].flatMap((seat) => ['sit_down', 'seated', 'typing', 'stand_up'].map((action) => `${action}_${seat}`))];
   const rank = (clip: string) => (order.includes(clip) ? order.indexOf(clip) : order.length);
   const clips = [...state.clips].sort((a, b) => rank(a) - rank(b));
   if (clips.length !== animationClip.options.length || clips.some((clip, index) => animationClip.options[index]?.value !== clip)) {
     const labels: Record<string, string> = {
-      idle: 'Reposo', walk: 'Caminar', run: 'Correr',
-      sit_down_chair: 'Sentarse · silla', seated_chair: 'Sentado · silla', stand_up_chair: 'Levantarse · silla',
-      laptop_draw_chair: 'Abrir portátil · silla', typing_chair: 'Escribir · silla', laptop_stow_chair: 'Guardar portátil · silla',
-      sit_down_bed: 'Sentarse · cama', seated_bed: 'Sentado · cama', stand_up_bed: 'Levantarse · cama',
-      laptop_draw_bed: 'Sacar portátil · cama', typing_bed: 'Escribir · cama', laptop_stow_bed: 'Guardar portátil · cama',
+      idle: 'Reposo', walk: 'Caminar', run: 'Correr', jump: 'Saltar',
+      sit_down_chair: 'Sentarse · silla', seated_chair: 'Sentado · silla', stand_up_chair: 'Levantarse · silla', typing_chair: 'Escribir · silla',
+      sit_down_bed: 'Sentarse · cama', seated_bed: 'Sentado · cama', stand_up_bed: 'Levantarse · cama', typing_bed: 'Escribir · cama',
     };
     animationClip.replaceChildren(...clips.map((clip) => new Option(labels[clip.toLowerCase()] ? `${labels[clip.toLowerCase()]} (${clip})` : clip, clip)));
   }
@@ -328,7 +325,7 @@ for (const button of lightButtons) {
 for (const button of modelButtons) {
   button.addEventListener('click', () => {
     const modelId = button.dataset.model ?? '';
-    if (!isModelVersionId(modelId) || modelVersions[modelId].paused || modelId === selectedModel) return;
+    if (!isModelVersionId(modelId) || modelId === selectedModel) return;
     selectedModel = modelId;
     mount();
   }, { signal: listeners.signal });

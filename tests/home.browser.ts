@@ -1,0 +1,162 @@
+import assert from 'node:assert/strict';
+import { mkdir } from 'node:fs/promises';
+import { after, test } from 'node:test';
+import { chromium, expect, type Page } from '@playwright/test';
+
+const baseURL = process.env.VIEWER_URL ?? 'http://127.0.0.1:5173/';
+const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL ?? 'msedge', headless: true });
+const output = new URL('../test-results/', import.meta.url);
+await mkdir(output, { recursive: true });
+after(() => browser.close());
+const shot = (name: string) => new URL(name, output).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+const host = (page: Page) => page.locator('#canvas-host');
+const position = async (page: Page) => (await host(page).getAttribute('data-position'))!.split(',').map(Number);
+
+async function ready(page: Page) {
+  await page.goto(baseURL);
+  await expect(page.locator('.room-status')).toHaveAttribute('data-state', 'ready', { timeout: 30000 });
+  await expect(page.locator('#viewer-overlay')).toBeHidden();
+  await expect(host(page)).toHaveAttribute('data-movement', 'ready');
+}
+
+/** Steer with real keys towards a floor point; the fixed camera looks from azimuth 45°. */
+async function walkTo(page: Page, target: { x: number; z: number }, until?: () => Promise<boolean>) {
+  const forward = { x: -Math.SQRT1_2, z: -Math.SQRT1_2 };
+  const right = { x: Math.SQRT1_2, z: -Math.SQRT1_2 };
+  const held = new Set<string>();
+  const hold = async (keys: string[]) => {
+    for (const key of [...held]) if (!keys.includes(key)) { await page.keyboard.up(key); held.delete(key); }
+    for (const key of keys) if (!held.has(key)) { await page.keyboard.down(key); held.add(key); }
+  };
+  for (let step = 0; step < 250; step++) {
+    const [x, z] = await position(page);
+    const dx = target.x - x;
+    const dz = target.z - z;
+    if (Math.hypot(dx, dz) < 0.15 || (until && await until())) break;
+    const ahead = dx * forward.x + dz * forward.z;
+    const side = dx * right.x + dz * right.z;
+    const scale = Math.max(Math.abs(ahead), Math.abs(side));
+    await hold([...(Math.abs(ahead) > scale * 0.4 ? [ahead > 0 ? 'KeyW' : 'KeyS'] : []), ...(Math.abs(side) > scale * 0.4 ? [side > 0 ? 'KeyD' : 'KeyA'] : [])]);
+    await page.waitForTimeout(80);
+  }
+  await hold([]);
+  await expect(host(page)).toHaveAttribute('data-locomotion', 'idle');
+}
+
+const drag = async (page: Page) => {
+  const box = (await page.locator('canvas').boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 220, box.y + box.height / 2 + 40, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(700);
+};
+
+test('the root shows only the room with V4, neutral light, a fixed following camera and no external requests', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+  t.after(() => page.close());
+  const errors: string[] = [];
+  const external: string[] = [];
+  const models: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.protocol.startsWith('http') && url.origin !== new URL(baseURL).origin) external.push(request.url());
+    if (url.pathname.endsWith('.glb')) models.push(url.pathname.split('/').at(-1)!);
+  });
+  await ready(page);
+  assert.deepEqual(models.sort(), ['developer-v4-interactions.glb', 'laptop.glb', 'outside.glb', 'room.glb']);
+  await expect(page.locator('.sidebar, .version-selector, #animation-controls')).toHaveCount(0);
+  await expect(page.locator('canvas')).toHaveCount(1);
+  await expect(host(page)).toHaveAttribute('data-scene', 'room');
+  await expect(host(page)).toHaveAttribute('data-light', 'neutral');
+  await expect(page.getByRole('button', { name: 'Neutra' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(host(page)).toHaveAttribute('data-camera', 'follow');
+  await expect(page.locator('#camera-free')).toHaveAttribute('aria-pressed', 'false');
+  const before = await host(page).getAttribute('data-orbit');
+  const [azimuth, , zoom] = before!.split(',').map(Number);
+  assert.ok(Math.abs(azimuth - Math.PI / 4) < 0.01, `isometric corner view: ${before}`);
+  assert.ok(Math.abs(zoom - 0.9) < 1e-6, `widest zoom: ${before}`);
+  await drag(page);
+  await page.mouse.wheel(0, -600);
+  await page.waitForTimeout(400);
+  assert.equal(await host(page).getAttribute('data-orbit'), before, 'dragging and the wheel do not move the fixed camera');
+  await page.locator('#camera-free').click();
+  await expect(host(page)).toHaveAttribute('data-camera', 'free');
+  await expect(page.locator('#camera-free')).toHaveAttribute('aria-pressed', 'true');
+  await drag(page);
+  assert.notEqual(await host(page).getAttribute('data-orbit'), before, 'the free camera orbits');
+  await page.locator('#camera-free').click();
+  await expect(host(page)).toHaveAttribute('data-camera', 'follow');
+  await expect(host(page)).toHaveAttribute('data-orbit', before!);
+  await page.getByRole('button', { name: 'Violeta' }).click();
+  await expect(host(page)).toHaveAttribute('data-light', 'violet');
+  await page.getByRole('button', { name: 'Neutra' }).click();
+  await page.getByRole('button', { name: 'Baja' }).click();
+  await expect(host(page)).toHaveAttribute('data-quality', 'low');
+  await expect(host(page)).toHaveAttribute('data-shadows', 'false');
+  await page.getByRole('button', { name: 'Auto' }).click();
+  await expect(host(page)).toHaveAttribute('data-quality', 'auto');
+  await page.screenshot({ path: shot('home.png') });
+  assert.deepEqual(external, []);
+  assert.deepEqual(errors, []);
+});
+
+test('Space hops forward and the character walks out to each plate, whose floating button opens the site in a new tab', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  t.after(() => page.close());
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await ready(page);
+  const start = await position(page);
+  await page.keyboard.press('Space');
+  await expect(host(page)).toHaveAttribute('data-locomotion', 'jump');
+  await expect(host(page)).toHaveAttribute('data-locomotion', 'idle', { timeout: 3000 });
+  const landed = await position(page);
+  const hop = Math.hypot(landed[0] - start[0], landed[1] - start[1]);
+  assert.ok(hop > 0.3 && hop < 0.7, `a short hop forward: ${hop}`);
+  await expect(page.locator('#plate-link')).toBeHidden();
+  await expect(host(page)).toHaveAttribute('data-plate-button', 'none');
+  for (const [id, link, target] of [
+    ['portfolio', 'https://andres-jaramillo.is-a.dev/', { x: 0.6, z: 4.7 }],
+    ['github', 'https://github.com/SrPio', { x: 4.7, z: 0.6 }],
+  ] as const) {
+    await walkTo(page, target, async () => (await host(page).getAttribute('data-plate')) === id);
+    await expect(host(page)).toHaveAttribute('data-plate', id);
+    const anchor = page.locator('#plate-link');
+    await expect(anchor).toBeVisible();
+    await expect(anchor).toHaveAttribute('href', link);
+    await expect(anchor).toHaveAttribute('target', '_blank');
+    await expect(anchor).toHaveAttribute('rel', /noopener/);
+    await expect(host(page)).toHaveAttribute('data-plate-button', /^\d+,\d+$/);
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: shot(`home-plate-${id}.png`) });
+    // The new tab is intercepted so the test stays offline.
+    await page.context().route(link, (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<title>stub</title>' }));
+    const [x, y] = (await host(page).getAttribute('data-plate-button'))!.split(',').map(Number);
+    const popup = page.waitForEvent('popup', { timeout: 5000 });
+    await page.mouse.click(x, y);
+    const tab = await popup;
+    await tab.waitForURL(link);
+    await tab.close();
+  }
+  await walkTo(page, { x: 2.2, z: 2.2 });
+  await expect(host(page)).toHaveAttribute('data-plate', 'none');
+  await expect(page.locator('#plate-link')).toBeHidden();
+  await expect(host(page)).toHaveAttribute('data-plate-button', 'none', { timeout: 2000 });
+  assert.deepEqual(errors, []);
+});
+
+test('the root works on a phone-sized viewport without horizontal scrolling', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  t.after(() => page.close());
+  await ready(page);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal overflow');
+  for (const name of ['Auto', 'Alta', 'Baja', 'Neutra', 'Violeta', 'Libre']) {
+    const button = page.getByRole('button', { name, exact: true });
+    await expect(button).toBeVisible();
+    const box = (await button.boundingBox())!;
+    assert.ok(box.x >= 0 && box.x + box.width <= 390, `${name} inside the screen`);
+  }
+  await page.screenshot({ path: shot('home-mobile.png') });
+});

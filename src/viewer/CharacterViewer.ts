@@ -1,6 +1,6 @@
 import {
   AnimationMixer, Box3, CircleGeometry, Color, DirectionalLight, Group, HemisphereLight, InstancedMesh, LoopOnce, LoopRepeat, PointLight,
-  RepeatWrapping, type Texture,
+  Raycaster, RepeatWrapping, Vector2, type Texture,
   Mesh, MeshStandardMaterial, OrthographicCamera, Quaternion, Scene, SkinnedMesh, Vector3, type AnimationAction, type Object3D,
   type WebGLRenderer,
 } from 'three';
@@ -10,13 +10,21 @@ import { QUALITY, defaultQuality, nextPixelRatio, ratioRange, type QualityId } f
 import { mergeSkinnedMeshes, mergeStaticMeshes } from '../scene/mergeStatic.ts';
 import { CHARACTER_RADIUS, CharacterController, type Locomotion } from '../character/CharacterController';
 import { KeyboardInput, type PressAction } from '../input/KeyboardInput';
-import { disposeObjects, laptopFile, loadCharacter, loadLaptop, loadRoom, modelVersions, roomFile, type ModelVersionId, type SceneId } from '../core/loadAssets';
+import {
+  disposeObjects, laptopFile, loadCharacter, loadLaptop, loadOutside, loadRoom, modelVersions, outsideFile, roomFile, type ModelVersionId, type SceneId,
+} from '../core/loadAssets';
 import { InteractionController } from '../interactions/InteractionController.ts';
 import { readRoom, type RoomData } from '../scene/roomData.ts';
+import { readOutside, type OutsideData } from '../scene/outsideData.ts';
+import { PlateButtons } from '../scene/PlateButtons.ts';
+import { plateAt } from '../world/plates.ts';
 
 export type ViewPreset = 'front' | 'left' | 'right' | 'back' | 'three-quarter';
 export type LightPreset = 'neutral' | 'violet';
 export type MovementState = 'ready' | 'unavailable' | 'seated' | 'interacting';
+/** Room camera: 'follow' keeps the isometric angle and widest zoom and only tracks the character; 'free' also orbits and zooms. */
+export type CameraMode = 'follow' | 'free';
+export type PlateLink = { id: string; link: string; label: string };
 export type ViewerStatus = { kind: 'loading' | 'ready' | 'error'; title: string; detail: string };
 export type ModelStats = { meshes: number; triangles: number };
 /** Measured rendering cost, sampled about twice a second. */
@@ -39,6 +47,8 @@ type ViewerOptions = {
   quality?: QualityId;
   /** Decorative motion off: no camera inertia and a still laptop screen. Character animation is content and stays. */
   reducedMotion?: boolean;
+  /** Room only; defaults to 'free' (the studio's limited orbit). */
+  cameraMode?: CameraMode;
 };
 
 // Isometric diorama: the camera stays on the open side of the two room walls.
@@ -53,9 +63,13 @@ type ViewerEvents = {
   animation: (state: AnimationState | null) => void;
   movement?: (state: MovementState | null, text?: string) => void;
   render?: (stats: RenderStats | null) => void;
+  /** The character stepped on a floor plate (its link button is up) or left it. */
+  plate?: (plate: PlateLink | null) => void;
 };
 
-const LOCOMOTION = new Set(['idle', 'walk', 'run']);
+const LOCOMOTION = new Set(['idle', 'walk', 'run', 'jump']);
+/** How quickly the camera catches up with the character (1/s); frame-rate independent. */
+const FOLLOW_RATE = 4;
 const SHADOWLESS = /^(FloorPlank|Platform|Wall|Baseboard|Poster|NightCity|WindowGlass)/;
 
 export class CharacterViewer {
@@ -83,8 +97,20 @@ export class CharacterViewer {
   private movementText = '';
   private roomData?: RoomData;
   private interaction?: InteractionController;
-  private laptop?: Group;
-  private laptopHinge?: Object3D;
+  private outside?: Group;
+  private outsideData?: OutsideData;
+  private buttons?: PlateButtons;
+  private plate?: string;
+  private readonly raycaster = new Raycaster();
+  private readonly pointer = new Vector2();
+  private pointerStart?: { x: number; y: number };
+  private cameraMode: CameraMode = 'free';
+  /** Point the room camera looks at; it follows the character. */
+  private readonly focus = new Vector3();
+  /** The desk laptop always stands on the desk; the lap one only exists while it is used on the bed. */
+  private deskLaptop?: Group;
+  private lapLaptop?: Group;
+  private readonly laptopHinges = new Map<Group, Object3D | undefined>();
   private laptopOpen = 0;
   private laptopScreen?: Texture;
   /** A refused E/L press is explained in the HUD for a moment. */
@@ -119,6 +145,7 @@ export class CharacterViewer {
     this.wireframe = options.wireframe;
     this.quality = options.quality ?? defaultQuality;
     this.reducedMotion = options.reducedMotion ?? false;
+    this.cameraMode = options.cameraMode ?? 'free';
     this.pixelRatio = ratioRange(this.quality, window.devicePixelRatio).max;
     const version = modelVersions[options.modelId];
     this.events.status({ kind: 'loading', title: `Cargando ${version.label}`, detail: `Preparando ${version.file}. ${version.copy}` });
@@ -131,6 +158,12 @@ export class CharacterViewer {
       this.host.append(this.renderer.domElement);
       this.renderer.domElement.addEventListener('webglcontextlost', this.onContextLost);
       this.renderer.domElement.addEventListener('webglcontextrestored', this.onContextRestored);
+      if (this.inRoom) {
+        const canvas = this.renderer.domElement;
+        canvas.addEventListener('pointerdown', this.onPointerDown, { signal: this.abort.signal });
+        canvas.addEventListener('pointerup', this.onPointerUp, { signal: this.abort.signal });
+        canvas.addEventListener('pointermove', this.onPointerMove, { signal: this.abort.signal });
+      }
       this.controls = new OrbitControls(this.camera, this.renderer.domElement);
       this.controls.enablePan = false;
       this.controls.enableDamping = !this.reducedMotion;
@@ -146,7 +179,9 @@ export class CharacterViewer {
         this.controls.maxZoom = 3.2;
       }
       this.controls.enabled = false;
+      this.applyCameraMode();
       this.controls.addEventListener('start', this.onOrbit);
+      this.controls.addEventListener('change', this.onCameraChange);
       this.configureLights();
       this.setQuality(this.quality);
       this.setReducedMotion(this.reducedMotion);
@@ -188,12 +223,13 @@ export class CharacterViewer {
 
   private async load(): Promise<void> {
     try {
-      const [gltf, roomGltf, laptopGltf] = await Promise.all([
+      const [gltf, roomGltf, laptopGltf, outsideGltf] = await Promise.all([
         loadCharacter(this.options.modelId, this.abort.signal),
         this.inRoom ? loadRoom(this.abort.signal) : Promise.resolve(undefined),
         this.inRoom ? loadLaptop(this.abort.signal) : Promise.resolve(undefined),
+        this.inRoom ? loadOutside(this.abort.signal) : Promise.resolve(undefined),
       ]);
-      const scenes = [...gltf.scenes, ...(roomGltf?.scenes ?? []), ...(laptopGltf?.scenes ?? [])];
+      const scenes = [...gltf.scenes, ...(roomGltf?.scenes ?? []), ...(laptopGltf?.scenes ?? []), ...(outsideGltf?.scenes ?? [])];
       if (this.disposed) {
         disposeObjects(scenes);
         return;
@@ -201,6 +237,7 @@ export class CharacterViewer {
       this.assetRoots = scenes;
       this.model = gltf.scene;
       if (roomGltf) {
+        if (outsideGltf) this.addOutside(outsideGltf.scene);
         this.placeInRoom(roomGltf.scene);
         // Everything receives shadows; only furniture casts them. Floor, walls, posters and the
         // window backdrop cannot shadow anything visible, so they stay out of the shadow pass.
@@ -256,13 +293,17 @@ export class CharacterViewer {
       this.model.traverse(count);
       if (stats.meshes === 0 || stats.triangles === 0) throw new Error('MODEL_EMPTY');
       this.room?.traverse(count);
+      this.outside?.traverse(count);
       this.scene.add(this.model);
       if (this.room) this.scene.add(this.room);
+      if (this.outside) this.scene.add(this.outside);
+      if (this.buttons) this.scene.add(this.buttons.root);
       else this.createFloor(this.mixer ? 0 : box.min.y);
       this.frameLights();
       this.cameraDistance = Math.max(this.bounds.length() * 2.5, 1);
       this.camera.far = this.cameraDistance * 10;
       this.camera.near = this.cameraDistance / 1000;
+      this.focus.copy(this.focusTarget());
       this.setView(this.options.view);
       this.setLight(this.options.light);
       this.setWireframe(this.wireframe);
@@ -281,8 +322,8 @@ export class CharacterViewer {
           kind: 'error',
           title: 'No se pudo cargar la habitación',
           detail: message === 'ROOM_HTTP_404'
-            ? `Falta el archivo ${roomFile} o ${laptopFile}. Genera la habitación y vuelve a intentarlo, o vuelve al estudio.`
-            : `El archivo ${roomFile} o ${laptopFile} no está disponible o no es un GLB válido. Vuelve a intentarlo, o vuelve al estudio.`,
+            ? `Falta el archivo ${roomFile}, ${laptopFile} u ${outsideFile}. Genera la habitación y vuelve a intentarlo, o vuelve al estudio.`
+            : `El archivo ${roomFile}, ${laptopFile} u ${outsideFile} no está disponible o no es un GLB válido. Vuelve a intentarlo, o vuelve al estudio.`,
         });
         return;
       }
@@ -307,8 +348,10 @@ export class CharacterViewer {
       quaternion: new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), data.spawn.yaw),
     });
     for (const [seat, placement] of data.seatPlacements) this.standPoints.set(seat, placement);
-    this.controller = new CharacterController(data.spawn, data.boxes, data.halfSize);
-    this.interaction = new InteractionController(data.seats, data.boxes, data.halfSize, CHARACTER_RADIUS);
+    // With the outside ground the character can leave the room through its two open sides.
+    const floor = this.outsideData?.bounds ?? data.halfSize;
+    this.controller = new CharacterController(data.spawn, data.boxes, floor);
+    this.interaction = new InteractionController(data.seats, data.boxes, floor, CHARACTER_RADIUS);
     if (this.keyboard) this.keyboard.onPress = this.onPress;
     this.placeForClip('');
     room.traverse((object) => {
@@ -340,9 +383,23 @@ export class CharacterViewer {
     return false;
   }
 
+  /** Ground outside the room and its plates; the plates get their (hidden) link buttons. */
+  private addOutside(outside: Group): void {
+    this.outside = outside;
+    this.outsideData = readOutside(outside);
+    outside.traverse((object) => {
+      if (!(object instanceof Mesh)) return;
+      object.receiveShadow = true;
+      object.castShadow = false;
+    });
+    mergeStaticMeshes(outside);
+    this.buttons = new PlateButtons(this.outsideData.plates);
+    this.buttons.setReducedMotion(this.reducedMotion);
+    this.host.dataset.plate = 'none';
+    this.host.dataset.plateButton = 'none';
+  }
+
   private addLaptop(laptop: Group): void {
-    this.laptop = laptop;
-    this.laptopHinge = laptop.getObjectByName('LaptopHinge');
     this.laptopOpen = Number(laptop.getObjectByName('Laptop')?.userData.hinge_open_radians ?? 1.85);
     laptop.traverse((object) => {
       if (!(object instanceof Mesh)) return;
@@ -356,31 +413,58 @@ export class CharacterViewer {
         this.laptopScreen.needsUpdate = true;
       }
     });
-    this.scene.add(laptop);
+    // The lap copy shares geometry, materials and the scrolling screen texture with the desk one.
+    const lap = laptop.clone(true);
+    for (const copy of [laptop, lap]) {
+      this.laptopHinges.set(copy, copy.getObjectByName('LaptopHinge'));
+      this.scene.add(copy);
+    }
+    this.deskLaptop = laptop;
+    this.lapLaptop = lap;
+    for (const [place, copy] of [['desk', laptop], ['lap', lap]] as const) {
+      const spot = this.roomData?.laptopSpots.get(place);
+      if (spot) {
+        copy.position.copy(spot.position);
+        copy.quaternion.copy(spot.quaternion);
+      }
+    }
     this.syncLaptop(0);
   }
 
-  /** Put the one laptop where the interaction says it is: on the desk, on the lap, or carried (hidden). */
+  /** The desk laptop opens while used at the chair; the lap one appears, opens, closes and disappears on the bed. */
   private syncLaptop(delta: number): void {
-    if (!this.laptop || !this.interaction || !this.roomData) return;
-    const place = this.interaction.laptop;
-    this.laptop.visible = place !== 'stowed';
-    const spot = this.roomData.laptopSpots.get(place === 'lap' ? 'lap' : 'desk');
-    if (spot) {
-      this.laptop.position.copy(spot.position);
-      this.laptop.quaternion.copy(spot.quaternion);
-    }
-    if (this.laptopHinge) this.laptopHinge.rotation.x = this.laptopOpen * this.interaction.lid;
+    if (!this.deskLaptop || !this.lapLaptop || !this.interaction) return;
+    const { laptop: place, lid, shown } = this.interaction;
+    const hinge = (copy: Group, amount: number) => {
+      const node = this.laptopHinges.get(copy);
+      if (node) node.rotation.x = this.laptopOpen * amount;
+    };
+    hinge(this.deskLaptop, place === 'desk' ? lid : 0);
+    hinge(this.lapLaptop, place === 'lap' ? lid : 0);
+    const size = place === 'lap' ? shown * shown * (3 - 2 * shown) : 0;
+    this.lapLaptop.visible = size > 0.001;
+    this.lapLaptop.scale.setScalar(Math.max(size, 0.001));
     const typing = this.interaction.phase === 'seated' && this.interaction.state.stage === 'typing';
     if (this.laptopScreen && typing && !this.reducedMotion) this.laptopScreen.offset.y = (this.laptopScreen.offset.y - delta * 0.035) % 1;
-    const lid = this.interaction.lid >= 0.999 ? 'open' : this.interaction.lid <= 0.001 ? 'closed' : 'moving';
+    const state = place === 'none' ? 'closed' : lid >= 0.999 ? 'open' : lid <= 0.001 ? 'closed' : 'moving';
     if (this.host.dataset.laptop !== place) this.host.dataset.laptop = place;
-    if (this.host.dataset.lid !== lid) this.host.dataset.lid = lid;
+    if (this.host.dataset.lid !== state) this.host.dataset.lid = state;
   }
 
   private readonly onPress = (action: PressAction): void => {
     const interaction = this.interaction;
-    if (!interaction || !this.controller || !this.ready || !this.hasSeatClips()) return;
+    if (!interaction || !this.controller || !this.ready || this.controller.jumping) return;
+    if (action === 'jump') {
+      // Only from free keyboard movement, never from a seat or a clip picked by hand.
+      if (interaction.phase !== 'free' || !LOCOMOTION.has(this.activeClip) || !this.actions.has('jump')) return;
+      this.controller.jump();
+      this.driving = true;
+      if (!this.playing) this.setPlaying(true);
+      this.selectClip('jump', false);
+      this.host.dataset.locomotion = 'jump';
+      return;
+    }
+    if (!this.hasSeatClips()) return;
     if (interaction.phase === 'free' && !LOCOMOTION.has(this.activeClip)) return; // a seat clip picked by hand
     const accepted = action === 'interact'
       ? interaction.interact(this.controller.position, this.controller.yaw)
@@ -404,9 +488,7 @@ export class CharacterViewer {
   /** Phase 5: the interaction walks the character to a seat and runs the seat/laptop clips. */
   private driveInteraction(delta: number): void {
     const interaction = this.interaction!;
-    const action = this.actions.get(this.activeClip);
-    const progress = action ? Math.min(action.time / action.getClip().duration, 1) : 0;
-    interaction.update(delta, progress);
+    interaction.update(delta);
     const request = interaction.clip();
     if (request && request.name !== this.activeClip && this.actions.has(request.name)) this.selectClip(request.name, request.loop);
     if (interaction.phase === 'free') {
@@ -473,18 +555,105 @@ export class CharacterViewer {
     this.host.dataset.interaction = 'free';
     this.host.dataset.prompt = prompt ? (prompt.includes('silla') ? 'chair' : 'bed') : 'none';
     const keys = this.keyboard?.active ?? false;
-    if (!keys && !this.driving) return;
+    if (!keys && !this.driving && !this.controller.jumping) return;
     if (keys && !this.driving) {
       this.driving = true;
       if (!this.playing) this.setPlaying(true);
     }
     const mode: Locomotion = this.controller.update(delta, this.keyboard!.intent, this.controls.getAzimuthalAngle());
     const clip = this.actions.has(mode) ? mode : 'walk';
-    if (clip !== this.activeClip) this.selectClip(clip);
+    if (clip !== this.activeClip) this.selectClip(clip, mode !== 'jump');
     if (this.fadeRemaining <= 0) this.actions.get(clip)?.setEffectiveTimeScale(this.controller.clipRate());
     this.applyController();
     this.host.dataset.locomotion = mode;
     if (!keys && mode === 'idle') this.driving = false;
+  }
+
+  /** Floor plates: the button of the plate under the character rises; leaving it (or jumping off) sinks it. */
+  private checkPlate(): void {
+    if (!this.outsideData || !this.buttons || !this.model || this.controller?.airborne) return;
+    const plate = plateAt({ x: this.model.position.x, z: this.model.position.z }, this.outsideData.plates, this.plate);
+    if (plate?.id === this.plate) return;
+    this.plate = plate?.id;
+    this.buttons.show(plate?.id);
+    this.host.dataset.plate = plate?.id ?? 'none';
+    this.events.plate?.(plate ? { id: plate.id, link: plate.link, label: plate.label } : null);
+  }
+
+  /** Screen position (CSS px) of the risen plate button, for tests and tooling. */
+  private reportButton(): void {
+    const center = this.plate && this.renderer ? this.buttons?.center(this.plate) : undefined;
+    let value = 'none';
+    if (center && this.renderer) {
+      const point = center.project(this.camera);
+      const bounds = this.renderer.domElement.getBoundingClientRect();
+      value = `${Math.round(bounds.left + (point.x + 1) / 2 * bounds.width)},${Math.round(bounds.top + (1 - point.y) / 2 * bounds.height)}`;
+    }
+    if (this.host.dataset.plateButton !== value && this.outside) this.host.dataset.plateButton = value;
+  }
+
+  private readonly onPointerDown = (event: PointerEvent): void => {
+    this.pointerStart = { x: event.clientX, y: event.clientY };
+  };
+
+  /** A click (not a drag of the orbit) on a raised plate button opens its site in a new tab. */
+  private readonly onPointerUp = (event: PointerEvent): void => {
+    const start = this.pointerStart;
+    this.pointerStart = undefined;
+    if (!start || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 6) return;
+    const hit = this.buttonAt(event);
+    if (hit) window.open(hit.link, '_blank', 'noopener,noreferrer');
+  };
+
+  private readonly onPointerMove = (event: PointerEvent): void => {
+    if (!this.buttons?.visible || !this.renderer) {
+      if (this.renderer && this.renderer.domElement.style.cursor) this.renderer.domElement.style.cursor = '';
+      return;
+    }
+    this.renderer.domElement.style.cursor = this.buttonAt(event) ? 'pointer' : '';
+  };
+
+  private buttonAt(event: PointerEvent): { id: string; link: string } | undefined {
+    if (!this.buttons?.visible || !this.renderer) return undefined;
+    const bounds = this.renderer.domElement.getBoundingClientRect();
+    this.pointer.set((event.clientX - bounds.left) / bounds.width * 2 - 1, -((event.clientY - bounds.top) / bounds.height) * 2 + 1);
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    return this.buttons.hit(this.raycaster);
+  }
+
+  /** Where the room camera should look: the character (at the room's mid height), or the model centre in the studio. */
+  private focusTarget(): Vector3 {
+    if (!this.room || !this.model) return this.center.clone();
+    return new Vector3(this.model.position.x, this.center.y, this.model.position.z);
+  }
+
+  /** Move camera and orbit target together towards the character, keeping the current angle and zoom. */
+  private followCharacter(delta: number): void {
+    if (!this.room || !this.model || !this.controls) return;
+    const target = this.focusTarget();
+    const before = this.focus.clone();
+    if (this.reducedMotion) this.focus.copy(target);
+    else this.focus.lerp(target, 1 - Math.exp(-delta * FOLLOW_RATE));
+    const shift = this.focus.clone().sub(before);
+    if (shift.lengthSq() === 0) return;
+    this.camera.position.add(shift);
+    this.controls.target.add(shift);
+  }
+
+  /** Fixed isometric camera that follows the character, or the free limited orbit. */
+  setCameraMode(mode: CameraMode): void {
+    if (this.disposed || !['follow', 'free'].includes(mode)) return;
+    this.cameraMode = mode;
+    this.applyCameraMode();
+    if (mode === 'follow' && this.ready) this.setView('three-quarter');
+  }
+
+  private applyCameraMode(): void {
+    if (!this.controls) return;
+    const locked = this.inRoom && this.cameraMode === 'follow';
+    this.controls.enableRotate = !locked;
+    this.controls.enableZoom = !locked;
+    this.host.dataset.camera = this.inRoom ? this.cameraMode : 'studio';
   }
 
   private createFloor(y: number): void {
@@ -529,21 +698,23 @@ export class CharacterViewer {
       directions.right = directions.back = directions['three-quarter'] = ROOM_VIEW.clone();
     }
     const damping = this.controls?.enableDamping;
+    const center = this.room ? this.focus : this.center;
     if (this.controls) {
       this.controls.enableDamping = false;
       this.controls.update();
-      this.controls.target.copy(this.center);
+      this.controls.target.copy(center);
     }
-    this.camera.position.copy(this.center).add(directions[preset].normalize().multiplyScalar(this.cameraDistance));
-    this.camera.zoom = 1;
-    this.camera.lookAt(this.center);
+    this.camera.position.copy(center).add(directions[preset].normalize().multiplyScalar(this.cameraDistance));
+    // The fixed room camera keeps the widest zoom of the orbit.
+    this.camera.zoom = this.inRoom && this.cameraMode === 'follow' && this.controls ? this.controls.minZoom : 1;
+    this.camera.lookAt(center);
     this.camera.updateProjectionMatrix();
     this.controls?.update();
     if (this.controls) this.controls.enableDamping = damping ?? !this.reducedMotion;
   }
 
   zoom(factor: number): void {
-    if (!this.ready || this.contextLost || !this.controls) return;
+    if (!this.ready || this.contextLost || !this.controls || (this.inRoom && this.cameraMode === 'follow')) return;
     this.camera.zoom = Math.min(this.controls.maxZoom, Math.max(this.controls.minZoom, this.camera.zoom * factor));
     this.camera.updateProjectionMatrix();
     this.controls.update();
@@ -599,6 +770,7 @@ export class CharacterViewer {
     if (this.disposed) return;
     this.reducedMotion = enabled;
     if (this.controls) this.controls.enableDamping = !enabled;
+    this.buttons?.setReducedMotion(enabled);
     this.host.dataset.reducedMotion = String(enabled);
   }
 
@@ -612,6 +784,7 @@ export class CharacterViewer {
     };
     this.model?.traverse(apply);
     this.room?.traverse(apply);
+    this.outside?.traverse(apply);
     this.host.dataset.wireframe = String(enabled);
   }
 
@@ -742,6 +915,7 @@ export class CharacterViewer {
       if (this.interaction && this.interaction.phase !== 'free') this.driveInteraction(delta);
       else this.drive(delta);
       this.syncLaptop(delta);
+      this.checkPlate();
     }
     if (this.ready && this.mixer && this.playing) {
       this.mixer.update(delta);
@@ -751,7 +925,10 @@ export class CharacterViewer {
       }
       this.emitAnimation();
     }
+    if (this.ready && this.room) this.followCharacter(delta);
     this.controls?.update();
+    this.buttons?.update(delta, this.camera);
+    this.reportButton();
     this.renderer.render(this.scene, this.camera);
     this.sampleRender(frame);
   };
@@ -783,6 +960,13 @@ export class CharacterViewer {
     this.pixelRatio = next;
     this.resize();
   }
+
+  /** Camera angle and zoom as azimuth,polar,zoom (test hook; the target may move with the character). */
+  private readonly onCameraChange = (): void => {
+    if (!this.controls) return;
+    const orbit = `${this.controls.getAzimuthalAngle().toFixed(3)},${this.controls.getPolarAngle().toFixed(3)},${this.camera.zoom.toFixed(3)}`;
+    if (this.host.dataset.orbit !== orbit) this.host.dataset.orbit = orbit;
+  };
 
   private readonly onOrbit = (): void => {
     this.events.orbit();
@@ -820,6 +1004,7 @@ export class CharacterViewer {
     this.observer?.disconnect();
     this.renderer?.setAnimationLoop(null);
     this.controls?.removeEventListener('start', this.onOrbit);
+    this.controls?.removeEventListener('change', this.onCameraChange);
     this.controls?.dispose();
     this.resetDelta();
     this.mixer?.stopAllAction();
@@ -830,6 +1015,7 @@ export class CharacterViewer {
     this.events.animation(null);
     this.events.movement?.(null);
     this.events.render?.(null);
+    this.buttons?.dispose();
     disposeObjects([...this.assetRoots, this.scene]);
     this.key.shadow.dispose();
     this.fill.shadow.dispose();

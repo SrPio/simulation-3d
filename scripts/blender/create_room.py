@@ -366,11 +366,13 @@ def build_wall_decor(m, root):
 def build_anchors(root):
     anchor('Spawn', (0.9, -0.9, 0), root, math.radians(45))
     anchor('Anchor_ChairSeat', (-1.40, -1.0, 0.64), root, math.radians(90), seat='chair', stand_offset=0.20)
-    anchor('Anchor_ChairApproach', (-1.20, 0.25, 0), root, math.radians(180), seat='chair')
+    # The chair can be reached from both of its sides (the character's left and right when seated).
+    anchor('Anchor_ChairApproach_L', (-1.20, 0.25, 0), root, math.radians(180), seat='chair')
+    anchor('Anchor_ChairApproach_R', (-1.20, -2.25, 0), root, 0.0, seat='chair')
     anchor('Anchor_BedSeat', (0.7, 1.05, 0.63), root, 0.0, seat='bed', stand_offset=0.25)
     anchor('Anchor_BedApproach', (0.7, 0.35, 0), root, 0.0, seat='bed')
     anchor('Anchor_DeskLaptop', (-0.82 + DESK_FORWARD, -1.0, 1.056), root, math.radians(90), laptop='desk')
-    anchor('Anchor_BedLaptop', (0.7, 0.70, 0.90), root, 0.0, laptop='bed')
+    anchor('Anchor_BedLaptop', (0.7, 0.58, 0.90), root, 0.0, laptop='bed')
     lights = (('Lamp', (-1.33, 1.93, 1.02), (1.0, 0.62, 0.32), 5.0),
               ('BedGlow', (0.7, 0.85, 0.06), LED, 9.0),
               ('WallGlow', (0.7, 2.05, 0.45), LED, 7.0),

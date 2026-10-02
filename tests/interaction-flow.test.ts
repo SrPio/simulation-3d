@@ -4,9 +4,9 @@ import { test } from 'node:test';
 import { Texture } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CHARACTER_RADIUS } from '../src/character/CharacterController.ts';
-import { InteractionController, LAPTOP_EVENTS, REACH } from '../src/interactions/InteractionController.ts';
+import { APPEAR_TIME, InteractionController, LID_TIME, REACH } from '../src/interactions/InteractionController.ts';
 import { readRoom, type RoomData } from '../src/scene/roomData.ts';
-import { overlaps, type Point2 } from '../src/world/collisions.ts';
+import { overlaps, type Box2, type Point2 } from '../src/world/collisions.ts';
 
 async function room(): Promise<RoomData> {
   const data = await readFile(new URL('../public/models/room.glb', import.meta.url));
@@ -19,8 +19,6 @@ async function room(): Promise<RoomData> {
 
 const manifest = JSON.parse(await readFile(new URL('../public/models/developer-v4-interactions.manifest.json', import.meta.url), 'utf8'));
 const durations = new Map<string, number>(manifest.clips.map((clip: { name: string; duration: number }) => [clip.name, clip.duration]));
-const events = manifest.clips.find((clip: { name: string }) => clip.name === 'laptop_draw_chair').events;
-const stow = manifest.clips.find((clip: { name: string }) => clip.name === 'laptop_stow_chair').events;
 
 /** Plays the requested clips like the viewer's mixer: time advances, one-shot clips report their end. */
 function play(interaction: InteractionController, seconds: number, check?: () => void, until?: () => boolean) {
@@ -33,10 +31,9 @@ function play(interaction: InteractionController, seconds: number, check?: () =>
       clip = request.name;
       time = 0;
     }
-    const duration = durations.get(clip) ?? 1;
-    interaction.update(1 / 60, request ? Math.min(time / duration, 1) : 0);
+    interaction.update(1 / 60);
     time += 1 / 60;
-    if (request && !request.loop && time >= duration) {
+    if (request && !request.loop && time >= (durations.get(clip) ?? 1)) {
       interaction.clipFinished();
       clip = '';
     }
@@ -49,117 +46,152 @@ function play(interaction: InteractionController, seconds: number, check?: () =>
 const settle = (interaction: InteractionController, stage: string, check?: () => void) =>
   play(interaction, 15, check, () => (stage === 'free' ? interaction.phase === 'free' : interaction.phase === 'seated' && interaction.state.stage === stage));
 
-const near = (data: RoomData, seat: 'chair' | 'bed'): Point2 => {
-  const spot = data.seats.find((entry) => entry.seat === seat)!;
-  // Open floor just past the end of the desk (chair) or in front of the bed.
-  return seat === 'chair' ? { x: spot.approach.x + 0.5, z: spot.approach.z - 0.5 } : { x: spot.approach.x + 0.3, z: spot.approach.z + 0.4 };
+const chairOf = (data: RoomData) => data.seats.find((seat) => seat.seat === 'chair')!;
+/** The chair's approach points: on the character's left (back wall side) and right (open side) when seated. */
+const sides = (data: RoomData) => {
+  const [a, b] = chairOf(data).approaches;
+  return a.z < b.z ? { left: a, right: b } : { left: b, right: a };
 };
+/** Open floor a step away from each approach point. */
+const near = (data: RoomData, where: 'left' | 'right' | 'bed'): Point2 => {
+  if (where === 'bed') {
+    const bed = data.seats.find((seat) => seat.seat === 'bed')!.approaches[0];
+    return { x: bed.x + 0.3, z: bed.z + 0.4 };
+  }
+  const point = sides(data)[where];
+  return where === 'left' ? { x: point.x + 0.5, z: point.z - 0.5 } : { x: point.x + 0.5, z: point.z + 0.5 };
+};
+const same = (a: Point2, b: Point2) => Math.hypot(a.x - b.x, a.z - b.z) < 1e-9;
 
-test('the room exports both seats with clear approach points and laptop spots', async () => {
+test('the room exports both seats, the chair with an approach point on each side, and both laptop spots', async () => {
   const data = await room();
   assert.deepEqual(data.seats.map((seat) => seat.seat).sort(), ['bed', 'chair']);
-  for (const seat of data.seats) assert.equal(overlaps(seat.approach, CHARACTER_RADIUS, data.boxes), undefined, `${seat.seat} approach is free`);
+  assert.equal(chairOf(data).approaches.length, 2, 'the chair is reachable from both sides');
+  for (const seat of data.seats) {
+    for (const point of seat.approaches) assert.equal(overlaps(point, CHARACTER_RADIUS, data.boxes), undefined, `${seat.seat} approach is free`);
+  }
+  const { left, right } = sides(data);
+  const stand = chairOf(data).stand;
+  assert.ok(left.z < stand.z && right.z > stand.z, 'one approach on each side of the chair');
   assert.ok(data.laptopSpots.has('desk') && data.laptopSpots.has('lap'));
-  assert.equal(manifest.clips.find((clip: { name: string }) => clip.name === 'laptop_draw_bed').events.take, events.take);
-  assert.deepEqual(LAPTOP_EVENTS, { ...events, ...stow }, 'the viewer uses the laptop event times of the clip manifest');
 });
 
-test('E is only offered for a seat that is near and reachable', async () => {
+test('E is only offered for a seat that is near and reachable, from either side of the chair', async () => {
   const data = await room();
   const interaction = new InteractionController(data.seats, data.boxes, data.halfSize, CHARACTER_RADIUS);
   assert.equal(interaction.available(data.spawn.position)?.seat, 'bed', 'the bed is a few steps from the spawn');
-  const chair = data.seats.find((seat) => seat.seat === 'chair')!;
-  assert.ok(Math.hypot(chair.approach.x - data.spawn.position.x, chair.approach.z - data.spawn.position.z) > REACH, 'the chair is not');
-  assert.equal(interaction.available(near(data, 'chair'))?.seat, 'chair');
-  assert.equal(interaction.prompt(near(data, 'chair')), 'E: sentarse en la silla');
+  for (const point of chairOf(data).approaches) {
+    assert.ok(Math.hypot(point.x - data.spawn.position.x, point.z - data.spawn.position.z) > REACH, 'the chair is not');
+  }
+  for (const side of ['left', 'right'] as const) {
+    assert.equal(interaction.available(near(data, side))?.seat, 'chair', side);
+    assert.equal(interaction.prompt(near(data, side)), 'E: sentarse en la silla');
+  }
   const far = { x: data.halfSize - 0.5, z: data.halfSize - 0.5 };
   assert.equal(interaction.available(far), undefined);
   assert.equal(interaction.interact(far, 0), false);
   assert.match(interaction.message, /Acércate/);
-  // A wall between the character and the seat removes the offer.
-  const wall = { name: 'blocker', minX: chair.approach.x - 1, maxX: chair.approach.x + 1, minZ: chair.approach.z + 0.25, maxZ: chair.approach.z + 0.3 };
+  // A wall between the character and the left approach removes the offer there (the right side is out of reach).
+  const { left } = sides(data);
+  const wall = { name: 'blocker', minX: left.x - 1, maxX: left.x + 1, minZ: left.z - 0.3, maxZ: left.z - 0.25 };
   const blocked = new InteractionController(data.seats, [...data.boxes, wall], data.halfSize, CHARACTER_RADIUS);
-  assert.notEqual(blocked.available(near(data, 'chair'))?.seat, 'chair', 'the blocked chair is not offered (the bed may still be)');
+  assert.notEqual(blocked.available(near(data, 'left'))?.seat, 'chair', 'the blocked chair is not offered (the bed may still be)');
 });
 
-test('chair: walk up, sit, open the laptop, type, and E while typing stows it before standing', async () => {
+test('chair from the right: walk up, sit, open the desk laptop, type, and E closes it before standing on the same side', async () => {
   const data = await room();
-  const interaction = new InteractionController(data.seats, data.boxes, data.halfSize, CHARACTER_RADIUS, { ...events, ...stow });
-  const chair = data.seats.find((seat) => seat.seat === 'chair')!;
-  assert.ok(interaction.interact(near(data, 'chair'), 0));
+  const interaction = new InteractionController(data.seats, data.boxes, data.halfSize, CHARACTER_RADIUS);
+  const chair = chairOf(data);
+  assert.ok(interaction.interact(near(data, 'right'), 0));
   assert.equal(interaction.phase, 'approaching');
   settle(interaction, 'seated', () => {
     if (interaction.phase === 'approaching') assert.equal(overlaps(interaction.position, CHARACTER_RADIUS, data.boxes), undefined, 'the approach never walks through furniture');
   });
-  assert.equal(interaction.phase, 'seated');
-  assert.equal(interaction.state.stage, 'seated');
   assert.deepEqual(interaction.position, chair.stand);
   assert.ok(Math.abs(interaction.yaw - chair.yaw) < 1e-9);
+  assert.equal(interaction.laptop, 'none');
   assert.equal(interaction.laptopPress(), true);
+  assert.equal(interaction.state.stage, 'opening');
+  assert.equal(interaction.laptop, 'desk', 'the desk laptop is used at the chair');
   assert.equal(interaction.laptopPress(), false, 'no double command during a transition');
   assert.equal(interaction.interact(interaction.position, 0), false, 'E waits for the transition');
-  settle(interaction, 'typing');
-  assert.equal(interaction.state.stage, 'typing');
-  assert.equal(interaction.laptop, 'desk');
+  let frames = 0;
+  settle(interaction, 'typing', () => { frames++; });
+  assert.ok(frames / 60 <= LID_TIME + 0.05, `the lid just opens: ${frames / 60}s`);
   assert.equal(interaction.lid, 1);
-  assert.match(interaction.prompt(interaction.position), /L: guardar/);
+  assert.equal(interaction.shown, 0, 'nothing appears on the lap at the chair');
+  assert.match(interaction.prompt(interaction.position), /L: cerrar/);
   assert.ok(interaction.interact(interaction.position, 0));
-  assert.equal(interaction.state.stage, 'stowing');
+  assert.equal(interaction.state.stage, 'closing');
   settle(interaction, 'free');
-  assert.equal(interaction.laptop, 'stowed', 'stowing carries the laptop away from the desk');
+  assert.equal(interaction.laptop, 'none');
   assert.equal(interaction.lid, 0);
-  assert.equal(interaction.phase, 'free');
-  assert.deepEqual(interaction.position, chair.approach, 'back on the clear approach point');
+  assert.ok(same(interaction.position, sides(data).right), 'back out on the side used to sit down');
 });
 
-test('bed: the laptop only comes to the lap when carried, and is never in two places', async () => {
+test('chair from the left: if that side gets blocked while seated, standing up leaves by the other one', async () => {
   const data = await room();
-  const interaction = new InteractionController(data.seats, data.boxes, data.halfSize, CHARACTER_RADIUS, { ...events, ...stow });
-  assert.ok(interaction.interact(data.spawn.position, 0));
+  const boxes: Box2[] = [...data.boxes];
+  const interaction = new InteractionController(data.seats, boxes, data.halfSize, CHARACTER_RADIUS);
+  const { left, right } = sides(data);
+  assert.ok(interaction.interact(near(data, 'left'), 0));
   settle(interaction, 'seated');
-  assert.equal(interaction.state.stage, 'seated');
-  assert.equal(interaction.laptopPress(), false, 'the laptop is still on the desk');
-  assert.match(interaction.message, /escritorio/);
+  boxes.push({ name: 'bag', minX: left.x - 0.1, maxX: left.x + 0.1, minZ: left.z - 0.1, maxZ: left.z + 0.1 });
   assert.ok(interaction.interact(interaction.position, 0));
   settle(interaction, 'free');
-  assert.equal(interaction.phase, 'free');
-  // Carry it: sit at the desk, take it, stow it.
-  assert.ok(interaction.interact(near(data, 'chair'), 0));
-  settle(interaction, 'seated');
-  interaction.laptopPress();
-  settle(interaction, 'typing');
-  interaction.laptopPress();
-  settle(interaction, 'seated');
-  assert.equal(interaction.laptop, 'stowed');
-  interaction.interact(interaction.position, 0);
-  settle(interaction, 'free');
-  assert.equal(interaction.phase, 'free');
-  // Now the bed takes it onto the lap: closed when it appears, then opened.
-  assert.ok(interaction.interact(data.spawn.position, 0));
-  settle(interaction, 'seated');
-  assert.ok(interaction.laptopPress());
-  let sawClosedOnLap = false;
-  settle(interaction, 'typing', () => {
-    assert.ok(interaction.laptop !== 'desk', 'never back on the desk while it is in use on the bed');
-    if (interaction.laptop === 'lap' && interaction.lid < 0.05) sawClosedOnLap = true;
-  });
-  assert.ok(sawClosedOnLap);
-  assert.equal(interaction.laptop, 'lap');
-  assert.equal(interaction.state.stage, 'typing');
-  interaction.reset();
-  assert.equal(interaction.laptop, 'stowed', 'abandoning the seat never leaves the laptop on an empty lap');
+  assert.ok(same(interaction.position, right));
 });
 
-test('standing up is refused while the exit is blocked', async () => {
+test('bed: the laptop appears on the lap and opens, even with the desk laptop in the room, then closes and disappears', async () => {
   const data = await room();
-  const chair = data.seats.find((seat) => seat.seat === 'chair')!;
-  const boxes = [...data.boxes];
-  const interaction = new InteractionController(data.seats, boxes, data.halfSize, CHARACTER_RADIUS);
-  interaction.interact(near(data, 'chair'), 0);
+  const interaction = new InteractionController(data.seats, data.boxes, data.halfSize, CHARACTER_RADIUS);
+  assert.ok(interaction.interact(near(data, 'bed'), 0));
   settle(interaction, 'seated');
-  boxes.push({ name: 'bag', minX: chair.approach.x - 0.1, maxX: chair.approach.x + 0.1, minZ: chair.approach.z - 0.1, maxZ: chair.approach.z + 0.1 });
+  assert.equal(interaction.seat?.seat, 'bed');
+  assert.ok(interaction.laptopPress(), 'always available on the bed');
+  assert.equal(interaction.laptop, 'lap');
+  let sawAppearing = false;
+  let frames = 0;
+  settle(interaction, 'typing', () => {
+    frames++;
+    if (interaction.shown > 0 && interaction.shown < 1) {
+      sawAppearing = true;
+      assert.equal(interaction.lid, 0, 'it opens once it has appeared');
+    }
+  });
+  assert.ok(sawAppearing);
+  assert.ok(frames / 60 <= APPEAR_TIME + LID_TIME + 0.05, `quick: ${frames / 60}s`);
+  assert.equal(interaction.shown, 1);
+  assert.equal(interaction.lid, 1);
+  assert.ok(interaction.laptopPress());
+  settle(interaction, 'seated');
+  assert.equal(interaction.laptop, 'none');
+  assert.equal(interaction.shown, 0);
+  assert.ok(interaction.laptopPress());
+  settle(interaction, 'typing');
+  interaction.reset();
+  assert.equal(interaction.laptop, 'none', 'abandoning the seat never leaves a laptop on an empty lap');
+  assert.equal(interaction.shown, 0);
+});
+
+test('sitting down and standing up are quick one-second clips', () => {
+  for (const seat of ['chair', 'bed']) {
+    for (const action of ['sit_down', 'stand_up']) {
+      const duration = durations.get(`${action}_${seat}`)!;
+      assert.ok(duration > 0.7 && duration <= 1.0, `${action}_${seat}: ${duration}s`);
+    }
+  }
+});
+
+test('standing up is refused while every exit is blocked', async () => {
+  const data = await room();
+  const boxes: Box2[] = [...data.boxes];
+  const interaction = new InteractionController(data.seats, boxes, data.halfSize, CHARACTER_RADIUS);
+  interaction.interact(near(data, 'right'), 0);
+  settle(interaction, 'seated');
+  for (const point of chairOf(data).approaches) boxes.push({ name: 'bag', minX: point.x - 0.1, maxX: point.x + 0.1, minZ: point.z - 0.1, maxZ: point.z + 0.1 });
   assert.equal(interaction.interact(interaction.position, 0), false);
   assert.match(interaction.message, /bloqueada/);
-  boxes.pop();
+  boxes.splice(-2);
   assert.ok(interaction.interact(interaction.position, 0));
 });

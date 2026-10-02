@@ -6,9 +6,9 @@ import { AnimationMixer, Box3, LoopOnce, Quaternion, SkinnedMesh, Texture, Vecto
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InteractionState } from '../src/interactions/interactionState.ts';
 
-async function deskLaptop(room: Object3D) {
+async function placedLaptop(room: Object3D, seat: 'chair' | 'bed') {
   const laptop = (await load('laptop')).scene;
-  const anchor = room.getObjectByName('Anchor_DeskLaptop')!;
+  const anchor = room.getObjectByName(seat === 'chair' ? 'Anchor_DeskLaptop' : 'Anchor_BedLaptop')!;
   laptop.position.copy(anchor.getWorldPosition(new Vector3()));
   laptop.quaternion.copy(anchor.getWorldQuaternion(new Quaternion()));
   laptop.updateMatrixWorld(true);
@@ -24,7 +24,7 @@ async function load(file: string) {
   return loader.parseAsync(data.buffer.slice(data.byteOffset, data.byteOffset + data.length), '');
 }
 
-test('seat and laptop transitions reject incompatible commands and stow before standing', () => {
+test('seat and laptop transitions reject incompatible commands and close the laptop before standing', () => {
   for (const seat of ['chair', 'bed'] as const) {
     const state = new InteractionState();
     assert.ok(state.setSeat(seat));
@@ -36,13 +36,15 @@ test('seat and laptop transitions reject incompatible commands and stow before s
     state.finish();
     assert.equal(state.stage, 'seated');
     assert.ok(state.command('laptop'));
+    assert.equal(state.stage, 'opening');
+    assert.equal(state.clip, `seated_${seat}`, 'the laptop opens while the character stays seated');
     assert.equal(state.command('laptop'), false);
-    state.finish();
+    assert.equal(state.finish(), false, 'opening has no clip to finish');
+    state.laptopDone();
     assert.equal(state.clip, `typing_${seat}`);
-    assert.equal(state.finish(), false);
     assert.ok(state.command('stand'));
-    assert.equal(state.stage, 'stowing');
-    state.finish();
+    assert.equal(state.stage, 'closing');
+    state.laptopDone();
     assert.equal(state.stage, 'standing');
     state.finish();
     assert.equal(state.stage, 'idle');
@@ -65,7 +67,8 @@ test('V4 interaction GLB sits on the room seats and types on the desk laptop', a
   const { scene, animations } = await load('developer-v4-interactions');
   const room = (await load('room')).scene;
   room.updateMatrixWorld(true);
-  assert.equal(animations.length, 15);
+  assert.equal(animations.length, 12);
+  assert.equal(animations.find((clip) => clip.name.startsWith('laptop_')), undefined, 'no laptop draw/stow clips: the laptop just appears');
   const manifest = JSON.parse(await readFile(new URL('../public/models/developer-v4-interactions.manifest.json', import.meta.url), 'utf8'));
   const mixer = new AnimationMixer(scene);
   const bone = (name: string) => scene.getObjectByName(name)!.getWorldPosition(new Vector3());
@@ -74,7 +77,7 @@ test('V4 interaction GLB sits on the room seats and types on the desk laptop', a
     const offset = manifest.seats[seat].stand_offset;
     assert.equal(anchor.userData.stand_offset, offset, `${seat}: clips and room agree on the stand offset`);
     const seatHeight = anchor.getWorldPosition(new Vector3()).y;
-    for (const action of ['sit_down', 'seated', 'stand_up', 'laptop_draw', 'typing', 'laptop_stow']) {
+    for (const action of ['sit_down', 'seated', 'stand_up', 'typing']) {
       const name = `${action}_${seat}`;
       const clip = animations.find((entry) => entry.name === name);
       assert.ok(clip, name);
@@ -89,7 +92,7 @@ test('V4 interaction GLB sits on the room seats and types on the desk laptop', a
         for (const track of clip.tracks) assert.ok(Array.from(track.values).every(Number.isFinite), track.name);
         const seated = !(action === 'sit_down' && progress === 0) && !(action === 'stand_up' && progress === 1);
         const pelvis = bone('pelvis');
-        if (seated && ['seated', 'typing', 'laptop_draw', 'laptop_stow'].includes(action)) {
+        if (seated && ['seated', 'typing'].includes(action)) {
           assert.ok(Math.abs(pelvis.y - manifest.seats[seat].hip_height) < 0.02, `${name}: hip height ${pelvis.y}`);
           assert.ok(pelvis.y - seatHeight > 0.03 && pelvis.y - seatHeight < 0.15, `${name}: hips rest on the ${seat}`);
           assert.ok(Math.abs(pelvis.z + offset) < 0.02, `${name}: hips moved back onto the ${seat} (${pelvis.z})`);
@@ -98,43 +101,45 @@ test('V4 interaction GLB sits on the room seats and types on the desk laptop', a
       }
     }
   }
-  // Typing at the desk: place the character where the viewer does and compare with the room laptop.
-  const anchor = room.getObjectByName('Anchor_ChairSeat')!;
-  scene.quaternion.copy(anchor.getWorldQuaternion(new Quaternion()));
-  scene.position.copy(anchor.getWorldPosition(new Vector3()).setY(0))
-    .add(new Vector3(0, 0, manifest.seats.chair.stand_offset).applyQuaternion(scene.quaternion));
-  mixer.stopAllAction();
-  mixer.clipAction(animations.find((clip) => clip.name === 'typing_chair')!).reset().play();
-  mixer.setTime(0.5);
-  scene.updateMatrixWorld(true);
-  // Wrists hover over the laptop's palm rest; the mesh test below checks the fingers against keys and screen.
-  const laptop = new Box3().setFromObject((await deskLaptop(room)).getObjectByName('LaptopBase')!, true);
-  laptop.min.x -= 0.05; laptop.min.z -= 0.05; laptop.max.x += 0.05; laptop.max.z += 0.05; laptop.max.y += 0.14;
-  for (const side of ['L', 'R']) {
-    const wrist = bone(`hand_${side}`);
-    assert.ok(laptop.containsPoint(wrist), `typing_chair: ${side} wrist ${wrist.toArray().map((v) => v.toFixed(2))} over the laptop`);
+  // Typing: place the character where the viewer does and compare with the laptop of that seat.
+  for (const seat of ['chair', 'bed'] as const) {
+    const anchor = room.getObjectByName(seat === 'chair' ? 'Anchor_ChairSeat' : 'Anchor_BedSeat')!;
+    scene.quaternion.copy(anchor.getWorldQuaternion(new Quaternion()));
+    scene.position.copy(anchor.getWorldPosition(new Vector3()).setY(0))
+      .add(new Vector3(0, 0, manifest.seats[seat].stand_offset).applyQuaternion(scene.quaternion));
+    mixer.stopAllAction();
+    mixer.clipAction(animations.find((clip) => clip.name === `typing_${seat}`)!).reset().play();
+    mixer.setTime(0.5);
+    scene.updateMatrixWorld(true);
+    // Wrists hover over the laptop's palm rest; the mesh test below checks the fingers against keys and screen.
+    const laptop = new Box3().setFromObject((await placedLaptop(room, seat)).getObjectByName('LaptopBase')!, true);
+    laptop.min.x -= 0.05; laptop.min.z -= 0.05; laptop.max.x += 0.05; laptop.max.z += 0.05; laptop.max.y += 0.14;
+    for (const side of ['L', 'R']) {
+      const wrist = bone(`hand_${side}`);
+      assert.ok(laptop.containsPoint(wrist), `typing_${seat}: ${side} wrist ${wrist.toArray().map((v) => v.toFixed(2))} over the laptop`);
+    }
   }
   mixer.stopAllAction();
   mixer.uncacheRoot(scene);
 });
 
-test('typing at the desk keeps the hand meshes on the keyboard, out of the laptop screen', async () => {
+for (const seat of ['chair', 'bed'] as const) test(`typing on the ${seat} keeps the hand meshes on the keyboard, out of the laptop screen`, async () => {
   const { scene, animations } = await load('developer-v4-interactions');
   const room = (await load('room')).scene;
   room.updateMatrixWorld(true);
   const manifest = JSON.parse(await readFile(new URL('../public/models/developer-v4-interactions.manifest.json', import.meta.url), 'utf8'));
-  const anchor = room.getObjectByName('Anchor_ChairSeat')!;
+  const anchor = room.getObjectByName(seat === 'chair' ? 'Anchor_ChairSeat' : 'Anchor_BedSeat')!;
   scene.quaternion.copy(anchor.getWorldQuaternion(new Quaternion()));
   scene.position.copy(anchor.getWorldPosition(new Vector3()).setY(0))
-    .add(new Vector3(0, 0, manifest.seats.chair.stand_offset).applyQuaternion(scene.quaternion));
-  const desk = await deskLaptop(room);
+    .add(new Vector3(0, 0, manifest.seats[seat].stand_offset).applyQuaternion(scene.quaternion));
+  const desk = await placedLaptop(room, seat);
   const lid = new Box3().setFromObject(desk.getObjectByName('LaptopLid')!, true)
     .union(new Box3().setFromObject(desk.getObjectByName('Display')!, true));
   const base = new Box3().setFromObject(desk.getObjectByName('LaptopBase')!, true);
   const hands = ['Hand_L', 'Hand_R'].map((name) => scene.getObjectByName(name) as SkinnedMesh);
   const mixer = new AnimationMixer(scene);
-  mixer.clipAction(animations.find((clip) => clip.name === 'typing_chair')!).play();
-  const clip = animations.find((entry) => entry.name === 'typing_chair')!;
+  const clip = animations.find((entry) => entry.name === `typing_${seat}`)!;
+  mixer.clipAction(clip).play();
   const vertex = new Vector3();
   for (let i = 0; i < 8; i++) {
     mixer.setTime(clip.duration * i / 8);

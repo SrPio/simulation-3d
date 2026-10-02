@@ -83,9 +83,9 @@ function pose(scene: Object3D) {
   scene.traverse((object) => { if (object instanceof SkinnedMesh) object.skeleton.update(); });
 }
 
-test('V4 rig is fully skinned with seamless idle, walk and run loops', async () => {
+test('V4 rig is fully skinned with seamless idle, walk and run loops and a jump that starts and ends standing', async () => {
   const { scene, animations } = await loadRig();
-  assert.deepEqual(animations.map((clip) => clip.name).sort(), ['idle', 'run', 'walk']);
+  assert.deepEqual(animations.map((clip) => clip.name).sort(), ['idle', 'jump', 'run', 'walk']);
   for (const name of ['DeveloperRig', 'root', 'pelvis', 'chest', 'head', 'clavicle_L', 'upper_arm_R', 'forearm_L',
     'hand_R', 'finger_L_0', 'thumb_R', 'thigh_L', 'shin_R', 'foot_L']) {
     assert.ok(scene.getObjectByName(name), name);
@@ -112,7 +112,81 @@ test('V4 rig is fully skinned with seamless idle, walk and run loops', async () 
   }
   const manifest = JSON.parse(await readFile(new URL('public/models/developer-v4-rig.manifest.json', root), 'utf8'));
   assert.equal(manifest.source, 'developer-v4-rig.glb');
-  assert.deepEqual(manifest.clips.map((clip: { name: string }) => clip.name), ['idle', 'walk', 'run']);
+  assert.deepEqual(manifest.clips.map((clip: { name: string }) => clip.name), ['idle', 'walk', 'run', 'jump']);
+  const jump = manifest.clips.find((clip: { name: string }) => clip.name === 'jump');
+  assert.equal(jump.loop, false);
+  assert.ok(jump.distance > 0.2 && jump.distance < 0.8, 'a short hop');
+});
+
+/** World positions of every vertex of the matching skinned meshes, after posing. */
+function vertices(scene: Object3D, pattern: RegExp): Vector3[] {
+  const out: Vector3[] = [];
+  scene.traverse((object) => {
+    if (!(object instanceof SkinnedMesh) || !pattern.test(object.name)) return;
+    const positions = object.geometry.getAttribute('position');
+    for (let i = 0; i < positions.count; i++) out.push(object.getVertexPosition(i, new Vector3()).applyMatrix4(object.matrixWorld));
+  });
+  return out;
+}
+
+test('V4 arms hang close to the body at rest and while walking, without cutting into it', async () => {
+  const { scene, animations } = await loadRig();
+  // Torso half width (hoodie and trousers) in the bind pose, where the T-pose arms are out of the way.
+  scene.traverse((object) => { if (object instanceof SkinnedMesh) object.skeleton.pose(); });
+  pose(scene);
+  const torso = vertices(scene, /^(Hoodie|Pants)$/).filter((point) => point.y < 1.6 && point.y > 0.7);
+  const halfWidth = (y: number) => Math.max(...torso.filter((point) => Math.abs(point.y - y) < 0.03).map((point) => Math.abs(point.x)));
+  const mixer = new AnimationMixer(scene);
+  for (const name of ['idle', 'walk']) {
+    const clip = animations.find((entry) => entry.name === name)!;
+    mixer.stopAllAction();
+    mixer.clipAction(clip).reset().setLoop(LoopOnce, 1).play().clampWhenFinished = true;
+    for (let i = 0; i < 8; i++) {
+      mixer.setTime(clip.duration * i / 8);
+      pose(scene);
+      for (const side of ['L', 'R']) {
+        const hand = vertices(scene, new RegExp(`^Hand_${side}$`));
+        const inner = Math.min(...hand.map((point) => Math.abs(point.x)));
+        const height = hand.reduce((sum, point) => sum + point.y, 0) / hand.length;
+        const body = halfWidth(height);
+        assert.ok(inner > body + 0.005, `${name} ${side} frame ${i}: hand ${inner.toFixed(3)} cuts into the body (${body.toFixed(3)})`);
+        assert.ok(inner < body + 0.09, `${name} ${side} frame ${i}: hand ${inner.toFixed(3)} hangs away from the body (${body.toFixed(3)})`);
+        const wrist = scene.getObjectByName(`hand_${side}`)!.getWorldPosition(new Vector3());
+        assert.ok(Math.abs(wrist.x) < 0.42, `${name} ${side} frame ${i}: wrist ${wrist.x.toFixed(3)} close to the hips`);
+      }
+    }
+  }
+  mixer.stopAllAction();
+  mixer.uncacheRoot(scene);
+});
+
+test('V4 jump crouches, leaves the floor and lands back on it', async () => {
+  const { scene, animations } = await loadRig();
+  const manifest = JSON.parse(await readFile(new URL('public/models/developer-v4-rig.manifest.json', root), 'utf8'));
+  const [takeOff, landing] = manifest.clips.find((clip: { name: string }) => clip.name === 'jump').air;
+  const clip = animations.find((entry) => entry.name === 'jump')!;
+  const mixer = new AnimationMixer(scene);
+  mixer.clipAction(clip).reset().setLoop(LoopOnce, 1).play().clampWhenFinished = true;
+  const lowest = (fraction: number) => {
+    mixer.setTime(clip.duration * fraction);
+    pose(scene);
+    return new Box3().setFromObject(scene, true).min.y;
+  };
+  // In time order: a clamped one-shot action stops updating once it has reached its end.
+  const grounded = (fraction: number) => {
+    const floor = lowest(fraction);
+    assert.ok(floor > -0.025 && floor < 0.03, `feet on the floor at ${fraction}: ${floor}`);
+  };
+  grounded(0);
+  grounded(0.1);
+  assert.ok(scene.getObjectByName('pelvis')!.getWorldPosition(new Vector3()).y < 0.97, 'crouches before pushing off');
+  grounded(takeOff - 0.02);
+  assert.ok(lowest((takeOff + landing) / 2) > 0.12, 'airborne at the top of the hop');
+  grounded(landing + 0.03);
+  grounded(0.9);
+  grounded(1);
+  mixer.stopAllAction();
+  mixer.uncacheRoot(scene);
 });
 
 test('V4 clips lower the T-pose arms, stay in place above the floor and move the legs', async () => {
@@ -130,12 +204,12 @@ test('V4 clips lower the T-pose arms, stay in place above the floor and move the
       assert.ok(bounds.min.y > -0.025, `${clip.name}: floor ${bounds.min.y}`);
       assert.ok(size.x < 1.6 && size.y > 2.4 && size.y < 2.8, `${clip.name}: arms lowered, intact ${size.toArray()}`);
       const hand = scene.getObjectByName('hand_R')!.getWorldPosition(new Vector3());
-      assert.ok(hand.y < 1.45, `${clip.name}: hand height ${hand.y}`);
+      if (clip.name !== 'jump') assert.ok(hand.y < 1.45,`${clip.name}: hand height ${hand.y}`);
       const rootBone = scene.getObjectByName('root')!.getWorldPosition(new Vector3());
       assert.ok(Math.abs(rootBone.x) < 0.0001 && Math.abs(rootBone.z) < 0.0001, `${clip.name}: in place`);
       feet.push(scene.getObjectByName('foot_L')!.getWorldPosition(new Vector3()).z);
     }
-    if (clip.name !== 'idle') assert.ok(Math.max(...feet) - Math.min(...feet) > 0.2, `${clip.name}: stride`);
+    if (!['idle', 'jump'].includes(clip.name)) assert.ok(Math.max(...feet) - Math.min(...feet) > 0.2, `${clip.name}: stride`);
   }
   mixer.stopAllAction();
   mixer.uncacheRoot(scene);

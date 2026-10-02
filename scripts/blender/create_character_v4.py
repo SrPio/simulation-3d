@@ -1,6 +1,6 @@
 """V4 character: polished reference-faithful model built from signed distance fields.
 
-Independent from V1/V2/V3. Reference photos live in assets/reference/v4/.
+Independent from V1/V2. Reference photos live in assets/reference/v4/.
 Convention: meters, feet at Z=0, character faces -Y, T-pose.
 """
 import argparse

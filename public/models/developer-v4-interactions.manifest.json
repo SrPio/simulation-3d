@@ -21,9 +21,9 @@
     },
     {
       "name": "walk",
-      "duration": 1.0,
+      "duration": 0.9333333333333333,
       "loop": true,
-      "speed": 0.7
+      "speed": 0.8035714285714285
     },
     {
       "name": "run",
@@ -32,8 +32,19 @@
       "speed": 2.1315789473684217
     },
     {
+      "name": "jump",
+      "duration": 0.8,
+      "loop": false,
+      "speed": 0,
+      "distance": 0.45,
+      "air": [
+        0.26,
+        0.7
+      ]
+    },
+    {
       "name": "sit_down_chair",
-      "duration": 1.5,
+      "duration": 0.9333333333333333,
       "loop": false,
       "seat": "chair",
       "events": {
@@ -49,21 +60,11 @@
     },
     {
       "name": "stand_up_chair",
-      "duration": 1.5,
+      "duration": 0.9333333333333333,
       "loop": false,
       "seat": "chair",
       "events": {
         "standing": 1.0
-      }
-    },
-    {
-      "name": "laptop_draw_chair",
-      "duration": 2.0,
-      "loop": false,
-      "seat": "chair",
-      "events": {
-        "take": 0.25,
-        "open": 0.7
       }
     },
     {
@@ -74,18 +75,8 @@
       "events": {}
     },
     {
-      "name": "laptop_stow_chair",
-      "duration": 2.0,
-      "loop": false,
-      "seat": "chair",
-      "events": {
-        "close": 0.3,
-        "store": 0.75
-      }
-    },
-    {
       "name": "sit_down_bed",
-      "duration": 1.5,
+      "duration": 0.9333333333333333,
       "loop": false,
       "seat": "bed",
       "events": {
@@ -101,21 +92,11 @@
     },
     {
       "name": "stand_up_bed",
-      "duration": 1.5,
+      "duration": 0.9333333333333333,
       "loop": false,
       "seat": "bed",
       "events": {
         "standing": 1.0
-      }
-    },
-    {
-      "name": "laptop_draw_bed",
-      "duration": 2.0,
-      "loop": false,
-      "seat": "bed",
-      "events": {
-        "take": 0.25,
-        "open": 0.7
       }
     },
     {
@@ -124,16 +105,6 @@
       "loop": true,
       "seat": "bed",
       "events": {}
-    },
-    {
-      "name": "laptop_stow_bed",
-      "duration": 2.0,
-      "loop": false,
-      "seat": "bed",
-      "events": {
-        "close": 0.3,
-        "store": 0.75
-      }
     }
   ]
 }

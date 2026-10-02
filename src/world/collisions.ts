@@ -2,6 +2,13 @@
 
 export type Box2 = { name: string; minX: number; maxX: number; minZ: number; maxZ: number };
 export type Point2 = { x: number; z: number };
+/** Walkable floor rectangle. A number is a square room of that half size centred at the origin. */
+export type Bounds = { minX: number; maxX: number; minZ: number; maxZ: number };
+export type Floor = Bounds | number;
+
+export function floorBounds(floor: Floor): Bounds {
+  return typeof floor === 'number' ? { minX: -floor, maxX: floor, minZ: -floor, maxZ: floor } : floor;
+}
 
 /** Push a circle out of every box it overlaps, keeping the tangential motion (sliding). */
 export function resolve(point: Point2, radius: number, boxes: readonly Box2[], iterations = 4): Point2 {
@@ -34,23 +41,24 @@ export function resolve(point: Point2, radius: number, boxes: readonly Box2[], i
   return { x, z };
 }
 
-/** Keep the circle on the floor of a square room centred at the origin. */
-export function clampToFloor(point: Point2, radius: number, halfSize: number): Point2 {
-  const limit = Math.max(halfSize - radius, 0);
-  return { x: Math.min(Math.max(point.x, -limit), limit), z: Math.min(Math.max(point.z, -limit), limit) };
+/** Keep the circle inside the walkable floor. */
+export function clampToFloor(point: Point2, radius: number, floor: Floor): Point2 {
+  const { minX, maxX, minZ, maxZ } = floorBounds(floor);
+  const clamp = (value: number, min: number, max: number) => min + radius > max - radius ? (min + max) / 2 : Math.min(Math.max(value, min + radius), max - radius);
+  return { x: clamp(point.x, minX, maxX), z: clamp(point.z, minZ, maxZ) };
 }
 
 /**
  * Move from `from` by `delta` in sub-steps no longer than half the radius, so a long frame cannot
  * tunnel through thin furniture, resolving collisions after every sub-step.
  */
-export function sweep(from: Point2, delta: Point2, radius: number, boxes: readonly Box2[], halfSize: number): Point2 {
+export function sweep(from: Point2, delta: Point2, radius: number, boxes: readonly Box2[], floor: Floor): Point2 {
   const length = Math.hypot(delta.x, delta.z);
   const steps = Math.max(1, Math.ceil(length / (radius * 0.5)));
   let point = { ...from };
   for (let i = 0; i < steps; i++) {
     point = { x: point.x + delta.x / steps, z: point.z + delta.z / steps };
-    point = clampToFloor(resolve(point, radius, boxes), radius, halfSize);
+    point = clampToFloor(resolve(point, radius, boxes), radius, floor);
   }
   return point;
 }

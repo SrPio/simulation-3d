@@ -1,7 +1,8 @@
 """Phase 2B for V4: sitting on the room's chair/bed and using the laptop.
 
-Adds twelve clips to a copy of the V4 rig (idle/walk/run are kept):
-sit_down, seated, stand_up, laptop_draw, typing and laptop_stow, each for chair and bed.
+Adds eight clips to a copy of the V4 rig (idle/walk/run/jump are kept):
+sit_down, seated, stand_up and typing, each for chair and bed. The laptop itself just appears and
+opens (or closes and disappears) in the viewer; typing starts from the seated pose by a crossfade.
 Clip origin = the standing spot in front of the seat, facing the character's forward (-Y).
 The hips travel `stand_offset` meters back onto the seat; the room exports the same offset on its
 seat anchors so the viewer can place the character. Laptop positions match the room anchors.
@@ -24,19 +25,19 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'assets' / 'blender' / 'developer-v4-rig.blend'
 TARGET = ROOT / 'assets' / 'blender' / 'developer-v4-interactions.blend'
 MANIFEST = ROOT / 'public' / 'models' / 'developer-v4-interactions.manifest.json'
-ACTIONS = {'sit_down': 45, 'seated': 90, 'stand_up': 45, 'laptop_draw': 60, 'typing': 90, 'laptop_stow': 60}
+ACTIONS = {'sit_down': 28, 'seated': 90, 'stand_up': 28, 'typing': 90}
 CLIPS = {f'{action}_{seat}': frames for seat in ('chair', 'bed') for action, frames in ACTIONS.items()}
 LOOPING = {'seated', 'typing'}
-EVENTS = {'laptop_draw': {'take': 0.25, 'open': 0.7}, 'laptop_stow': {'close': 0.3, 'store': 0.75},
-          'sit_down': {'seated': 1.0}, 'stand_up': {'standing': 1.0}}
+EVENTS = {'sit_down': {'seated': 1.0}, 'stand_up': {'standing': 1.0}}
 # Character-local targets (meters; forward is -Y). Hip = thigh joint height when seated.
 # 'type' is the wrist over the laptop keys: V4's hand reaches ~0.29 m past the wrist, so the wrist
-# stays back from the hinge and high enough for level fingertips to rest on the keys.
+# stays back from the hinge and high enough for level fingertips to rest on the keys. On the bed the
+# laptop (Anchor_BedLaptop) sits as far ahead of the wrists as the desk one does at the chair.
 SEATS = {
     'chair': {'back': 0.20, 'hip': 0.72, 'ankle_y': -0.10, 'lean': 0.05, 'type_lean': 0.12,
-              'reach': (0.19, -0.44, 1.17), 'type': (0.11, -0.33, 1.185), 'palm': (0.0, -1.0, -0.05)},
+              'type': (0.11, -0.33, 1.185), 'palm': (0.0, -1.0, -0.05)},
     'bed': {'back': 0.25, 'hip': 0.72, 'ankle_y': -0.08, 'lean': 0.06, 'type_lean': 0.16,
-            'reach': (0.42, 0.33, 0.70), 'type': (0.11, 0.0, 0.99), 'palm': (0.0, -1.0, -0.1)},
+            'type': (0.11, -0.02, 1.03), 'palm': (0.0, -1.0, -0.06)},
 }
 # Resting hands lie along the top of each thigh: seated, the thigh's front-to-back depth (~0.17 m)
 # points up, so the wrist sits this far above the thigh axis, a quarter of the way to the knee.
@@ -84,17 +85,6 @@ def hand_basis(side, forward, head_rest, tail_rest, wrist):
     return Matrix.Translation(wrist) @ (m2 @ m1.inverted()).to_4x4() @ Matrix.Translation(-head_rest)
 
 
-def laptop_amount(action, phase):
-    """0 = hands resting, 1 = hands on the keyboard, plus how far the hands are out reaching."""
-    if action == 'typing':
-        return 1.0, 0.0
-    if action in ('laptop_draw', 'laptop_stow'):
-        p = phase if action == 'laptop_draw' else 1 - phase
-        reach = math.sin(math.pi * smooth(p / 0.55)) if p < 0.55 else 0.0
-        return smooth((p - 0.4) / 0.5), reach
-    return 0.0, 0.0
-
-
 def pose(defs, clip, phase):
     action, seat = clip.rsplit('_', 1)
     cfg = SEATS[seat]
@@ -103,7 +93,7 @@ def pose(defs, clip, phase):
     head_of = {name: h for name, (h, _, _) in defs.items()}
     standing = STANDING(defs, 'idle', 0.0)
     s = smooth(phase) if action == 'sit_down' else (1 - smooth(phase) if action == 'stand_up' else 1.0)
-    work, reach = laptop_amount(action, phase)
+    work = 1.0 if action == 'typing' else 0.0  # 0 = hands resting on the thighs, 1 = on the keyboard
     breathe = 0.012 * math.sin(2 * wave) if action in LOOPING else 0.0
     # Hips go back first, then down, with a forward lean that peaks mid-transition.
     offset = Vector((0, cfg['back'] * s ** 0.7, (cfg['hip'] - 1.0) * s ** 1.3))
@@ -139,9 +129,6 @@ def pose(defs, clip, phase):
         typing = Vector(cfg['type']) * mirror
         wiggle = Vector((0, 0.008 * math.sin(wave * 6 + side), 0.006 * math.sin(wave * 9 + side * 2))) if action == 'typing' else Vector()
         wrist = rest_wrist.lerp(typing + wiggle, work)
-        if reach:
-            target = Vector(cfg['reach']) * mirror
-            wrist = wrist.lerp(target, reach * (1.0 if (seat == 'chair' or side == 1) else 0.2))
         l1, l2 = (elbow_rest - shoulder_rest).length, (wrist_rest - elbow_rest).length
         elbow = solve_elbow(shoulder, wrist, l1, l2, (side * 1.0, 0.35, -0.6))
         upper = aim(clav, shoulder_rest, elbow_rest, shoulder, elbow)
@@ -176,7 +163,7 @@ def main():
     rig.pose_matrices = pose
     rig.create_actions(armature, defs)
     bpy.data.objects['Developer']['stage'] = '02B-v4-seat-laptop'
-    armature['clips'] = ','.join(['idle', 'walk', 'run', *CLIPS])
+    armature['clips'] = ','.join(['idle', 'walk', 'run', 'jump', *CLIPS])
     bpy.ops.wm.save_as_mainfile(filepath=str(TARGET), compress=True)
     base = json.loads((ROOT / 'public' / 'models' / 'developer-v4-rig.manifest.json').read_text(encoding='utf-8'))
     clips = base['clips'] + [{'name': name, 'duration': frames / rig.FPS, 'loop': name.rsplit('_', 1)[0] in LOOPING,

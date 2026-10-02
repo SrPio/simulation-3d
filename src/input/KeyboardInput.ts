@@ -1,7 +1,7 @@
 import type { MoveIntent } from '../character/CharacterController';
 
-export type PressAction = 'interact' | 'laptop';
-const PRESSES: Record<string, PressAction> = { KeyE: 'interact', KeyL: 'laptop' };
+export type PressAction = 'interact' | 'laptop' | 'jump';
+const PRESSES: Record<string, PressAction> = { KeyE: 'interact', KeyL: 'laptop', Space: 'jump' };
 
 const BINDINGS: Record<string, 'forward' | 'back' | 'left' | 'right'> = {
   KeyW: 'forward', ArrowUp: 'forward', KeyS: 'back', ArrowDown: 'back',
@@ -16,14 +16,14 @@ function ownsKeyboard(target: EventTarget | null): boolean {
 }
 
 /**
- * WASD / arrows for movement and Shift to run. Keys are released when the window loses focus or the
+ * WASD / arrows for movement, Shift to run, Space to jump, E and L for seats and the laptop. Keys are released when the window loses focus or the
  * page is hidden, so a key held while switching away never keeps the character walking.
  */
 export class KeyboardInput {
   private readonly held = new Set<'forward' | 'back' | 'left' | 'right'>();
   private shift = false;
   enabled = true;
-  /** One call per physical press of E (sit/stand) or L (laptop); key repeat is ignored. */
+  /** One call per physical press of E (sit/stand), L (laptop) or Space (jump); key repeat is ignored. */
   onPress?: (action: PressAction) => void;
 
   constructor(target: Window, signal: AbortSignal) {
@@ -51,8 +51,10 @@ export class KeyboardInput {
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === 'Shift') this.shift = true;
     const press = PRESSES[event.code];
-    if (press && this.enabled && !event.repeat && !event.ctrlKey && !event.altKey && !event.metaKey && !ownsKeyboard(event.target)) {
-      this.onPress?.(press);
+    if (press && this.enabled && !event.ctrlKey && !event.altKey && !event.metaKey && !ownsKeyboard(event.target)) {
+      // Space would also scroll the page or press the focused button.
+      if (press === 'jump') event.preventDefault();
+      if (!event.repeat) this.onPress?.(press);
       return;
     }
     const action = BINDINGS[event.code];
@@ -64,6 +66,7 @@ export class KeyboardInput {
 
   private readonly onKeyUp = (event: KeyboardEvent): void => {
     if (event.key === 'Shift') this.shift = false;
+    if (event.code === 'Space' && this.enabled && !ownsKeyboard(event.target)) event.preventDefault();
     const action = BINDINGS[event.code];
     if (action) this.held.delete(action);
   };

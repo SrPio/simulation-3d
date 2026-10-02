@@ -8,8 +8,7 @@ export const modelVersions = {
     revision: 'V1 / ORIGINAL',
     status: 'V1 original conservada',
     stage: 'V1 CONSERVADA',
-    copy: 'V1 original conservada sin cambios. Continuamos desde V1 con rig y ciclos en el sitio. V2 es opcional; V3 está PAUSADA.',
-    paused: false,
+    copy: 'V1 original conservada sin cambios. Continuamos desde V1 con rig y ciclos en el sitio. V2 es opcional.',
   },
   v1rig: {
     label: 'V1 Animada',
@@ -18,7 +17,6 @@ export const modelVersions = {
     status: 'V1 Animada · Fase 2A',
     stage: 'FASE 2A',
     copy: 'Fase 2A · Rig y ciclos en el sitio: reposo, caminar y correr. Sin objetos ni gameplay. Sentarse y usar el portátil vendrán después.',
-    paused: false,
   },
   v2: {
     label: 'V2 Model sheet',
@@ -27,16 +25,6 @@ export const modelVersions = {
     status: 'V2 estudio anterior inacabado',
     stage: 'V2 CONSERVADA',
     copy: 'V2 Model sheet · Estudio anterior inacabado de silueta y proporciones, conservado sin cambios.',
-    paused: false,
-  },
-  v3: {
-    label: 'V3 Detallada · PAUSADA',
-    file: 'models/developer-v3.glb',
-    revision: 'V3 / PAUSADA',
-    status: 'V3 PAUSADA',
-    stage: 'V3 PAUSADA',
-    copy: 'V3 está PAUSADA. No se carga ningún archivo de V3; continuamos el plan desde V1.',
-    paused: true,
   },
   v4: {
     label: 'V4 Pulida',
@@ -45,7 +33,6 @@ export const modelVersions = {
     status: 'V4 pulida · fiel a la referencia',
     stage: 'V4 PULIDA',
     copy: 'V4 Pulida · Modelo independiente fiel a las fotos de referencia: rostro, barba, gorra, sudadera y zapatillas detallados. La versión con rig es V4 Animada.',
-    paused: false,
   },
   v4rig: {
     label: 'V4 Animada',
@@ -53,8 +40,7 @@ export const modelVersions = {
     revision: 'V4 / RIG + ASIENTOS',
     status: 'V4 Animada · rig, ciclos y asientos',
     stage: 'V4 RIG',
-    copy: 'V4 Animada · Reposo, caminar y correr, más sentarse, portátil y escribir en silla y cama. En Habitación se coloca en el asiento de cada clip.',
-    paused: false,
+    copy: 'V4 Animada · Reposo, caminar, correr y saltar, más sentarse, portátil y escribir en silla y cama. En Habitación se coloca en el asiento de cada clip.',
   },
 } as const;
 
@@ -102,7 +88,6 @@ export type SceneId = 'studio' | 'room';
 
 export async function loadCharacter(modelId: ModelVersionId, signal: AbortSignal): Promise<GLTF> {
   if (!isModelVersionId(modelId)) throw new Error('MODEL_VERSION_INVALID');
-  if (modelVersions[modelId].paused) throw new Error('MODEL_VERSION_PAUSED');
   return loadGlb(modelVersions[modelId].file, 'MODEL', signal);
 }
 
@@ -112,9 +97,16 @@ export function loadRoom(signal: AbortSignal): Promise<GLTF> {
 
 export const laptopFile = 'models/laptop.glb';
 
-/** The single interactive laptop of the room (phase 5). Its failures are reported as room failures. */
+/** The laptop model, shown on the desk and on the lap. Its failures are reported as room failures. */
 export function loadLaptop(signal: AbortSignal): Promise<GLTF> {
   return loadGlb(laptopFile, 'ROOM', signal);
+}
+
+export const outsideFile = 'models/outside.glb';
+
+/** Ground outside the room with the portfolio and GitHub plates. Its failures are reported as room failures. */
+export function loadOutside(signal: AbortSignal): Promise<GLTF> {
+  return loadGlb(outsideFile, 'ROOM', signal);
 }
 
 async function loadGlb(file: string, kind: 'MODEL' | 'ROOM', signal: AbortSignal): Promise<GLTF> {
