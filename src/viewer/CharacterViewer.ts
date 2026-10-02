@@ -5,7 +5,8 @@ import {
   type WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { createRenderer, MAX_PIXEL_RATIO } from '../core/renderer';
+import { createRenderer } from '../core/renderer';
+import { QUALITY, defaultQuality, nextPixelRatio, ratioRange, type QualityId } from '../core/quality.ts';
 import { mergeSkinnedMeshes, mergeStaticMeshes } from '../scene/mergeStatic.ts';
 import { CHARACTER_RADIUS, CharacterController, type Locomotion } from '../character/CharacterController';
 import { KeyboardInput, type PressAction } from '../input/KeyboardInput';
@@ -18,6 +19,8 @@ export type LightPreset = 'neutral' | 'violet';
 export type MovementState = 'ready' | 'unavailable' | 'seated' | 'interacting';
 export type ViewerStatus = { kind: 'loading' | 'ready' | 'error'; title: string; detail: string };
 export type ModelStats = { meshes: number; triangles: number };
+/** Measured rendering cost, sampled about twice a second. */
+export type RenderStats = { fps: number; frameMs: number; pixelRatio: number; drawCalls: number; triangles: number };
 export type AnimationState = {
   clips: string[];
   clip: string;
@@ -33,6 +36,9 @@ type ViewerOptions = {
   light: LightPreset;
   wireframe: boolean;
   scene?: SceneId;
+  quality?: QualityId;
+  /** Decorative motion off: no camera inertia and a still laptop screen. Character animation is content and stays. */
+  reducedMotion?: boolean;
 };
 
 // Isometric diorama: the camera stays on the open side of the two room walls.
@@ -46,6 +52,7 @@ type ViewerEvents = {
   orbit: () => void;
   animation: (state: AnimationState | null) => void;
   movement?: (state: MovementState | null, text?: string) => void;
+  render?: (stats: RenderStats | null) => void;
 };
 
 const LOCOMOTION = new Set(['idle', 'walk', 'run']);
@@ -83,9 +90,12 @@ export class CharacterViewer {
   /** A refused E/L press is explained in the HUD for a moment. */
   private notice = { text: '', until: 0 };
   /** Adaptive resolution: drop the pixel ratio when frames are slow (fill-rate bound), raise it back when there is headroom. */
-  private pixelRatio = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
+  private quality: QualityId = defaultQuality;
+  private reducedMotion = false;
+  private pixelRatio = 1;
   private frameAverage = 1000 / 60;
   private framesSinceAdjust = 0;
+  private sample = { frames: 0, time: 0, calls: 0, triangles: 0 };
   private readonly bounds = new Vector3(1, 2.5, 1);
   private readonly center = new Vector3(0, 1.25, 0);
   private cameraDistance = 7;
@@ -107,6 +117,9 @@ export class CharacterViewer {
     private readonly options: ViewerOptions,
   ) {
     this.wireframe = options.wireframe;
+    this.quality = options.quality ?? defaultQuality;
+    this.reducedMotion = options.reducedMotion ?? false;
+    this.pixelRatio = ratioRange(this.quality, window.devicePixelRatio).max;
     const version = modelVersions[options.modelId];
     this.events.status({ kind: 'loading', title: `Cargando ${version.label}`, detail: `Preparando ${version.file}. ${version.copy}` });
     this.events.stats(null);
@@ -120,7 +133,7 @@ export class CharacterViewer {
       this.renderer.domElement.addEventListener('webglcontextrestored', this.onContextRestored);
       this.controls = new OrbitControls(this.camera, this.renderer.domElement);
       this.controls.enablePan = false;
-      this.controls.enableDamping = true;
+      this.controls.enableDamping = !this.reducedMotion;
       this.controls.dampingFactor = 0.08;
       this.controls.minZoom = 0.65;
       this.controls.maxZoom = 2.4;
@@ -135,6 +148,8 @@ export class CharacterViewer {
       this.controls.enabled = false;
       this.controls.addEventListener('start', this.onOrbit);
       this.configureLights();
+      this.setQuality(this.quality);
+      this.setReducedMotion(this.reducedMotion);
       this.setView(this.options.view);
       this.setLight(this.options.light);
       this.observer = new ResizeObserver(this.resize);
@@ -158,7 +173,6 @@ export class CharacterViewer {
   private configureLights(): void {
     this.key.position.set(3, 6, 5);
     this.key.castShadow = true;
-    this.key.shadow.mapSize.set(2048, 2048);
     this.key.shadow.normalBias = 0.018;
     this.key.shadow.bias = -0.00015;
     this.key.shadow.radius = 4;
@@ -358,7 +372,7 @@ export class CharacterViewer {
     }
     if (this.laptopHinge) this.laptopHinge.rotation.x = this.laptopOpen * this.interaction.lid;
     const typing = this.interaction.phase === 'seated' && this.interaction.state.stage === 'typing';
-    if (this.laptopScreen && typing) this.laptopScreen.offset.y = (this.laptopScreen.offset.y - delta * 0.035) % 1;
+    if (this.laptopScreen && typing && !this.reducedMotion) this.laptopScreen.offset.y = (this.laptopScreen.offset.y - delta * 0.035) % 1;
     const lid = this.interaction.lid >= 0.999 ? 'open' : this.interaction.lid <= 0.001 ? 'closed' : 'moving';
     if (this.host.dataset.laptop !== place) this.host.dataset.laptop = place;
     if (this.host.dataset.lid !== lid) this.host.dataset.lid = lid;
@@ -525,7 +539,7 @@ export class CharacterViewer {
     this.camera.lookAt(this.center);
     this.camera.updateProjectionMatrix();
     this.controls?.update();
-    if (this.controls) this.controls.enableDamping = damping ?? true;
+    if (this.controls) this.controls.enableDamping = damping ?? !this.reducedMotion;
   }
 
   zoom(factor: number): void {
@@ -559,6 +573,33 @@ export class CharacterViewer {
     this.ambient.intensity = violet ? 1.1 : 2.2;
     this.host.dataset.light = preset;
     if (this.floor) this.floor.material.color.copy(new Color(violet ? 0x362942 : 0x302839));
+  }
+
+  /** Pixel ratio range and shadows for a quality preset; applies live, without reloading the scene. */
+  setQuality(quality: QualityId): void {
+    if (this.disposed) return;
+    this.quality = quality;
+    const profile = QUALITY[quality];
+    const range = ratioRange(quality, window.devicePixelRatio);
+    this.pixelRatio = Math.min(range.max, Math.max(range.min, quality === 'auto' ? this.pixelRatio : range.max));
+    this.framesSinceAdjust = 0;
+    // Only the key light casts shadows. Toggling castShadow recompiles the lit materials on the next frame.
+    this.key.castShadow = profile.shadows;
+    if (this.key.shadow.mapSize.x !== profile.shadowSize) {
+      this.key.shadow.mapSize.set(profile.shadowSize, profile.shadowSize);
+      this.key.shadow.map?.dispose();
+      this.key.shadow.map = null;
+    }
+    this.host.dataset.quality = quality;
+    this.host.dataset.shadows = String(profile.shadows);
+    this.resize();
+  }
+
+  setReducedMotion(enabled: boolean): void {
+    if (this.disposed) return;
+    this.reducedMotion = enabled;
+    if (this.controls) this.controls.enableDamping = !enabled;
+    this.host.dataset.reducedMotion = String(enabled);
   }
 
   setWireframe(enabled: boolean): void {
@@ -712,16 +753,31 @@ export class CharacterViewer {
     }
     this.controls?.update();
     this.renderer.render(this.scene, this.camera);
+    this.sampleRender(frame);
   };
+
+  /** Draw calls and triangles of the last frame plus the average frame time, reported about twice a second. */
+  private sampleRender(frame: number | undefined): void {
+    if (!this.renderer || frame === undefined || frame > 250) return;
+    const sample = this.sample;
+    sample.frames += 1;
+    sample.time += frame;
+    sample.calls = this.renderer.info.render.calls;
+    sample.triangles = this.renderer.info.render.triangles;
+    if (sample.time < 500) return;
+    const frameMs = sample.time / sample.frames;
+    const stats: RenderStats = { fps: 1000 / frameMs, frameMs, pixelRatio: this.pixelRatio, drawCalls: sample.calls, triangles: sample.triangles };
+    this.sample = { frames: 0, time: 0, calls: 0, triangles: 0 };
+    this.host.dataset.drawCalls = String(stats.drawCalls);
+    this.host.dataset.frameMs = frameMs.toFixed(1);
+    this.events.render?.(stats);
+  }
 
   private adaptResolution(frame: number): void {
     if (frame > 250) return; // a stall (tab switch, GC) is not a steady frame rate
     this.frameAverage += (frame - this.frameAverage) * 0.05;
     if (++this.framesSinceAdjust < 90) return;
-    const ceiling = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
-    let next = this.pixelRatio;
-    if (this.frameAverage > 21 && this.pixelRatio > 1) next = Math.max(1, this.pixelRatio - 0.25);
-    else if (this.frameAverage < 14 && this.pixelRatio < ceiling) next = Math.min(ceiling, this.pixelRatio + 0.25);
+    const next = nextPixelRatio(this.pixelRatio, this.frameAverage, ratioRange(this.quality, window.devicePixelRatio));
     this.framesSinceAdjust = 0;
     if (next === this.pixelRatio) return;
     this.pixelRatio = next;
@@ -773,6 +829,7 @@ export class CharacterViewer {
     this.activeClip = '';
     this.events.animation(null);
     this.events.movement?.(null);
+    this.events.render?.(null);
     disposeObjects([...this.assetRoots, this.scene]);
     this.key.shadow.dispose();
     this.fill.shadow.dispose();

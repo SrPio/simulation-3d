@@ -426,6 +426,11 @@ def iso_camera():
     bpy.context.scene.camera = camera
 
 
+# Lossy WebP (EXT_texture_webp) instead of PNG: the room textures go from 2.8 MB to a fraction, with no
+# visible change at the diorama scale. Source PNGs stay in assets/textures/room/.
+WEB_IMAGES = dict(export_image_format='WEBP', export_image_quality=85)
+
+
 def export_glb(root):
     bpy.ops.object.select_all(action='DESELECT')
     for obj in [root, *root.children_recursive]:
@@ -434,7 +439,7 @@ def export_glb(root):
     GLB.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.export_scene.gltf(filepath=str(GLB), export_format='GLB', use_selection=True, export_apply=True,
                               export_yup=True, export_extras=True, export_cameras=False, export_lights=False,
-                              export_animations=False)
+                              export_animations=False, **WEB_IMAGES)
     print(f'Room GLB: {GLB} ({GLB.stat().st_size} bytes)')
 
 

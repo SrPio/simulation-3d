@@ -1,6 +1,7 @@
 import './styles.css';
 import { defaultModelVersion, isModelVersionId, modelVersions, type ModelVersionId, type SceneId } from './core/loadAssets';
-import { CharacterViewer, type AnimationState, type LightPreset, type MovementState, type ViewPreset, type ViewerStatus } from './viewer/CharacterViewer';
+import { QUALITY, isQualityId, readPreferences, savePreferences, type QualityId } from './core/quality.ts';
+import { CharacterViewer, type AnimationState, type LightPreset, type MovementState, type RenderStats, type ViewPreset, type ViewerStatus } from './viewer/CharacterViewer';
 
 const sceneCopy: Record<SceneId, string> = {
   studio: 'Estudio · El personaje sobre la peana para revisar silueta, materiales y animación.',
@@ -84,6 +85,16 @@ app.innerHTML = `
         </div>
         <label class="wireframe-row" for="wireframe"><span>Ver alambre</span><input id="wireframe" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span></label>
       </fieldset>
+      <fieldset class="control-section" id="quality-controls" aria-describedby="quality-copy">
+        <legend>Rendimiento <span>CALIDAD</span></legend>
+        <div class="segmented quality-selector">
+          ${Object.entries(QUALITY).map(([id, profile]) => `<button type="button" data-quality="${id}" aria-pressed="false">${profile.label}</button>`).join('')}
+        </div>
+        <p id="quality-copy" class="version-copy"></p>
+        <label class="wireframe-row" for="reduced-motion"><span>Reducir movimiento</span><input id="reduced-motion" type="checkbox" role="switch" aria-describedby="motion-copy"><span class="switch-track" aria-hidden="true"></span></label>
+        <p id="motion-copy" class="version-copy">Sin inercia de cámara, pantalla del portátil quieta y sin transiciones de la interfaz. Las animaciones del personaje se mantienen.</p>
+        <p id="render-stats" class="version-copy render-stats">— fps · — draw calls</p>
+      </fieldset>
       <section class="stages" aria-labelledby="stages-title">
         <h2 id="stages-title">El proceso</h2>
         <ol>
@@ -154,6 +165,35 @@ function updateMovement(state: MovementState | null, text?: string): void {
   roomHud.dataset.state = state ?? 'none';
   if (state) hudHint.textContent = text ?? movementHints[state];
   hudReset.disabled = state !== 'ready' && state !== 'interacting';
+}
+const qualityCopy: Record<QualityId, string> = {
+  auto: 'Auto · Ajusta la resolución (1–1,5×) al tiempo de cada fotograma para mantener la fluidez. Con sombras.',
+  high: 'Alta · Resolución nativa hasta 2×, sin reducirla. Más nítido; pide más a la GPU.',
+  low: 'Baja · Sin sombras y resolución de 0,75–1×. Para equipos modestos o batería.',
+};
+const qualityButtons = Array.from(app.querySelectorAll<HTMLButtonElement>('[data-quality]'));
+const reducedMotion = element<HTMLInputElement>('#reduced-motion');
+const renderStats = element<HTMLParagraphElement>('#render-stats');
+const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+const storage = (() => { try { return window.localStorage; } catch { return undefined; } })();
+const preferences = readPreferences(storage);
+const decimal = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 });
+
+function motionReduced(): boolean {
+  return preferences.reducedMotion ?? motionQuery.matches;
+}
+
+function applyPreferences(): void {
+  for (const button of qualityButtons) button.setAttribute('aria-pressed', String(button.dataset.quality === preferences.quality));
+  element<HTMLParagraphElement>('#quality-copy').textContent = qualityCopy[preferences.quality];
+  reducedMotion.checked = motionReduced();
+  document.documentElement.dataset.reducedMotion = String(motionReduced());
+}
+
+function updateRender(state: RenderStats | null): void {
+  renderStats.textContent = state
+    ? `${Math.round(state.fps)} fps · ${decimal.format(state.frameMs)} ms · ${decimal.format(state.pixelRatio)}× · ${number.format(state.drawCalls)} draw calls`
+    : '— fps · — draw calls';
 }
 const viewLabel = element<HTMLSpanElement>('#view-label');
 const wireframe = element<HTMLInputElement>('#wireframe');
@@ -263,7 +303,11 @@ function mount(): void {
     orbit: () => { if (current()) setViewSelection(null); },
     animation: (state) => { if (current()) updateAnimation(state); },
     movement: (state, text) => { if (current()) updateMovement(state, text); },
-  }, { modelId: selectedModel, view: selectedView, light: selectedLight, wireframe: wireframe.checked, scene: selectedScene });
+    render: (state) => { if (current()) updateRender(state); },
+  }, {
+    modelId: selectedModel, view: selectedView, light: selectedLight, wireframe: wireframe.checked, scene: selectedScene,
+    quality: preferences.quality, reducedMotion: motionReduced(),
+  });
 }
 
 for (const button of viewButtons) {
@@ -305,6 +349,28 @@ animationTimeline.addEventListener('input', () => viewer?.scrub(Number(animation
 wireframe.addEventListener('change', () => viewer?.setWireframe(wireframe.checked), { signal: listeners.signal });
 element<HTMLButtonElement>('#zoom-in').addEventListener('click', () => viewer?.zoom(1.15), { signal: listeners.signal });
 element<HTMLButtonElement>('#zoom-out').addEventListener('click', () => viewer?.zoom(1 / 1.15), { signal: listeners.signal });
+for (const button of qualityButtons) {
+  button.addEventListener('click', () => {
+    const quality = button.dataset.quality;
+    if (!isQualityId(quality) || quality === preferences.quality) return;
+    preferences.quality = quality;
+    savePreferences(storage, preferences);
+    applyPreferences();
+    viewer?.setQuality(quality);
+  }, { signal: listeners.signal });
+}
+reducedMotion.addEventListener('change', () => {
+  preferences.reducedMotion = reducedMotion.checked;
+  savePreferences(storage, preferences);
+  applyPreferences();
+  viewer?.setReducedMotion(reducedMotion.checked);
+}, { signal: listeners.signal });
+// Without a stored choice the switch follows the system setting, also when it changes.
+motionQuery.addEventListener('change', () => {
+  if (preferences.reducedMotion !== null) return;
+  applyPreferences();
+  viewer?.setReducedMotion(motionReduced());
+}, { signal: listeners.signal });
 retry.addEventListener('click', mount, { signal: listeners.signal });
 hudReset.addEventListener('click', () => viewer?.resetPosition(), { signal: listeners.signal });
 hudHelp.addEventListener('click', () => {
@@ -324,4 +390,5 @@ window.addEventListener('pagehide', (event) => {
   if (!event.persisted) dispose();
 }, { signal: listeners.signal });
 if (import.meta.hot) import.meta.hot.dispose(dispose);
+applyPreferences();
 mount();

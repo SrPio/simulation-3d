@@ -13,7 +13,8 @@ async function loadRoom() {
   assert.equal(buffer.readUInt32LE(8), buffer.byteLength);
   const document = JSON.parse(buffer.toString('utf8', 20, 20 + buffer.readUInt32LE(12)));
   const loader = new GLTFLoader();
-  loader.register(() => ({ name: 'HeadlessRoomTextures', loadTexture: () => Promise.resolve(new Texture()) }));
+  // Named like the built-in WebP plugin so it replaces it: Node cannot decode images.
+  loader.register(() => ({ name: 'EXT_texture_webp', loadTexture: () => Promise.resolve(new Texture()) }));
   const gltf = await loader.parseAsync(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength), '');
   gltf.scene.updateMatrixWorld(true);
   return { gltf, document, buffer };

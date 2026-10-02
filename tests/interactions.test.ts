@@ -19,7 +19,8 @@ async function load(file: string) {
   const data = await readFile(new URL(`../public/models/${file}.glb`, import.meta.url));
   const loader = new GLTFLoader();
   // Node has no image decoder; geometry and anchors are what these tests inspect.
-  loader.register(() => ({ name: 'HeadlessTextures', loadTexture: () => Promise.resolve(new Texture()) }));
+  // Named like the built-in WebP plugin so it replaces it: Node cannot decode images.
+  loader.register(() => ({ name: 'EXT_texture_webp', loadTexture: () => Promise.resolve(new Texture()) }));
   return loader.parseAsync(data.buffer.slice(data.byteOffset, data.byteOffset + data.length), '');
 }
 

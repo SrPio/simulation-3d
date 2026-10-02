@@ -11,7 +11,8 @@ import { readRoom } from '../src/scene/roomData.ts';
 async function loadModel(name: string) {
   const data = await readFile(new URL(`../public/models/${name}.glb`, import.meta.url));
   const loader = new GLTFLoader();
-  loader.register(() => ({ name: 'HeadlessTextures', loadTexture: () => Promise.resolve(new Texture()) }));
+  // Named like the built-in WebP plugin so it replaces it: Node cannot decode images.
+  loader.register(() => ({ name: 'EXT_texture_webp', loadTexture: () => Promise.resolve(new Texture()) }));
   return loader.parseAsync(data.buffer.slice(data.byteOffset, data.byteOffset + data.length), '');
 }
 
@@ -883,4 +884,94 @@ test('missing WebGL2 produces an actionable message', async () => {
   await expect(page.locator('#overlay-title')).toHaveText('WebGL 2 no está disponible');
   await expect(page.locator('#retry')).toBeVisible();
   await page.close();
+});
+
+test('quality presets change resolution and shadows live, persist across reloads and report the frame cost', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 2, reducedMotion: 'reduce' });
+  t.after(() => page.close());
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await roomWithV4(page);
+  const host = page.locator('#canvas-host');
+  const ratio = async () => Number(await host.getAttribute('data-pixel-ratio'));
+  await expect(page.locator('button[data-quality="auto"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(host).toHaveAttribute('data-quality', 'auto');
+  await expect(host).toHaveAttribute('data-shadows', 'true');
+  assert.ok(await ratio() >= 1 && await ratio() <= 1.5);
+  await expect(page.locator('#render-stats')).toContainText(/\d+ fps · [\d,]+ ms · [\d,]+× · \d+ draw calls/, { timeout: 5000 });
+  const calls = Number(await host.getAttribute('data-draw-calls'));
+  assert.ok(calls > 10 && calls < 200, `Merged room and character draw calls: ${calls}`);
+  const auto = await frame(page);
+  await page.locator('button[data-quality="low"]').click();
+  await expect(host).toHaveAttribute('data-shadows', 'false');
+  await expect(page.locator('#quality-copy')).toContainText('Sin sombras');
+  assert.ok(await ratio() <= 1);
+  const low = await frame(page);
+  assert.ok(!auto.equals(low), 'Baja renders without shadows at a lower resolution');
+  await page.locator('button[data-quality="high"]').click();
+  await expect(host).toHaveAttribute('data-shadows', 'true');
+  assert.equal(await ratio(), 2);
+  await expect(host).toHaveAttribute('data-model', 'v4rig');
+  await page.reload();
+  await expectModel(page, 'v1');
+  await expect(page.locator('button[data-quality="high"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(host).toHaveAttribute('data-quality', 'high');
+  assert.equal(await ratio(), 2);
+  assert.deepEqual(errors, []);
+});
+
+test('Reducir movimiento follows the system setting, can be overridden and stops interface transitions', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  t.after(() => page.close());
+  await ready(page);
+  const host = page.locator('#canvas-host');
+  const transition = () => page.locator('.switch-track').first().evaluate((element) => getComputedStyle(element).transitionDuration);
+  await expect(page.locator('#reduced-motion')).not.toBeChecked();
+  await expect(host).toHaveAttribute('data-reduced-motion', 'false');
+  assert.notEqual(await transition(), '0s');
+  await page.locator('#reduced-motion').check();
+  await expect(host).toHaveAttribute('data-reduced-motion', 'true');
+  await expect(page.locator('html')).toHaveAttribute('data-reduced-motion', 'true');
+  assert.equal(await transition(), '0s');
+  await page.reload();
+  await expectModel(page, 'v1');
+  await expect(page.locator('#reduced-motion')).toBeChecked();
+
+  const system = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+  t.after(() => system.close());
+  await ready(system);
+  await expect(system.locator('#reduced-motion')).toBeChecked();
+  await expect(system.locator('#canvas-host')).toHaveAttribute('data-reduced-motion', 'true');
+  await system.locator('#reduced-motion').uncheck();
+  await expect(system.locator('#canvas-host')).toHaveAttribute('data-reduced-motion', 'false');
+  assert.notEqual(await system.locator('.switch-track').first().evaluate((element) => getComputedStyle(element).transitionDuration), '0s');
+});
+
+test('switching scenes and versions many times keeps one graphics context and a bounded heap', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce' });
+  t.after(() => page.close());
+  const warnings: string[] = [];
+  page.on('console', (message) => { if (/WebGL|context/i.test(message.text()) && message.type() !== 'log') warnings.push(message.text()); });
+  page.on('pageerror', (error) => warnings.push(error.message));
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Performance.enable');
+  const heap = async () => {
+    await cdp.send('HeapProfiler.collectGarbage');
+    const { metrics } = await cdp.send('Performance.getMetrics');
+    return metrics.find((metric) => metric.name === 'JSHeapUsedSize')!.value / 1e6;
+  };
+  await roomWithV4(page);
+  const cycle = async () => {
+    await page.getByRole('button', { name: 'Estudio', exact: true }).click();
+    await expectModel(page, 'v4rig');
+    await page.getByRole('button', { name: 'Habitación', exact: true }).click();
+    await expectModel(page, 'v4rig');
+  };
+  await cycle();
+  const before = await heap();
+  for (let index = 0; index < 6; index += 1) await cycle();
+  const after = await heap();
+  await expect(page.locator('canvas')).toHaveCount(1);
+  assert.ok(after - before < 40, `JS heap grew from ${before.toFixed(1)} MB to ${after.toFixed(1)} MB`);
+  assert.deepEqual(warnings, []);
 });

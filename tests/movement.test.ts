@@ -12,7 +12,8 @@ const forward = { forward: 1, right: 0, run: false };
 async function roomBoxes() {
   const data = await readFile(new URL('../public/models/room.glb', import.meta.url));
   const loader = new GLTFLoader();
-  loader.register(() => ({ name: 'HeadlessTextures', loadTexture: () => Promise.resolve(new Texture()) }));
+  // Named like the built-in WebP plugin so it replaces it: Node cannot decode images.
+  loader.register(() => ({ name: 'EXT_texture_webp', loadTexture: () => Promise.resolve(new Texture()) }));
   const { scene } = await loader.parseAsync(data.buffer.slice(data.byteOffset, data.byteOffset + data.length), '');
   scene.updateMatrixWorld(true);
   const boxes: Box2[] = [];

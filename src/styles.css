@@ -179,6 +179,10 @@ legend > span { font-size: 8px; font-weight: 400; color: var(--faint); letter-sp
   .wordmark > span:last-child { max-width: 84px; line-height: 1.6; }
 }
 
+.render-stats { font-variant-numeric: tabular-nums; }
+
+/* The Reducir movimiento switch starts from the system setting; before the script runs, the system setting applies. */
+:root[data-reduced-motion='true'] *, :root[data-reduced-motion='true'] *::before, :root[data-reduced-motion='true'] *::after { animation: none !important; transition: none !important; }
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
+  :root:not([data-reduced-motion]) *, :root:not([data-reduced-motion]) *::before, :root:not([data-reduced-motion]) *::after { animation: none !important; transition: none !important; }
 }

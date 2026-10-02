@@ -12,7 +12,7 @@ from pathlib import Path
 import bpy
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from create_room import TEXTURES, box, material, planar_uv
+from create_room import TEXTURES, WEB_IMAGES, box, material, planar_uv
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'assets' / 'blender' / 'laptop.blend'
@@ -63,7 +63,7 @@ def main():
     bpy.context.view_layer.objects.active = root
     bpy.ops.export_scene.gltf(filepath=str(OUTPUT), export_format='GLB', use_selection=True, export_apply=True,
                               export_yup=True, export_extras=True, export_animations=False, export_cameras=False,
-                              export_lights=False)
+                              export_lights=False, **WEB_IMAGES)
     print(f'Laptop: {SOURCE}, {OUTPUT} ({OUTPUT.stat().st_size} bytes)')
 
 
