@@ -10,12 +10,14 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 REFERENCE = ROOT / 'assets' / 'reference' / 'room' / 'room-reference.jpg'
 CHARACTER = ROOT / 'assets' / 'blender' / 'developer-v4-interactions.blend'
-# shot: (clip, frame, anchor the character stands at). Seat anchors carry the stand_offset used by the clips.
+LAPTOP = ROOT / 'assets' / 'blender' / 'laptop.blend'
+# shot: (clip, frame, anchor the character stands at, laptop anchor). Seat anchors carry the
+# stand_offset used by the clips; the single laptop sits on the desk unless it is on the lap.
 SHOTS = {
-    'diorama-empty': None,
-    'diorama': ('idle', 20, 'Spawn'),
-    'diorama-typing': ('typing_chair', 30, 'Anchor_ChairSeat'),
-    'diorama-bed': ('typing_bed', 30, 'Anchor_BedSeat'),
+    'diorama-empty': (None, 0, None, 'Anchor_DeskLaptop'),
+    'diorama': ('idle', 20, 'Spawn', 'Anchor_DeskLaptop'),
+    'diorama-typing': ('typing_chair', 30, 'Anchor_ChairSeat', 'Anchor_DeskLaptop'),
+    'diorama-bed': ('typing_bed', 30, 'Anchor_BedSeat', 'Anchor_BedLaptop'),
 }
 
 
@@ -45,6 +47,15 @@ def add_character(anchor_name, clip, frame):
     rig.animation_data.action = action
     rig.animation_data.action_slot = action.slots[0]
     bpy.context.scene.frame_set(frame)
+
+
+def place_laptop(anchor_name):
+    if 'Laptop' not in bpy.data.objects:
+        with bpy.data.libraries.load(str(LAPTOP), link=False) as (source, target):
+            target.objects = list(source.objects)
+        for obj in target.objects:
+            bpy.context.scene.collection.objects.link(obj)
+    bpy.data.objects['Laptop'].matrix_world = bpy.data.objects[anchor_name].matrix_world.copy()
 
 
 def load(path):
@@ -90,8 +101,9 @@ def main():
     scene.view_settings.view_transform = 'AgX'
     scene.view_settings.look = 'AgX - Medium High Contrast'
     for shot in shots:
-        if SHOTS[shot]:
-            clip, frame, anchor_name = SHOTS[shot]
+        clip, frame, anchor_name, laptop_anchor = SHOTS[shot]
+        place_laptop(laptop_anchor)
+        if clip:
             add_character(anchor_name, clip, frame)
         path = output / f'{shot}.png'
         scene.render.filepath = str(path)

@@ -298,17 +298,8 @@ def build_desk(m, root):
             uv=project_uv(1.8, (i * 0.2, 0)))
     mat_lo, mat_hi = (-0.95, -1.62, top), (-0.2, -0.3, top + 0.006)
     box('DeskMat', mat_lo, mat_hi, m['desk_mat'], root, uv=planar_uv(1, 0, (mat_lo[1], mat_lo[0]), (mat_hi[1], mat_hi[0]), flip_u=True))
-    # Laptop, open towards the chair (the user sits on the -X side facing +X).
-    lx0, lx1, ly0, ly1, lz = -0.98, -0.66, -1.24, -0.76, top + 0.006
-    box('LaptopBase', (lx0, ly0, lz), (lx1, ly1, lz + 0.022), m['aluminium'], root, bevel=0.006)
-    box('LaptopKeys', (lx0 + 0.13, ly0 + 0.04, lz + 0.022), (lx1 - 0.02, ly1 - 0.04, lz + 0.024), m['laptop_keys'], root)
-    hinge = Vector((lx1, 0, lz + 0.02))
-    lid = box('LaptopLid', (lx1 - 0.012, ly0, lz + 0.02), (lx1, ly1, lz + 0.33), m['aluminium'], root, bevel=0.004)
-    screen = box('LaptopScreen', (lx1 - 0.0135, ly0 + 0.02, lz + 0.04), (lx1 - 0.012, ly1 - 0.02, lz + 0.315), m['screen'], root,
-                 uv=planar_uv(1, 2, (ly0 + 0.02, lz + 0.04), (ly1 - 0.02, lz + 0.315), flip_u=True))
-    tilt = Matrix.Translation(hinge) @ Matrix.Rotation(math.radians(16), 4, 'Y') @ Matrix.Translation(-hinge)
-    for obj in (lid, screen):
-        obj.data.transform(tilt)
+    # The laptop is its own asset (public/models/laptop.glb) placed on Anchor_DeskLaptop, so there is only
+    # ever one laptop: on the desk, carried or on the lap.
     # Mechanical keyboard on the front corner of the mat.
     kx0, kx1, ky0, ky1 = -0.72, -0.55, -1.6, -1.25
     box('KeyboardCase', (kx0, ky0, top + 0.006), (kx1, ky1, top + 0.03), m['keyboard_case'], root, bevel=0.006)

@@ -2,6 +2,18 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { after, test } from 'node:test';
 import { chromium, expect, type Page } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+import { Texture } from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { readRoom } from '../src/scene/roomData.ts';
+
+/** Load a public model in Node (textures skipped) to read room anchors for steering. */
+async function loadModel(name: string) {
+  const data = await readFile(new URL(`../public/models/${name}.glb`, import.meta.url));
+  const loader = new GLTFLoader();
+  loader.register(() => ({ name: 'HeadlessTextures', loadTexture: () => Promise.resolve(new Texture()) }));
+  return loader.parseAsync(data.buffer.slice(data.byteOffset, data.byteOffset + data.length), '');
+}
 
 const baseURL = process.env.VIEWER_URL ?? 'http://127.0.0.1:5173/';
 const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL ?? 'msedge', headless: true });
@@ -386,7 +398,7 @@ test('Habitación places the selected character in the isometric diorama and Est
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-scene', 'studio');
   await expect(page.locator('.orbit-label')).toHaveText('ÓRBITA 360°');
   await expect(page.locator('[data-view="back"]')).toBeEnabled();
-  assert.deepEqual(requests, ['developer.glb', 'developer.glb', 'room.glb', 'developer-v4-interactions.glb', 'room.glb', 'developer-v4-interactions.glb']);
+  assert.deepEqual(requests, ['developer.glb', 'developer.glb', 'room.glb', 'laptop.glb', 'developer-v4-interactions.glb', 'room.glb', 'laptop.glb', 'developer-v4-interactions.glb']);
   assert.deepEqual(errors, []);
 });
 
@@ -438,7 +450,7 @@ test('in the room WASD walks, Shift runs, releasing stops and Restablecer return
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await roomWithV4(page);
-  await expect(page.locator('#hud-hint')).toHaveText('W A S D o flechas para caminar · Shift para correr');
+  await expect(page.locator('#hud-hint')).toHaveText('E: sentarse en la cama', { timeout: 5000 });
   const spawn = await position(page);
   await page.keyboard.down('KeyW');
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-locomotion', 'walk');
@@ -460,6 +472,9 @@ test('in the room WASD walks, Shift runs, releasing stops and Restablecer return
   await page.waitForTimeout(400);
   await page.keyboard.up('ArrowLeft');
   assert.notDeepEqual(await position(page), rested, 'arrow keys move too');
+  await walkTo(page, { x: 2.2, z: 2.2 });
+  await expect(page.locator('#hud-hint')).toHaveText('W A S D o flechas para caminar · Shift para correr');
+  await expect(page.locator('#canvas-host')).toHaveAttribute('data-prompt', 'none');
   await page.getByRole('button', { name: 'Restablecer posición', exact: true }).click();
   assert.deepEqual(await position(page), spawn);
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-locomotion', 'idle');
@@ -511,6 +526,130 @@ test('the HUD explains when movement is unavailable: seated, static versions and
   await page.getByRole('button', { name: 'Estudio', exact: true }).click();
   await expectModel(page, 'v4');
   await expect(page.locator('#room-hud')).toBeHidden();
+});
+
+/** Steer with real keys towards a floor point (the default diorama camera looks from azimuth 45°). */
+async function walkTo(page: Page, target: { x: number; z: number }, until?: () => Promise<boolean>) {
+  const forward = { x: -Math.SQRT1_2, z: -Math.SQRT1_2 };
+  const right = { x: Math.SQRT1_2, z: -Math.SQRT1_2 };
+  const held = new Set<string>();
+  const hold = async (keys: string[]) => {
+    for (const key of [...held]) if (!keys.includes(key)) { await page.keyboard.up(key); held.delete(key); }
+    for (const key of keys) if (!held.has(key)) { await page.keyboard.down(key); held.add(key); }
+  };
+  for (let step = 0; step < 150; step++) {
+    const [x, z] = await position(page);
+    const dx = target.x - x;
+    const dz = target.z - z;
+    if (Math.hypot(dx, dz) < 0.12 || (until && await until())) break;
+    const ahead = dx * forward.x + dz * forward.z;
+    const side = dx * right.x + dz * right.z;
+    const scale = Math.max(Math.abs(ahead), Math.abs(side));
+    await hold([...(Math.abs(ahead) > scale * 0.4 ? [ahead > 0 ? 'KeyW' : 'KeyS'] : []), ...(Math.abs(side) > scale * 0.4 ? [side > 0 ? 'KeyD' : 'KeyA'] : [])]);
+    await page.waitForTimeout(80);
+  }
+  await hold([]);
+  await expect(page.locator('#canvas-host')).toHaveAttribute('data-locomotion', 'idle');
+}
+
+const interaction = (page: Page) => page.locator('#canvas-host');
+const press = async (page: Page, key: 'KeyE' | 'KeyL') => { await page.keyboard.press(key); };
+
+test('E sits on the bed from the spawn, L explains the laptop is on the desk, E stands back up', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  t.after(() => page.close());
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await roomWithV4(page);
+  await expect(interaction(page)).toHaveAttribute('data-prompt', 'bed');
+  await expect(page.locator('#hud-hint')).toHaveText('E: sentarse en la cama');
+  await expect(interaction(page)).toHaveAttribute('data-laptop', 'desk');
+  await press(page, 'KeyE');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', /approaching|aligning/);
+  await page.keyboard.down('KeyW');
+  await page.waitForTimeout(300);
+  await page.keyboard.up('KeyW');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'seated', { timeout: 15000 });
+  await expect(page.locator('#animation-clip')).toHaveValue('seated_bed');
+  await expect(interaction(page)).toHaveAttribute('data-seat', 'bed');
+  await expect(page.locator('#hud-hint')).toContainText('Sentado en la cama');
+  await press(page, 'KeyL');
+  await expect(page.locator('#hud-hint')).toContainText('El portátil está en el escritorio');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'seated');
+  await page.screenshot({ path: new URL('room-bed-seated.png', output).pathname.replace(/^\/([A-Za-z]:)/, '$1'), fullPage: true });
+  await press(page, 'KeyE');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'standing');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'free', { timeout: 15000 });
+  await expect(interaction(page)).toHaveAttribute('data-locomotion', 'idle');
+  await expect(page.locator('#animation-clip')).toHaveValue('idle');
+  assert.deepEqual(errors, []);
+});
+
+test('the laptop goes from the desk to the lap only by being carried, and is never duplicated', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  t.after(() => page.close());
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await roomWithV4(page);
+  const room = readRoom((await loadModel('room')).scene);
+  const chair = room.seats.find((seat) => seat.seat === 'chair')!;
+  const bed = room.seats.find((seat) => seat.seat === 'bed')!;
+  // Around the desk: along the bed side, then up to the end of the desk where the chair's corridor starts.
+  await walkTo(page, { x: -0.3, z: -1.25 });
+  await walkTo(page, { x: chair.approach.x + 0.3, z: chair.approach.z - 0.3 }, async () => (await interaction(page).getAttribute('data-prompt')) === 'chair');
+  await expect(interaction(page)).toHaveAttribute('data-prompt', 'chair');
+  await press(page, 'KeyE');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'seated', { timeout: 15000 });
+  await expect(interaction(page)).toHaveAttribute('data-seat', 'chair');
+  await press(page, 'KeyL');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'drawing');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'typing', { timeout: 10000 });
+  await expect(page.locator('#animation-clip')).toHaveValue('typing_chair');
+  await expect(interaction(page)).toHaveAttribute('data-laptop', 'desk');
+  await expect(interaction(page)).toHaveAttribute('data-lid', 'open');
+  await page.keyboard.down('KeyW');
+  await page.waitForTimeout(300);
+  await page.keyboard.up('KeyW');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'typing');
+  await page.screenshot({ path: new URL('room-desk-typing.png', output).pathname.replace(/^\/([A-Za-z]:)/, '$1'), fullPage: true });
+  await press(page, 'KeyL');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'stowing');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'seated', { timeout: 10000 });
+  await expect(interaction(page)).toHaveAttribute('data-laptop', 'stowed');
+  await press(page, 'KeyE');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'free', { timeout: 15000 });
+  await walkTo(page, { x: -0.3, z: -1.25 });
+  await walkTo(page, { x: bed.approach.x, z: bed.approach.z + 0.3 }, async () => (await interaction(page).getAttribute('data-prompt')) === 'bed');
+  await press(page, 'KeyE');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'seated', { timeout: 15000 });
+  await press(page, 'KeyL');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'typing', { timeout: 10000 });
+  await expect(interaction(page)).toHaveAttribute('data-laptop', 'lap');
+  await expect(interaction(page)).toHaveAttribute('data-lid', 'open');
+  await page.screenshot({ path: new URL('room-bed-typing.png', output).pathname.replace(/^\/([A-Za-z]:)/, '$1'), fullPage: true });
+  // E while typing puts the laptop away first, then stands.
+  await press(page, 'KeyE');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'stowing');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'standing', { timeout: 10000 });
+  await expect(interaction(page)).toHaveAttribute('data-laptop', 'stowed');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'free', { timeout: 15000 });
+  assert.deepEqual(errors, []);
+});
+
+test('picking a clip by hand or resetting abandons the seat without stranding the laptop on a lap', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  t.after(() => page.close());
+  await roomWithV4(page);
+  await press(page, 'KeyE');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'seated', { timeout: 15000 });
+  await page.getByLabel('Clip', { exact: true }).selectOption('walk');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'free');
+  await expect(interaction(page)).toHaveAttribute('data-laptop', 'desk');
+  await press(page, 'KeyE');
+  await expect(interaction(page)).toHaveAttribute('data-interaction', /approaching|aligning|seated|sitting/);
+  await page.getByRole('button', { name: 'Restablecer posición', exact: true }).click();
+  await expect(interaction(page)).toHaveAttribute('data-interaction', 'free');
+  await expect(page.locator('#animation-clip')).toHaveValue('idle');
 });
 
 test('a missing room GLB reports the room, not the character, and Estudio still works', async (t) => {

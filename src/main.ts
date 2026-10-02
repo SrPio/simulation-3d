@@ -106,7 +106,7 @@ app.innerHTML = `
           <button type="button" id="hud-help" aria-expanded="false" aria-controls="hud-help-text">Ayuda</button>
           <button type="button" id="hud-reset">Restablecer posición</button>
         </div>
-        <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Mantén Shift: correr. Arrastra para girar la cámara: el movimiento sigue la vista. Las teclas no actúan mientras usas un desplegable o un control deslizante.</p>
+        <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Mantén Shift: correr. Cerca de la silla o la cama, E: sentarse y levantarse. Sentado, L: sacar o guardar el portátil (en la cama solo si lo llevas contigo). Arrastra para girar la cámara: el movimiento sigue la vista. Las teclas no actúan mientras usas un desplegable o un control deslizante.</p>
       </section>
       <div class="view-caption"><span class="caption-line" aria-hidden="true"></span><span id="view-label">Vista tres cuartos</span><span class="orbit-label">ÓRBITA 360°</span></div>
       <footer class="viewport-footer"><p><span class="interaction-icon" aria-hidden="true">↔</span> Arrastrar para girar <span class="hint-divider">/</span> Scroll para zoom</p><p id="model-stats" aria-label="Estadísticas del modelo">— mallas <span aria-hidden="true">·</span> — triángulos</p></footer>
@@ -146,13 +146,14 @@ const movementHints: Record<MovementState, string> = {
   ready: 'W A S D o flechas para caminar · Shift para correr',
   unavailable: 'Elige V1 Animada o V4 Animada para moverte por la habitación.',
   seated: 'Está sentado: elige Reposo en Animación para volver a caminar.',
+  interacting: 'E: sentarse o levantarse · L: portátil',
 };
 
-function updateMovement(state: MovementState | null): void {
+function updateMovement(state: MovementState | null, text?: string): void {
   roomHud.hidden = !state;
   roomHud.dataset.state = state ?? 'none';
-  if (state) hudHint.textContent = movementHints[state];
-  hudReset.disabled = state !== 'ready';
+  if (state) hudHint.textContent = text ?? movementHints[state];
+  hudReset.disabled = state !== 'ready' && state !== 'interacting';
 }
 const viewLabel = element<HTMLSpanElement>('#view-label');
 const wireframe = element<HTMLInputElement>('#wireframe');
@@ -261,7 +262,7 @@ function mount(): void {
     },
     orbit: () => { if (current()) setViewSelection(null); },
     animation: (state) => { if (current()) updateAnimation(state); },
-    movement: (state) => { if (current()) updateMovement(state); },
+    movement: (state, text) => { if (current()) updateMovement(state, text); },
   }, { modelId: selectedModel, view: selectedView, light: selectedLight, wireframe: wireframe.checked, scene: selectedScene });
 }
 
@@ -297,7 +298,7 @@ for (const button of sceneButtons) {
     mount();
   }, { signal: listeners.signal });
 }
-animationClip.addEventListener('change', () => viewer?.selectClip(animationClip.value), { signal: listeners.signal });
+animationClip.addEventListener('change', () => viewer?.chooseClip(animationClip.value), { signal: listeners.signal });
 animationPlay.addEventListener('click', () => { if (animationState) viewer?.setPlaying(!animationState.playing); }, { signal: listeners.signal });
 animationSpeed.addEventListener('change', () => viewer?.setAnimationSpeed(Number(animationSpeed.value)), { signal: listeners.signal });
 animationTimeline.addEventListener('input', () => viewer?.scrub(Number(animationTimeline.value)), { signal: listeners.signal });

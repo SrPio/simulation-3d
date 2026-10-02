@@ -1,19 +1,21 @@
 import {
-  AnimationMixer, Box3, CircleGeometry, Color, DirectionalLight, Group, HemisphereLight, InstancedMesh, LoopRepeat, PointLight,
+  AnimationMixer, Box3, CircleGeometry, Color, DirectionalLight, Group, HemisphereLight, InstancedMesh, LoopOnce, LoopRepeat, PointLight,
+  RepeatWrapping, type Texture,
   Mesh, MeshStandardMaterial, OrthographicCamera, Quaternion, Scene, SkinnedMesh, Vector3, type AnimationAction, type Object3D,
   type WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createRenderer, MAX_PIXEL_RATIO } from '../core/renderer';
 import { mergeSkinnedMeshes, mergeStaticMeshes } from '../scene/mergeStatic.ts';
-import { CharacterController, type Locomotion } from '../character/CharacterController';
-import { KeyboardInput } from '../input/KeyboardInput';
-import type { Box2 } from '../world/collisions';
-import { disposeObjects, loadCharacter, loadRoom, modelVersions, roomFile, type ModelVersionId, type SceneId } from '../core/loadAssets';
+import { CHARACTER_RADIUS, CharacterController, type Locomotion } from '../character/CharacterController';
+import { KeyboardInput, type PressAction } from '../input/KeyboardInput';
+import { disposeObjects, laptopFile, loadCharacter, loadLaptop, loadRoom, modelVersions, roomFile, type ModelVersionId, type SceneId } from '../core/loadAssets';
+import { InteractionController } from '../interactions/InteractionController.ts';
+import { readRoom, type RoomData } from '../scene/roomData.ts';
 
 export type ViewPreset = 'front' | 'left' | 'right' | 'back' | 'three-quarter';
 export type LightPreset = 'neutral' | 'violet';
-export type MovementState = 'ready' | 'unavailable' | 'seated';
+export type MovementState = 'ready' | 'unavailable' | 'seated' | 'interacting';
 export type ViewerStatus = { kind: 'loading' | 'ready' | 'error'; title: string; detail: string };
 export type ModelStats = { meshes: number; triangles: number };
 export type AnimationState = {
@@ -43,7 +45,7 @@ type ViewerEvents = {
   stats: (stats: ModelStats | null) => void;
   orbit: () => void;
   animation: (state: AnimationState | null) => void;
-  movement?: (state: MovementState | null) => void;
+  movement?: (state: MovementState | null, text?: string) => void;
 };
 
 const LOCOMOTION = new Set(['idle', 'walk', 'run']);
@@ -71,6 +73,15 @@ export class CharacterViewer {
   /** True while keyboard movement owns the clip choice; a clip picked by hand is left alone otherwise. */
   private driving = false;
   private movementState: MovementState | null = null;
+  private movementText = '';
+  private roomData?: RoomData;
+  private interaction?: InteractionController;
+  private laptop?: Group;
+  private laptopHinge?: Object3D;
+  private laptopOpen = 0;
+  private laptopScreen?: Texture;
+  /** A refused E/L press is explained in the HUD for a moment. */
+  private notice = { text: '', until: 0 };
   /** Adaptive resolution: drop the pixel ratio when frames are slow (fill-rate bound), raise it back when there is headroom. */
   private pixelRatio = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
   private frameAverage = 1000 / 60;
@@ -163,15 +174,17 @@ export class CharacterViewer {
 
   private async load(): Promise<void> {
     try {
-      const [gltf, roomGltf] = await Promise.all([
+      const [gltf, roomGltf, laptopGltf] = await Promise.all([
         loadCharacter(this.options.modelId, this.abort.signal),
         this.inRoom ? loadRoom(this.abort.signal) : Promise.resolve(undefined),
+        this.inRoom ? loadLaptop(this.abort.signal) : Promise.resolve(undefined),
       ]);
+      const scenes = [...gltf.scenes, ...(roomGltf?.scenes ?? []), ...(laptopGltf?.scenes ?? [])];
       if (this.disposed) {
-        disposeObjects([...gltf.scenes, ...(roomGltf?.scenes ?? [])]);
+        disposeObjects(scenes);
         return;
       }
-      this.assetRoots = [...gltf.scenes, ...(roomGltf?.scenes ?? [])];
+      this.assetRoots = scenes;
       this.model = gltf.scene;
       if (roomGltf) {
         this.placeInRoom(roomGltf.scene);
@@ -183,12 +196,17 @@ export class CharacterViewer {
           object.castShadow = !SHADOWLESS.test(object.name);
         });
         mergeStaticMeshes(roomGltf.scene);
+        if (laptopGltf) this.addLaptop(laptopGltf.scene);
       }
       // Fewer draw calls: static and skinned parts are merged by material (they render identically).
       mergeStaticMeshes(this.model);
       mergeSkinnedMeshes(this.model);
       if (gltf.animations.length) {
         this.mixer = new AnimationMixer(this.model);
+        // One-shot seat clips advance the interaction when they end (no timers).
+        this.mixer.addEventListener('finished', (event) => {
+          if (event.action === this.actions.get(this.activeClip)) this.interaction?.clipFinished();
+        });
         for (const [index, clip] of gltf.animations.entries()) {
           const name = clip.name || `Clip ${index + 1}`;
           const key = this.actions.has(name) ? `${name} (${index + 1})` : name;
@@ -249,8 +267,8 @@ export class CharacterViewer {
           kind: 'error',
           title: 'No se pudo cargar la habitación',
           detail: message === 'ROOM_HTTP_404'
-            ? `Falta el archivo ${roomFile}. Genera la habitación y vuelve a intentarlo, o vuelve al estudio.`
-            : `El archivo ${roomFile} no está disponible o no es un GLB válido. Vuelve a intentarlo, o vuelve al estudio.`,
+            ? `Falta el archivo ${roomFile} o ${laptopFile}. Genera la habitación y vuelve a intentarlo, o vuelve al estudio.`
+            : `El archivo ${roomFile} o ${laptopFile} no está disponible o no es un GLB válido. Vuelve a intentarlo, o vuelve al estudio.`,
         });
         return;
       }
@@ -267,33 +285,17 @@ export class CharacterViewer {
   /** Puts the character on the room's Spawn anchor and turns the Light_* anchors into point lights. */
   private placeInRoom(room: Group): void {
     this.room = room;
-    room.updateMatrixWorld(true);
-    // Stand points: the spawn, and for each seat the spot in front of it where its clips start.
-    // Seat anchors carry stand_offset: the clips move the hips that far back onto the seat.
-    room.traverse((object) => {
-      const data = object.userData as { seat?: string; stand_offset?: number };
-      const key = object.name === 'Spawn' ? 'spawn' : data.stand_offset !== undefined ? data.seat : undefined;
-      if (!key) return;
-      const quaternion = object.getWorldQuaternion(new Quaternion());
-      const position = object.getWorldPosition(new Vector3()).setY(0);
-      position.add(new Vector3(0, 0, data.stand_offset ?? 0).applyQuaternion(quaternion));
-      this.standPoints.set(key, { position, quaternion });
+    // Spawn, seats (approach, stand point, facing), laptop spots and colliders from the room anchors.
+    const data = readRoom(room);
+    this.roomData = data;
+    this.standPoints.set('spawn', {
+      position: new Vector3(data.spawn.position.x, 0, data.spawn.position.z),
+      quaternion: new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), data.spawn.yaw),
     });
-    const boxes: Box2[] = [];
-    room.traverse((object) => {
-      const data = object.userData as { collider?: string; size?: number[] };
-      if (data.collider !== 'box' || !data.size) return;
-      const centre = object.getWorldPosition(new Vector3());
-      // Sizes are stored in Blender axes: X stays X, Blender Y becomes three.js -Z.
-      const [sx, sy] = data.size;
-      boxes.push({ name: object.name, minX: centre.x - sx / 2, maxX: centre.x + sx / 2, minZ: centre.z - sy / 2, maxZ: centre.z + sy / 2 });
-    });
-    const spawn = this.standPoints.get('spawn');
-    if (spawn) {
-      const facing = new Vector3(0, 0, 1).applyQuaternion(spawn.quaternion);
-      const halfSize = Number(room.getObjectByName('Room')?.userData.half_size ?? 2.9);
-      this.controller = new CharacterController({ position: { x: spawn.position.x, z: spawn.position.z }, yaw: Math.atan2(facing.x, facing.z) }, boxes, halfSize);
-    }
+    for (const [seat, placement] of data.seatPlacements) this.standPoints.set(seat, placement);
+    this.controller = new CharacterController(data.spawn, data.boxes, data.halfSize);
+    this.interaction = new InteractionController(data.seats, data.boxes, data.halfSize, CHARACTER_RADIUS);
+    if (this.keyboard) this.keyboard.onPress = this.onPress;
     this.placeForClip('');
     room.traverse((object) => {
       const data = object.userData as { light?: string; color?: number[]; intensity?: number };
@@ -324,6 +326,94 @@ export class CharacterViewer {
     return false;
   }
 
+  private addLaptop(laptop: Group): void {
+    this.laptop = laptop;
+    this.laptopHinge = laptop.getObjectByName('LaptopHinge');
+    this.laptopOpen = Number(laptop.getObjectByName('Laptop')?.userData.hinge_open_radians ?? 1.85);
+    laptop.traverse((object) => {
+      if (!(object instanceof Mesh)) return;
+      object.castShadow = object.receiveShadow = true;
+      const material = object.material as MeshStandardMaterial;
+      if (object.name === 'Display' && material.map) {
+        // The screen scrolls its code while typing; emission uses the same image.
+        this.laptopScreen = material.map;
+        this.laptopScreen.wrapT = RepeatWrapping;
+        if (material.emissiveMap) material.emissiveMap = this.laptopScreen;
+        this.laptopScreen.needsUpdate = true;
+      }
+    });
+    this.scene.add(laptop);
+    this.syncLaptop(0);
+  }
+
+  /** Put the one laptop where the interaction says it is: on the desk, on the lap, or carried (hidden). */
+  private syncLaptop(delta: number): void {
+    if (!this.laptop || !this.interaction || !this.roomData) return;
+    const place = this.interaction.laptop;
+    this.laptop.visible = place !== 'stowed';
+    const spot = this.roomData.laptopSpots.get(place === 'lap' ? 'lap' : 'desk');
+    if (spot) {
+      this.laptop.position.copy(spot.position);
+      this.laptop.quaternion.copy(spot.quaternion);
+    }
+    if (this.laptopHinge) this.laptopHinge.rotation.x = this.laptopOpen * this.interaction.lid;
+    const typing = this.interaction.phase === 'seated' && this.interaction.state.stage === 'typing';
+    if (this.laptopScreen && typing) this.laptopScreen.offset.y = (this.laptopScreen.offset.y - delta * 0.035) % 1;
+    const lid = this.interaction.lid >= 0.999 ? 'open' : this.interaction.lid <= 0.001 ? 'closed' : 'moving';
+    if (this.host.dataset.laptop !== place) this.host.dataset.laptop = place;
+    if (this.host.dataset.lid !== lid) this.host.dataset.lid = lid;
+  }
+
+  private readonly onPress = (action: PressAction): void => {
+    const interaction = this.interaction;
+    if (!interaction || !this.controller || !this.ready || !this.hasSeatClips()) return;
+    if (interaction.phase === 'free' && !LOCOMOTION.has(this.activeClip)) return; // a seat clip picked by hand
+    const accepted = action === 'interact'
+      ? interaction.interact(this.controller.position, this.controller.yaw)
+      : interaction.laptopPress();
+    if (accepted && interaction.phase === 'approaching') {
+      this.driving = false;
+      this.controller.speed = 0;
+      if (!this.playing) this.setPlaying(true);
+    }
+    this.notice = accepted ? { text: '', until: 0 } : { text: interaction.message, until: performance.now() + 2500 };
+  };
+
+  private hasSeatClips(): boolean {
+    return this.actions.has('sit_down_chair') && this.actions.has('sit_down_bed');
+  }
+
+  private noticeText(): string {
+    return performance.now() < this.notice.until ? this.notice.text : '';
+  }
+
+  /** Phase 5: the interaction walks the character to a seat and runs the seat/laptop clips. */
+  private driveInteraction(delta: number): void {
+    const interaction = this.interaction!;
+    const action = this.actions.get(this.activeClip);
+    const progress = action ? Math.min(action.time / action.getClip().duration, 1) : 0;
+    interaction.update(delta, progress);
+    const request = interaction.clip();
+    if (request && request.name !== this.activeClip && this.actions.has(request.name)) this.selectClip(request.name, request.loop);
+    if (interaction.phase === 'free') {
+      // Back on the approach point: hand control back to the keyboard there.
+      this.controller!.position = { ...interaction.position };
+      this.controller!.yaw = interaction.yaw;
+      this.controller!.speed = 0;
+      this.driving = false;
+      if (this.activeClip !== 'idle') this.selectClip('idle');
+      this.applyController();
+      this.host.dataset.locomotion = 'idle';
+    } else if (interaction.phase === 'seated') {
+      this.placeForClip(this.activeClip);
+    } else if (this.model) {
+      this.model.position.set(interaction.position.x, 0, interaction.position.z);
+      this.model.quaternion.setFromAxisAngle(new Vector3(0, 1, 0), interaction.yaw);
+    }
+    this.host.dataset.interaction = interaction.phase === 'seated' ? interaction.state.stage : interaction.phase;
+    this.setMovement('interacting', this.noticeText() || interaction.prompt(interaction.position));
+  }
+
   private applyController(): void {
     if (!this.model || !this.controller) return;
     this.model.position.set(this.controller.position.x, 0, this.controller.position.z);
@@ -332,17 +422,20 @@ export class CharacterViewer {
     if (this.host.dataset.position !== position) this.host.dataset.position = position;
   }
 
-  private setMovement(state: MovementState | null): void {
-    if (state === this.movementState) return;
+  private setMovement(state: MovementState | null, text = ''): void {
+    if (state === this.movementState && text === this.movementText) return;
     this.movementState = state;
+    this.movementText = text;
     this.host.dataset.movement = state ?? 'none';
-    this.events.movement?.(state);
+    this.events.movement?.(state, text || undefined);
   }
 
   /** Back to the spawn point, standing idle. */
   resetPosition(): void {
     if (!this.controller || this.disposed) return;
     this.controller.reset();
+    this.interaction?.reset();
+    this.syncLaptop(0);
     this.driving = false;
     this.keyboard?.clear();
     if (this.actions.has('idle')) this.selectClip('idle');
@@ -361,7 +454,10 @@ export class CharacterViewer {
       this.setMovement('seated');
       return;
     }
-    this.setMovement('ready');
+    const prompt = this.hasSeatClips() ? this.interaction?.prompt(this.controller.position) ?? '' : '';
+    this.setMovement('ready', this.noticeText() || prompt);
+    this.host.dataset.interaction = 'free';
+    this.host.dataset.prompt = prompt ? (prompt.includes('silla') ? 'chair' : 'bed') : 'none';
     const keys = this.keyboard?.active ?? false;
     if (!keys && !this.driving) return;
     if (keys && !this.driving) {
@@ -478,9 +574,20 @@ export class CharacterViewer {
     this.host.dataset.wireframe = String(enabled);
   }
 
-  selectClip(name: string): void {
+  /** A clip picked by hand in the UI: it takes over from any seat interaction in progress. */
+  chooseClip(name: string): void {
+    if (this.interaction && this.interaction.phase !== 'free') {
+      this.interaction.reset();
+      this.syncLaptop(0);
+    }
+    this.selectClip(name);
+  }
+
+  selectClip(name: string, loop = true): void {
     const action = this.actions.get(name);
     if (!action || !this.mixer || this.disposed || name === this.activeClip) return;
+    action.setLoop(loop ? LoopRepeat : LoopOnce, Infinity);
+    action.clampWhenFinished = !loop;
     const previous = this.actions.get(this.activeClip);
     this.finishFade();
     this.activeClip = name;
@@ -590,7 +697,11 @@ export class CharacterViewer {
     const delta = frame === undefined ? 0 : Math.min(Math.max(frame / 1000, 0), 0.05);
     this.lastFrame = time;
     if (frame !== undefined) this.adaptResolution(frame);
-    if (this.ready && this.room) this.drive(delta);
+    if (this.ready && this.room) {
+      if (this.interaction && this.interaction.phase !== 'free') this.driveInteraction(delta);
+      else this.drive(delta);
+      this.syncLaptop(delta);
+    }
     if (this.ready && this.mixer && this.playing) {
       this.mixer.update(delta);
       if (this.fadeRemaining > 0) {

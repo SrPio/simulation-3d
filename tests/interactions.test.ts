@@ -2,9 +2,18 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
-import { AnimationMixer, Box3, LoopOnce, Quaternion, SkinnedMesh, Texture, Vector3 } from 'three';
+import { AnimationMixer, Box3, LoopOnce, Quaternion, SkinnedMesh, Texture, Vector3, type Object3D } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InteractionState } from '../src/interactions/interactionState.ts';
+
+async function deskLaptop(room: Object3D) {
+  const laptop = (await load('laptop')).scene;
+  const anchor = room.getObjectByName('Anchor_DeskLaptop')!;
+  laptop.position.copy(anchor.getWorldPosition(new Vector3()));
+  laptop.quaternion.copy(anchor.getWorldQuaternion(new Quaternion()));
+  laptop.updateMatrixWorld(true);
+  return laptop;
+}
 
 async function load(file: string) {
   const data = await readFile(new URL(`../public/models/${file}.glb`, import.meta.url));
@@ -98,7 +107,7 @@ test('V4 interaction GLB sits on the room seats and types on the desk laptop', a
   mixer.setTime(0.5);
   scene.updateMatrixWorld(true);
   // Wrists hover over the laptop's palm rest; the mesh test below checks the fingers against keys and screen.
-  const laptop = new Box3().setFromObject(room.getObjectByName('LaptopBase')!, true);
+  const laptop = new Box3().setFromObject((await deskLaptop(room)).getObjectByName('LaptopBase')!, true);
   laptop.min.x -= 0.05; laptop.min.z -= 0.05; laptop.max.x += 0.05; laptop.max.z += 0.05; laptop.max.y += 0.14;
   for (const side of ['L', 'R']) {
     const wrist = bone(`hand_${side}`);
@@ -117,9 +126,10 @@ test('typing at the desk keeps the hand meshes on the keyboard, out of the lapto
   scene.quaternion.copy(anchor.getWorldQuaternion(new Quaternion()));
   scene.position.copy(anchor.getWorldPosition(new Vector3()).setY(0))
     .add(new Vector3(0, 0, manifest.seats.chair.stand_offset).applyQuaternion(scene.quaternion));
-  const lid = new Box3().setFromObject(room.getObjectByName('LaptopLid')!, true)
-    .union(new Box3().setFromObject(room.getObjectByName('LaptopScreen')!, true));
-  const base = new Box3().setFromObject(room.getObjectByName('LaptopBase')!, true);
+  const desk = await deskLaptop(room);
+  const lid = new Box3().setFromObject(desk.getObjectByName('LaptopLid')!, true)
+    .union(new Box3().setFromObject(desk.getObjectByName('Display')!, true));
+  const base = new Box3().setFromObject(desk.getObjectByName('LaptopBase')!, true);
   const hands = ['Hand_L', 'Hand_R'].map((name) => scene.getObjectByName(name) as SkinnedMesh);
   const mixer = new AnimationMixer(scene);
   mixer.clipAction(animations.find((clip) => clip.name === 'typing_chair')!).play();
@@ -148,8 +158,16 @@ test('typing at the desk keeps the hand meshes on the keyboard, out of the lapto
 
 test('laptop is a separate asset with one hinge, keyboard and display', async () => {
   const { scene } = await load('laptop');
-  for (const name of ['Laptop', 'LaptopHinge', 'LaptopBase', 'Keyboard', 'Trackpad', 'Display']) assert.ok(scene.getObjectByName(name), name);
+  for (const name of ['Laptop', 'LaptopHinge', 'LaptopBase', 'Keyboard', 'Trackpad', 'Display', 'LaptopLid']) assert.ok(scene.getObjectByName(name), name);
   assert.equal(scene.getObjectByName('Developer'), undefined);
+  const hinge = scene.getObjectByName('LaptopHinge')!;
+  const open = scene.getObjectByName('Laptop')!.userData.hinge_open_radians;
+  assert.ok(Math.abs(hinge.rotation.x - open) < 1e-4, 'exported open');
+  scene.updateMatrixWorld(true);
+  const lidTop = new Box3().setFromObject(scene.getObjectByName('LaptopLid')!, true).max.y;
+  assert.ok(lidTop > 0.28, `open lid stands up: ${lidTop}`);
+  hinge.rotation.x = 0;
+  scene.updateMatrixWorld(true);
   const size = new Box3().setFromObject(scene).getSize(new Vector3());
-  assert.ok(size.x > 0.4 && size.x < 0.45 && size.y < 0.06 && size.z < 0.3);
+  assert.ok(Math.abs(size.x - 0.48) < 0.01 && size.y < 0.04 && Math.abs(size.z - 0.32) < 0.01, `closed laptop ${size.toArray()}`);
 });

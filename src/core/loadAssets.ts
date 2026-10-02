@@ -110,6 +110,13 @@ export function loadRoom(signal: AbortSignal): Promise<GLTF> {
   return loadGlb(roomFile, 'ROOM', signal);
 }
 
+export const laptopFile = 'models/laptop.glb';
+
+/** The single interactive laptop of the room (phase 5). Its failures are reported as room failures. */
+export function loadLaptop(signal: AbortSignal): Promise<GLTF> {
+  return loadGlb(laptopFile, 'ROOM', signal);
+}
+
 async function loadGlb(file: string, kind: 'MODEL' | 'ROOM', signal: AbortSignal): Promise<GLTF> {
   signal.throwIfAborted();
   const url = new URL(`${import.meta.env.BASE_URL}${file}`, window.location.href);

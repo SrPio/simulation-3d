@@ -23,13 +23,16 @@ test('room GLB is a grounded diorama with every reference element and embedded t
   const { gltf, document, buffer } = await loadRoom();
   assert.ok(buffer.byteLength < 8 * 1024 * 1024, `Room bytes: ${buffer.byteLength}`);
   assert.ok(document.buffers.every((entry: { uri?: string }) => !entry.uri));
-  assert.ok(document.images.length >= 10 && document.images.every((image: { uri?: string; bufferView?: number }) => !image.uri && image.bufferView !== undefined));
+  assert.ok(document.images.length >= 9 && document.images.every((image: { uri?: string; bufferView?: number }) => !image.uri && image.bufferView !== undefined));
   assert.equal(gltf.animations.length, 0);
   assert.ok(!document.nodes.some((node: { camera?: number }) => node.camera !== undefined), 'No cameras in the room asset');
   for (const name of ['Room', 'Platform', 'Wall_Left', 'Wall_BackLow', 'BedFrame', 'Mattress', 'Duvet', 'Pillow_Back', 'BedLed_Front',
-    'Nightstand', 'LampShade', 'Book_0', 'DeskTop', 'DeskMat', 'LaptopBase', 'LaptopScreen', 'KeyboardCase', 'Mouse', 'Mug',
+    'Nightstand', 'LampShade', 'Book_0', 'DeskTop', 'DeskMat', 'KeyboardCase', 'Mouse', 'Mug',
     'ChairSeat', 'ChairBack', 'Poster_cruzados', 'Poster_bug_hunter', 'Poster_merge_conflict', 'Poster_404', 'WindowGlass', 'NightCity']) {
     assert.ok(gltf.scene.getObjectByName(name), name);
+  }
+  for (const name of ['LaptopBase', 'LaptopLid', 'LaptopScreen']) {
+    assert.equal(gltf.scene.getObjectByName(name), undefined, `${name}: the laptop is the separate laptop.glb, never duplicated in the room`);
   }
   const bounds = new Box3().setFromObject(gltf.scene, true);
   const size = bounds.getSize(new Vector3());

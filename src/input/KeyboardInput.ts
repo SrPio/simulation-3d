@@ -1,5 +1,8 @@
 import type { MoveIntent } from '../character/CharacterController';
 
+export type PressAction = 'interact' | 'laptop';
+const PRESSES: Record<string, PressAction> = { KeyE: 'interact', KeyL: 'laptop' };
+
 const BINDINGS: Record<string, 'forward' | 'back' | 'left' | 'right'> = {
   KeyW: 'forward', ArrowUp: 'forward', KeyS: 'back', ArrowDown: 'back',
   KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
@@ -20,6 +23,8 @@ export class KeyboardInput {
   private readonly held = new Set<'forward' | 'back' | 'left' | 'right'>();
   private shift = false;
   enabled = true;
+  /** One call per physical press of E (sit/stand) or L (laptop); key repeat is ignored. */
+  onPress?: (action: PressAction) => void;
 
   constructor(target: Window, signal: AbortSignal) {
     target.addEventListener('keydown', this.onKeyDown, { signal });
@@ -45,6 +50,11 @@ export class KeyboardInput {
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === 'Shift') this.shift = true;
+    const press = PRESSES[event.code];
+    if (press && this.enabled && !event.repeat && !event.ctrlKey && !event.altKey && !event.metaKey && !ownsKeyboard(event.target)) {
+      this.onPress?.(press);
+      return;
+    }
     const action = BINDINGS[event.code];
     if (!action || !this.enabled || event.ctrlKey || event.altKey || event.metaKey || ownsKeyboard(event.target)) return;
     this.held.add(action);
