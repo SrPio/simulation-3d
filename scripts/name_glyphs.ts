@@ -1,6 +1,7 @@
-// Outlines of the name letters in Bahnschrift SemiBold SemiCondensed, for scripts/blender/create_outside.py.
+// Outlines of the name letters (and the "<developer />" tagline) in Bahnschrift SemiBold SemiCondensed,
+// for scripts/blender/create_outside.py.
 // Windows ships Bahnschrift as one variable font; Blender only reads its default instance, so the
-// instance is resolved here and only the glyph contours of NAME are written, flattened to polygons.
+// instance is resolved here and only the glyph contours of NAME and TAG are written, flattened to polygons.
 // Its glyphs are drawn from overlapping pieces (an E is four bars); they are merged into one outline
 // per letter (outer rings followed by their holes) so the extruded letters have no inner faces.
 // Usage: node scripts/name_glyphs.ts [path to bahnschrift.ttf]
@@ -11,6 +12,7 @@ import * as fontkit from 'fontkit';
 import polygonClipping, { type Polygon } from 'polygon-clipping';
 
 const NAME = 'ANDRES JARAMILLO';
+const TAG = '<developer />';
 const SOURCE = process.argv[2] ?? 'C:/Windows/Fonts/bahnschrift.ttf';
 const OUTPUT = fileURLToPath(new URL('../assets/name/name-glyphs.json', import.meta.url));
 const VARIATION = { wght: 600, wdth: 87.5 }; // the SemiBold SemiCondensed named instance
@@ -106,19 +108,27 @@ function merge(rings: Point[][]): Point[][][] {
 
 const base = fontkit.openSync(SOURCE) as fontkit.Font;
 const font = base.getVariation(VARIATION);
-const run = font.layout(NAME);
-let pen = 0;
-const letters = run.glyphs.map((glyph, index) => {
-  const entry = {
-    char: NAME[index],
-    x: pen,
-    advance: run.positions[index].xAdvance,
-    /** Polygons: each is an outer ring followed by its holes. */
-    polygons: merge(contours(glyph.path.commands as Command[])),
-  };
-  pen += run.positions[index].xAdvance;
-  return entry;
-});
+/** One glyph per character, laid out with the font's advances (no ligatures, so pieces map to characters). */
+function layoutText(text: string) {
+  const run = font.layout(text, { liga: false, calt: false, clig: false, dlig: false });
+  if (run.glyphs.length !== text.length) throw new Error(`${text}: ${run.glyphs.length} glyphs for ${text.length} characters`);
+  let pen = 0;
+  const letters = run.glyphs.map((glyph, index) => {
+    const entry = {
+      char: text[index],
+      x: pen,
+      advance: run.positions[index].xAdvance,
+      /** Polygons: each is an outer ring followed by its holes. */
+      polygons: merge(contours(glyph.path.commands as Command[])),
+    };
+    pen += run.positions[index].xAdvance;
+    return entry;
+  });
+  return { text, width: pen, letters };
+}
+
+const name = layoutText(NAME);
+const tag = layoutText(TAG);
 await mkdir(dirname(OUTPUT), { recursive: true });
 await writeFile(OUTPUT, `${JSON.stringify({
   name: NAME,
@@ -126,7 +136,8 @@ await writeFile(OUTPUT, `${JSON.stringify({
   variation: VARIATION,
   unitsPerEm: font.unitsPerEm,
   capHeight: font.capHeight,
-  width: pen,
-  letters,
+  width: name.width,
+  letters: name.letters,
+  tag,
 })}\n`);
-console.log(`${OUTPUT}: ${letters.length} glyphs, ${pen} units wide`);
+console.log(`${OUTPUT}: ${name.letters.length} + ${tag.letters.length} glyphs, ${name.width} and ${tag.width} units wide`);

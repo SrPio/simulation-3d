@@ -1,15 +1,19 @@
 import {
   BufferAttribute, BufferGeometry, CanvasTexture, Color, DoubleSide, Group, Mesh, MeshBasicMaterial, PlaneGeometry, SRGBColorSpace,
-  ShaderMaterial, Vector3, type Camera, type Raycaster,
+  ShaderMaterial, Vector3, type Raycaster,
 } from 'three';
 import type { Sign } from './outsideData.ts';
 
 const BORDER = 0.09;
 const FENCE_HEIGHT = 0.45;
-/** The label floats this high just past the zone's front edge, where it never covers the character or the board. */
-const LABEL_HEIGHT = 0.45;
-const LABEL_AHEAD = 0.85;
-const LABEL_WIDTH = 2.3;
+/** Each zone's title is written on the ground just past its front edge, left aligned with the zone. */
+const TITLE_GAP = 0.12;
+const TITLE_HEIGHT = 0.42;
+const TITLE_OPACITY = 0.6;
+/** The ENTER label appears on the ground in front of the title while the character is in the zone. */
+const LABEL_AHEAD = TITLE_GAP + TITLE_HEIGHT + 0.12;
+const LABEL_WIDTH = 2.4;
+const LABEL_SLIDE = 0.2;
 const ENTER = 0.35;
 const LEAVE = 0.25;
 const FLASH = 1.2;
@@ -105,6 +109,59 @@ function labelTexture(text: string): CanvasTexture {
   return texture;
 }
 
+/** Shift a point on the ground by along/ahead metres in a zone's own axes. */
+const onZone = (sign: Sign, along: number, ahead: number, y: number): [number, number, number] => {
+  const { center, axisX, axisZ } = sign.area;
+  return [center.x + axisX.x * along + axisZ.x * ahead, y, center.z + axisX.z * along + axisZ.z * ahead];
+};
+
+/**
+ * The zone titles (PORTAFOLIO, GITHUB, LINKEDIN) flat on the ground in the zone border colour: one
+ * texture with a row per title and one quad per zone, so all of them are a single draw call.
+ */
+function titlesMesh(signs: readonly Sign[], groundY: number): Mesh<BufferGeometry, MeshBasicMaterial> {
+  const row = 160;
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024;
+  canvas.height = row * Math.max(signs.length, 1);
+  const context = canvas.getContext('2d')!;
+  context.fillStyle = '#ffffff';
+  context.font = `600 118px ${FONT}`;
+  context.textBaseline = 'middle';
+  const position: number[] = [];
+  const uv: number[] = [];
+  const index: number[] = [];
+  for (const [i, sign] of signs.entries()) {
+    const text = sign.title || sign.id.toUpperCase();
+    context.fillText(text, 8, row * i + row / 2 + 6, canvas.width - 16);
+    const u = Math.min(1, (Math.min(context.measureText(text).width, canvas.width - 16) + 20) / canvas.width);
+    const width = TITLE_HEIGHT * u * canvas.width / row;
+    const left = -sign.area.halfX;
+    const far = sign.area.halfZ + TITLE_GAP;
+    const near = far + TITLE_HEIGHT;
+    const y = groundY + 0.006;
+    // The top of the text points away from the camera, so it reads upright on screen.
+    position.push(...onZone(sign, left, far, y), ...onZone(sign, left + width, far, y), ...onZone(sign, left, near, y), ...onZone(sign, left + width, near, y));
+    const top = 1 - i * row / canvas.height;
+    const bottom = 1 - (i + 1) * row / canvas.height;
+    uv.push(0, top, u, top, 0, bottom, u, bottom);
+    const base = i * 4;
+    index.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+  }
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  texture.anisotropy = 8;
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new BufferAttribute(new Float32Array(position), 3));
+  geometry.setAttribute('uv', new BufferAttribute(new Float32Array(uv), 2));
+  geometry.setIndex(index);
+  const mesh = new Mesh(geometry, new MeshBasicMaterial({ map: texture, color: VIOLET, transparent: true, opacity: TITLE_OPACITY, depthWrite: false, side: DoubleSide }));
+  mesh.name = 'SignTitles';
+  mesh.renderOrder = -4;
+  mesh.matrixAutoUpdate = false;
+  return mesh;
+}
+
 type Zone = {
   sign: Sign;
   border: Mesh<BufferGeometry, MeshBasicMaterial>;
@@ -126,7 +183,9 @@ const easeOutBack = (t: number) => 1 + 2.4 * (t - 1) ** 3 + 1.4 * (t - 1) ** 2;
 export class SignAreas {
   readonly root = new Group();
   private readonly zones: Zone[] = [];
-  private readonly labelGeometry = new PlaneGeometry(LABEL_WIDTH, LABEL_WIDTH * 160 / 840);
+  // Lying on the ground, the top of the text away from the camera.
+  private readonly labelGeometry = new PlaneGeometry(LABEL_WIDTH, LABEL_WIDTH * 160 / 840).rotateX(-Math.PI / 2);
+  private readonly titles: Mesh<BufferGeometry, MeshBasicMaterial>;
   private readonly groundY: number;
   private reducedMotion = false;
   private clock = 0;
@@ -134,6 +193,8 @@ export class SignAreas {
   constructor(signs: readonly Sign[], groundY: number) {
     this.groundY = groundY;
     this.root.name = 'SignAreas';
+    this.titles = titlesMesh(signs, groundY);
+    this.root.add(this.titles);
     for (const sign of signs) {
       const { area } = sign;
       const placed = (mesh: Mesh, y: number) => {
@@ -151,10 +212,11 @@ export class SignAreas {
         depthWrite: false,
         side: DoubleSide,
       })), groundY - FENCE_HEIGHT) as Zone['fence'];
-      const label = new Mesh(this.labelGeometry, new MeshBasicMaterial({ map: labelTexture(sign.label), transparent: true, depthWrite: false, depthTest: false }));
-      const ahead = area.halfZ + LABEL_AHEAD;
-      label.position.set(area.center.x + area.axisZ.x * ahead, groundY + LABEL_HEIGHT, area.center.z + area.axisZ.z * ahead);
-      label.renderOrder = 10;
+      const label = new Mesh(this.labelGeometry, new MeshBasicMaterial({ map: labelTexture(sign.label), transparent: true, depthWrite: false }));
+      label.position.set(...onZone(sign, -area.halfX + LABEL_WIDTH / 2, area.halfZ + LABEL_AHEAD + LABEL_WIDTH * 160 / 840 / 2, groundY + 0.008));
+      label.rotation.y = sign.yaw;
+      label.userData.rest = label.position.clone();
+      label.renderOrder = -3;
       border.renderOrder = -4;
       for (const mesh of [border, fence, label]) mesh.name = `SignArea_${sign.id}`;
       for (const mesh of [fence, label]) mesh.visible = false;
@@ -200,7 +262,7 @@ export class SignAreas {
     return zone && new Vector3(zone.sign.area.center.x, this.groundY, zone.sign.area.center.z);
   }
 
-  update(delta: number, camera: Camera): void {
+  update(delta: number): void {
     this.clock += delta;
     for (const zone of this.zones) {
       const { fence, label, border } = zone;
@@ -222,9 +284,11 @@ export class SignAreas {
       fence.position.y = this.groundY - FENCE_HEIGHT + FENCE_HEIGHT * rise - dip;
       fence.material.uniforms.uTime.value = this.reducedMotion ? 0 : this.clock;
       fence.material.uniforms.uAlpha.value = Math.min(1, p * 1.5) + zone.flash * 0.6;
-      label.position.y = this.groundY + LABEL_HEIGHT - 0.25 * (1 - rise);
+      // The label slides in from further ahead as it fades in.
+      const rest = label.userData.rest as Vector3;
+      const slide = LABEL_SLIDE * (1 - Math.min(rise, 1));
+      label.position.set(rest.x + zone.sign.area.axisZ.x * slide, rest.y, rest.z + zone.sign.area.axisZ.z * slide);
       label.material.opacity = Math.min(1, p * 1.4) * (0.85 + 0.15 * zone.flash);
-      label.quaternion.copy(camera.quaternion);
     }
   }
 
@@ -240,6 +304,9 @@ export class SignAreas {
 
   dispose(): void {
     this.labelGeometry.dispose();
+    this.titles.geometry.dispose();
+    this.titles.material.map?.dispose();
+    this.titles.material.dispose();
     for (const zone of this.zones) {
       zone.border.geometry.dispose();
       zone.border.material.dispose();

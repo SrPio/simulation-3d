@@ -21,9 +21,10 @@ const bodies = (data: OutsideData): LetterBody[] => data.letters.map((letter) =>
 
 test('the name: one standing letter per character of ANDRES JARAMILLO, on the outside ground', async () => {
   const data = await outside();
-  const chars = data.letters.map((letter) => letter.name.split('_')[2]).join('');
+  const name = data.letters.filter((letter) => letter.word === 'name');
+  const chars = name.map((letter) => letter.name.split('_')[2]).join('');
   assert.equal(chars, 'ANDRESJARAMILLO');
-  for (const letter of data.letters) {
+  for (const letter of name) {
     const [w, h, d] = letter.half.map((half) => half * 2);
     assert.ok(h > 0.5 && h < 0.7, `${letter.name}: height ${h}`);
     assert.ok(w > 0.05 && w < 0.8 && d > 0.15 && d < 0.3, `${letter.name}: ${w} x ${d}`);
@@ -33,9 +34,27 @@ test('the name: one standing letter per character of ANDRES JARAMILLO, on the ou
     assert.ok(triangles < 800, `${letter.name}: ${triangles} triangles`);
   }
   // In a row along +X in front of the room (+Z), reading left to right on screen (screen-right is +X -Z).
-  for (const letter of data.letters) assert.ok(letter.position.z > 4 && letter.position.x < -1, `${letter.name} left of the room's front`);
-  const along = data.letters.map((letter) => letter.position.x - letter.position.z);
+  for (const letter of name) assert.ok(letter.position.z > 4 && letter.position.x < -1, `${letter.name} left of the room's front`);
+  const along = name.map((letter) => letter.position.x - letter.position.z);
   assert.deepEqual([...along].sort((a, b) => a - b), along);
+});
+
+test('the tagline: "<developer />" pieces lie flat in front of the name, smaller than its letters', async () => {
+  const data = await outside();
+  const name = data.letters.filter((letter) => letter.word === 'name');
+  const tag = data.letters.filter((letter) => letter.word === 'tag');
+  assert.equal(tag.length, 12, 'one piece per visible character of <developer />');
+  const capHeight = Math.min(...name.map((letter) => letter.half[1] * 2));
+  for (const piece of tag) {
+    const [w, h, d] = piece.half.map((half) => half * 2);
+    assert.ok(h < 0.12, `${piece.name} lies flat: ${h} m thick`);
+    // Letters are shorter than the name's capitals; only the slash reaches about the same height.
+    assert.ok(d < capHeight * (piece.name === 'Tag_10' ? 1.1 : 0.85) && w < 0.4, `${piece.name} smaller than the name: ${w} x ${d}`);
+    assert.ok(Math.abs(piece.position.y - h / 2 - data.groundY) < 0.01, `${piece.name} rests on the ground`);
+    assert.ok(piece.position.z > Math.max(...name.map((letter) => letter.position.z)) + 0.4, `${piece.name} in front of the name`);
+  }
+  const xs = tag.map((piece) => piece.position.x);
+  assert.deepEqual([...xs].sort((a, b) => a - b), xs, 'reads left to right');
 });
 
 test('letters stay standing and asleep without contact, and the world is skipped far from them', async () => {

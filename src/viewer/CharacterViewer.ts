@@ -67,6 +67,8 @@ type ViewerEvents = {
   animation: (state: AnimationState | null) => void;
   movement?: (state: MovementState | null, text?: string) => void;
   render?: (stats: RenderStats | null) => void;
+  /** Shift switched running on or off. */
+  run?: (running: boolean) => void;
   /** The character walked into a sign's floor zone (Enter opens its link) or left it. */
   sign?: (sign: SignLink | null) => void;
 };
@@ -370,7 +372,14 @@ export class CharacterViewer {
     const boxes = [...data.boxes, ...(this.outsideData?.boxes ?? [])];
     this.controller = new CharacterController(data.spawn, boxes, floor);
     this.interaction = new InteractionController(data.seats, boxes, floor, CHARACTER_RADIUS);
-    if (this.keyboard) this.keyboard.onPress = this.onPress;
+    if (this.keyboard) {
+      this.keyboard.onPress = this.onPress;
+      this.keyboard.onRunChange = (running) => {
+        this.host.dataset.run = String(running);
+        this.events.run?.(running);
+      };
+      this.host.dataset.run = String(this.keyboard.run);
+    }
     this.placeForClip('');
     room.traverse((object) => {
       const data = object.userData as { light?: string; color?: number[]; intensity?: number };
@@ -410,7 +419,7 @@ export class CharacterViewer {
     const data = readOutside(outside);
     this.outsideData = data;
     // The letters move on their own: they leave the static GLB before it is merged.
-    outside.getObjectByName('Letters')?.removeFromParent();
+    for (const group of ['Letters', 'Tagline']) outside.getObjectByName(group)?.removeFromParent();
     outside.traverse((object) => {
       if (!(object instanceof Mesh)) return;
       object.receiveShadow = false;
@@ -1045,7 +1054,7 @@ export class CharacterViewer {
     }
     if (this.ready && this.room) this.followCharacter(delta);
     this.controls?.update();
-    this.areas?.update(delta, this.camera);
+    this.areas?.update(delta);
     this.updateHover();
     this.reportSign();
     if (this.ground && this.model) this.ground.update(this.camera, this.model.position);

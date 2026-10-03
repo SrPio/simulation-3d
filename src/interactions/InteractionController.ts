@@ -1,4 +1,4 @@
-import { WALK_SPEED } from '../character/CharacterController.ts';
+import { WALK_CLIP_SPEED as WALK_SPEED } from '../character/CharacterController.ts';
 import { overlaps, sweep, type Box2, type Floor, type Point2 } from '../world/collisions.ts';
 import { InteractionState, type Seat } from './interactionState.ts';
 

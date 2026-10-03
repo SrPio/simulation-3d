@@ -12,6 +12,9 @@ the room floor, so the room reads as a raised platform) and uses the walkable `b
   in three.js axes for the physics body. The outlines (Bahnschrift SemiBold SemiCondensed) come from
   assets/name/name-glyphs.json (scripts/name_glyphs.ts). The name runs along +X in front of the room's
   open -Y side, to its left as seen from the corner camera, facing -Y like the signs.
+- `Tagline`: "<developer />" in the same font, smaller and lying flat on the ground in front of the name
+  (glyph tops towards the name, so it reads upright from the camera); `Tag_<i>` meshes with `box` and
+  `char` extras, also moved by the letter physics.
 The room itself (room.glb) is not modified.
 """
 import argparse
@@ -40,9 +43,9 @@ AREA, AREA_OFFSET = (2.6, 1.8), 1.55
 # Signs: along the line of the back wall (Y just inside its outer face), from past the room's +X side.
 SIGN_Y, SIGN_FIRST_X, SIGN_SPACING = HALF + 0.15, 5.3, 3.2
 SIGNS = {
-    'Portfolio': {'link': 'https://andres-jaramillo.is-a.dev/', 'label': 'Ver portafolio', 'slot': 0, 'image': 'portfolio.png'},
-    'GitHub': {'link': 'https://github.com/SrPio', 'label': 'Ver GitHub', 'slot': 1, 'image': 'github.png'},
-    'LinkedIn': {'link': 'https://www.linkedin.com/in/andres-fernando-jaramillo-avila/', 'label': 'Ver LinkedIn', 'slot': 2, 'image': 'linkedin.png'},
+    'Portfolio': {'link': 'https://andres-jaramillo.is-a.dev/', 'label': 'Ver portafolio', 'title': 'PORTAFOLIO', 'slot': 0, 'image': 'portfolio.png'},
+    'GitHub': {'link': 'https://github.com/SrPio', 'label': 'Ver GitHub', 'title': 'GITHUB', 'slot': 1, 'image': 'github.png'},
+    'LinkedIn': {'link': 'https://www.linkedin.com/in/andres-fernando-jaramillo-avila/', 'label': 'Ver LinkedIn', 'title': 'LINKEDIN', 'slot': 2, 'image': 'linkedin.png'},
 }
 GLYPHS = ROOT / 'assets' / 'name' / 'name-glyphs.json'
 # Name: a line parallel to the room's open -Y side, ending a little left of the room's -X edge.
@@ -51,11 +54,14 @@ CAP_HEIGHT = 0.58
 LETTER_DEPTH = 0.2
 TRACKING = 0.03      # extra space between letters (m)
 WORD_SPACE = 0.15    # extra space at the word gap (m)
+# Tagline: flat on the ground in front of the name, starting under its first letter.
+TAG_Y, TAG_START_X = -6.0, -7.3   # baseline line and left end
+TAG_CAP, TAG_THICKNESS, TAG_TRACKING = 0.45, 0.08, 0.06
 
 
 def build_sign(name, sign, frame, glow, root):
     holder = room.anchor(f'Sign_{name}', (SIGN_FIRST_X + sign['slot'] * SIGN_SPACING, SIGN_Y, GROUND_Z), root, 0.0,
-                         link=sign['link'], label=sign['label'], board=[BOARD_W, BOARD_H, BOARD_BOTTOM],
+                         link=sign['link'], label=sign['label'], title=sign['title'], board=[BOARD_W, BOARD_H, BOARD_BOTTOM],
                          area=list(AREA), area_offset=AREA_OFFSET)
     w, t = BOARD_W / 2, BOARD_T / 2
     top = BOARD_BOTTOM + BOARD_H
@@ -77,13 +83,14 @@ def build_sign(name, sign, frame, glow, root):
     return holder, collider
 
 
-def letter_object(name, polygons, scale, offset, mat):
-    """One extruded letter from its outline polygons (outer ring then holes), standing up and facing -Y."""
+def letter_object(name, polygons, scale, offset, mat, depth=LETTER_DEPTH, standing=True):
+    """One extruded letter from its outline polygons (outer ring then holes): standing up and facing -Y,
+    or lying flat with its top towards +Y."""
     curve = bpy.data.curves.new(name, 'CURVE')
     curve.dimensions = '2D'
     curve.fill_mode = 'BOTH'
-    curve.extrude = LETTER_DEPTH / 2
-    curve.bevel_depth = 0.01
+    curve.extrude = depth / 2
+    curve.bevel_depth = min(0.01, depth / 6)
     curve.bevel_resolution = 0   # a single chamfer: rounder edges would multiply the triangles
     curve.materials.append(mat)
     for polygon in polygons:
@@ -99,8 +106,9 @@ def letter_object(name, polygons, scale, offset, mat):
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
     bpy.ops.object.convert(target='MESH')
-    # Stand the letter up: it reads along +X, caps point +Z and the front faces -Y.
-    obj.data.transform(Matrix.Rotation(math.pi / 2, 4, 'X'))
+    if standing:
+        # Stand the letter up: it reads along +X, caps point +Z and the front faces -Y.
+        obj.data.transform(Matrix.Rotation(math.pi / 2, 4, 'X'))
     bpy.ops.object.mode_set(mode='EDIT')
     bpy.ops.mesh.select_all(action='SELECT')
     bpy.ops.mesh.remove_doubles(threshold=0.0005)
@@ -113,6 +121,7 @@ def build_letters(root):
     glyphs = json.loads(GLYPHS.read_text(encoding='utf8'))
     scale = CAP_HEIGHT / glyphs['capHeight']
     mat = room.material('Letter', (0.84, 0.8, 0.94), 0.5)
+    build_tagline(root, glyphs, mat)
     pen, placed = 0.0, []
     for glyph in glyphs['letters']:
         if glyph['polygons']:
@@ -133,6 +142,31 @@ def build_letters(root):
         obj.data.shade_smooth()
         obj.data.set_sharp_from_angle(angle=math.radians(35))
     return letters
+
+
+def build_tagline(root, glyphs, mat):
+    tag = glyphs['tag']
+    scale = TAG_CAP / glyphs['capHeight']
+    group = room.anchor('Tagline', (TAG_START_X, TAG_Y, GROUND_Z), root, 0.0)
+    pen, index = 0.0, 0
+    for glyph in tag['letters']:
+        if not glyph['polygons']:
+            pen += glyph['advance'] * scale + WORD_SPACE
+            continue
+        obj = letter_object(f'Tag_{index:02d}', glyph['polygons'], scale, pen, mat, TAG_THICKNESS, standing=False)
+        obj.data.name = obj.name
+        dx, dy, dz = (max(v.co[i] for v in obj.data.vertices) - min(v.co[i] for v in obj.data.vertices) for i in range(3))
+        obj['box'] = [round(dx, 4), round(dz, 4), round(dy, 4)]   # three.js: width, height (thickness), depth
+        obj['char'] = glyph['char']
+        location = obj.location.copy()
+        obj.parent = group
+        # Glyph Y becomes ground Y (the baseline stays on TAG_Y); the slab rests on the ground.
+        obj.location = (location.x, location.y, dz / 2)
+        obj.data.shade_smooth()
+        obj.data.set_sharp_from_angle(angle=math.radians(35))
+        pen += glyph['advance'] * scale + TAG_TRACKING
+        index += 1
+    return group
 
 
 def build(root):

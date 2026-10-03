@@ -1,8 +1,12 @@
 import { sweep, type Box2, type Floor, type Point2 } from '../world/collisions.ts';
 
 /** Ground speeds (m/s) the in-place walk/run clips were authored for (see the rig manifest). */
-export const WALK_SPEED = 0.8035714285714285;
-export const RUN_SPEED = 2.131578947368421;
+export const WALK_CLIP_SPEED = 0.8035714285714285;
+export const RUN_CLIP_SPEED = 2.131578947368421;
+/** The character moves this many times faster than the clips were authored for; the clips play faster to keep the feet planted. */
+export const SPEED_SCALE = 2;
+export const WALK_SPEED = WALK_CLIP_SPEED * SPEED_SCALE;
+export const RUN_SPEED = RUN_CLIP_SPEED * SPEED_SCALE;
 /** The in-place jump clip (rig manifest): its length, the fraction with the feet off the floor and the hop length. */
 export const JUMP = { duration: 0.8, air: [0.26, 0.7] as [number, number], distance: 0.45 };
 /** Peak height of the feet during the jump, for what the character touches in the air (the clip draws the hop itself). */
@@ -130,7 +134,7 @@ export class CharacterController {
 
   /** Playback rate that keeps the clip's feet matched to the actual ground speed. */
   clipRate(): number {
-    const clipSpeed = this.locomotion() === 'run' ? RUN_SPEED : WALK_SPEED;
-    return this.jumping || this.speed < 0.05 ? 1 : Math.min(Math.max(this.speed / clipSpeed, 0.5), 1.25);
+    const clipSpeed = this.locomotion() === 'run' ? RUN_CLIP_SPEED : WALK_CLIP_SPEED;
+    return this.jumping || this.speed < 0.05 ? 1 : Math.min(Math.max(this.speed / clipSpeed, 0.5), 1.25 * SPEED_SCALE);
   }
 }

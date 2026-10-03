@@ -9,6 +9,8 @@ export type Sign = {
   id: string;
   link: string;
   label: string;
+  /** Word written on the ground in front of the zone. */
+  title: string;
   /** Foot of the sign, between its posts, on the outside ground. */
   position: Vector3;
   /** Rotation about +Y; the board faces its local +Z (towards the corner camera). */
@@ -17,9 +19,11 @@ export type Sign = {
   area: SignArea;
 };
 
-/** One letter of the name: its mesh (geometry centred on the letter) and the box its physics body uses. */
+/** One loose letter (the standing name or the flat tagline): its mesh, centred on the letter, and the box its physics body uses. */
 export type Letter = {
   name: string;
+  /** 'name' for the standing ANDRES JARAMILLO letters, 'tag' for the flat "<developer />" pieces. */
+  word: 'name' | 'tag';
   geometry: BufferGeometry;
   material: Material;
   position: Vector3;
@@ -61,7 +65,7 @@ export function readOutside(root: Object3D): OutsideData {
   root.traverse((object) => {
     const data = object.userData as {
       bounds?: number[]; platform?: number[]; ground_y?: number; link?: string; label?: string;
-      board?: number[]; area?: number[]; area_offset?: number; collider?: string; size?: number[]; box?: number[];
+      board?: number[]; area?: number[]; area_offset?: number; collider?: string; size?: number[]; box?: number[]; title?: string;
     };
     if (data.bounds?.length === 4) {
       bounds = fromBlender(data.bounds);
@@ -83,6 +87,7 @@ export function readOutside(root: Object3D): OutsideData {
         id: object.name.slice('Sign_'.length).toLowerCase(),
         link: data.link,
         label: data.label ?? data.link,
+        title: data.title ?? '',
         position,
         yaw,
         board: { width: data.board[0], height: data.board[1], bottom: data.board[2] },
@@ -94,9 +99,10 @@ export function readOutside(root: Object3D): OutsideData {
           halfZ: data.area[1] / 2,
         },
       });
-    } else if (object instanceof Mesh && object.name.startsWith('Letter_') && data.box?.length === 3) {
+    } else if (object instanceof Mesh && /^(Letter|Tag)_/.test(object.name) && data.box?.length === 3) {
       letters.push({
         name: object.name,
+        word: object.name.startsWith('Tag_') ? 'tag' : 'name',
         geometry: object.geometry,
         material: object.material as Material,
         position,
@@ -106,7 +112,8 @@ export function readOutside(root: Object3D): OutsideData {
     }
   });
   if (!bounds) throw new Error('ROOM_OUTSIDE_BOUNDS');
-  letters.sort((a, b) => a.name.localeCompare(b.name));
+  // The name first, then the tagline, each in reading order.
+  letters.sort((a, b) => a.word.localeCompare(b.word) || a.name.localeCompare(b.name));
   return { bounds, groundY, platform, boxes, signs, letters };
 }
 

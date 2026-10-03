@@ -429,7 +429,7 @@ async function roomWithV4(page: Page) {
 
 const position = async (page: Page) => (await page.locator('#canvas-host').getAttribute('data-position'))!.split(',').map(Number);
 
-test('in the room WASD walks, Shift runs, releasing stops and Restablecer returns to the spawn', async (t) => {
+test('in the room WASD walks, Shift switches running on and off, releasing stops and Restablecer returns to the spawn', async (t) => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   t.after(() => page.close());
   const errors: string[] = [];
@@ -443,10 +443,18 @@ test('in the room WASD walks, Shift runs, releasing stops and Restablecer return
   await page.waitForTimeout(500);
   const walked = await position(page);
   assert.ok(Math.hypot(walked[0] - spawn[0], walked[1] - spawn[1]) > 0.1, `W moves the character: ${walked} from ${spawn}`);
-  await page.keyboard.down('Shift');
+  await expect(page.locator('#canvas-host')).toHaveAttribute('data-run', 'false');
+  // One press switches running on; it stays on without holding Shift.
+  await page.keyboard.press('Shift');
+  await expect(page.locator('#canvas-host')).toHaveAttribute('data-run', 'true');
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-locomotion', 'run');
   await expect(page.locator('#animation-clip')).toHaveValue('run');
-  await page.keyboard.up('Shift');
+  await page.waitForTimeout(300);
+  await expect(page.locator('#canvas-host')).toHaveAttribute('data-locomotion', 'run');
+  // A second press goes back to walking.
+  await page.keyboard.press('Shift');
+  await expect(page.locator('#canvas-host')).toHaveAttribute('data-run', 'false');
+  await expect(page.locator('#canvas-host')).toHaveAttribute('data-locomotion', 'walk');
   await page.keyboard.up('KeyW');
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-locomotion', 'idle');
   await expect(page.locator('#animation-clip')).toHaveValue('idle');
@@ -458,7 +466,7 @@ test('in the room WASD walks, Shift runs, releasing stops and Restablecer return
   await page.keyboard.up('ArrowLeft');
   assert.notDeepEqual(await position(page), rested, 'arrow keys move too');
   await walkTo(page, { x: 2.2, z: 2.2 });
-  await expect(page.locator('#hud-hint')).toHaveText('W A S D o flechas para caminar · Shift para correr · Espacio para saltar');
+  await expect(page.locator('#hud-hint')).toHaveText('W A S D o flechas para caminar · Shift: correr desactivado · Espacio para saltar');
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-prompt', 'none');
   await page.getByRole('button', { name: 'Restablecer posición', exact: true }).click();
   assert.deepEqual(await position(page), spawn);

@@ -33,13 +33,13 @@ app.innerHTML = `
       </div>
     </nav>
     <section class="room-hud" aria-label="Controles del personaje">
-      <p id="hud-hint" role="status" aria-live="polite">W A S D o flechas para caminar · Shift para correr · Espacio para saltar</p>
+      <p id="hud-hint" role="status" aria-live="polite">W A S D o flechas para caminar · Shift: correr desactivado · Espacio para saltar</p>
       <a id="sign-link" class="sign-link" href="#" target="_blank" rel="noopener noreferrer" hidden></a>
       <div class="hud-actions">
         <button type="button" id="hud-help" aria-expanded="false" aria-controls="hud-help-text">Ayuda</button>
         <button type="button" id="hud-reset">Restablecer posición</button>
       </div>
-      <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Mantén Shift: correr. Espacio: saltar hacia adelante. Cerca de la silla o la cama, E: sentarse y levantarse. Sentado, L: abrir o cerrar el portátil. Sal por los lados abiertos de la habitación: entra en la zona marcada frente a un cartel y pulsa Enter (o haz clic en el cartel) para abrir su enlace. Empuja las letras del nombre para tirarlas.</p>
+      <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Shift: activar o desactivar correr. Espacio: saltar hacia adelante. Cerca de la silla o la cama, E: sentarse y levantarse. Sentado, L: abrir o cerrar el portátil. Sal por los lados abiertos de la habitación: entra en la zona marcada frente a un cartel y pulsa Enter (o haz clic en el cartel) para abrir su enlace. Empuja las letras del nombre para tirarlas.</p>
     </section>
     <div class="room-overlay" id="viewer-overlay">
       <div class="room-overlay-card"><span class="room-ring" id="loading-ring" aria-hidden="true"></span><h1 id="overlay-title">Cargando la habitación</h1><p id="overlay-detail">Preparando el personaje, la habitación y el exterior.</p><button type="button" class="room-retry" id="retry" hidden>Volver a intentar</button></div>
@@ -74,7 +74,10 @@ const storage = (() => { try { return window.localStorage; } catch { return unde
 const preferences = readPreferences(storage);
 const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 const listeners = new AbortController();
-const defaultHint = 'W A S D o flechas para caminar · Shift para correr · Espacio para saltar';
+const readyHint = (running: boolean) => `W A S D o flechas para caminar · Shift: correr ${running ? 'activado' : 'desactivado'} · Espacio para saltar`;
+let running = false;
+let movementState: MovementState | null = null;
+let movementText: string | undefined;
 let light: LightPreset = 'neutral';
 let camera: CameraMode = 'follow';
 let viewer: CharacterViewer | undefined;
@@ -100,7 +103,9 @@ function updateStatus(state: ViewerStatus): void {
 }
 
 function updateMovement(state: MovementState | null, text?: string): void {
-  hint.textContent = text ?? defaultHint;
+  movementState = state;
+  movementText = text;
+  hint.textContent = text ?? readyHint(running);
   reset.disabled = state !== 'ready' && state !== 'interacting';
 }
 
@@ -127,6 +132,11 @@ function mount(): void {
     orbit: () => {},
     animation: () => {},
     movement: (state, text) => { if (live()) updateMovement(state, text); },
+    run: (on) => {
+      if (!live()) return;
+      running = on;
+      updateMovement(movementState, movementText);
+    },
     sign: (sign) => { if (live()) updateSign(sign); },
   }, {
     modelId: 'v4rig', view: 'three-quarter', light, wireframe: false, scene: 'room',

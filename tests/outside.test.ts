@@ -44,6 +44,7 @@ test('outside GLB: no ground mesh, three standing signs linking to the portfolio
   // The room floor (0) stands a step above the outside ground.
   assert.equal(groundY, -0.12);
   assert.ok(platform.minX < -2.9 && platform.maxX > 2.9 && platform.minZ < -2.9 && platform.maxZ > 2.9, JSON.stringify(platform));
+  assert.deepEqual(Object.fromEntries(signs.map((sign) => [sign.id, sign.title])), { portfolio: 'PORTAFOLIO', github: 'GITHUB', linkedin: 'LINKEDIN' });
   for (const sign of signs) {
     assert.ok(sign.label.length > 3, sign.id);
     assert.ok(Math.abs(sign.position.y - groundY) < 1e-4, `${sign.id} stands on the outside ground`);

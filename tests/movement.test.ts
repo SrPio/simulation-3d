@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { Texture, Vector3 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { CharacterController, MAX_STEP, RUN_SPEED, WALK_SPEED } from '../src/character/CharacterController.ts';
+import { CharacterController, MAX_STEP, RUN_CLIP_SPEED, RUN_SPEED, SPEED_SCALE, WALK_CLIP_SPEED, WALK_SPEED } from '../src/character/CharacterController.ts';
 import { overlaps, resolve, sweep, type Box2 } from '../src/world/collisions.ts';
 
 const still = { forward: 0, right: 0, run: false };
@@ -27,11 +27,13 @@ async function roomBoxes() {
   return { boxes, spawn: { x: spawn.x, z: spawn.z }, half: Number(scene.getObjectByName('Room')!.userData.half_size) };
 }
 
-test('locomotion speeds match the walk and run clips in the rig manifest', async () => {
+test('clip speeds match the rig manifest and the character moves SPEED_SCALE times faster', async () => {
   const manifest = JSON.parse(await readFile(new URL('../public/models/developer-v4-rig.manifest.json', import.meta.url), 'utf8'));
   const speed = (name: string) => manifest.clips.find((clip: { name: string }) => clip.name === name).speed;
-  assert.ok(Math.abs(speed('walk') - WALK_SPEED) < 1e-9);
-  assert.ok(Math.abs(speed('run') - RUN_SPEED) < 1e-9);
+  assert.ok(Math.abs(speed('walk') - WALK_CLIP_SPEED) < 1e-9);
+  assert.ok(Math.abs(speed('run') - RUN_CLIP_SPEED) < 1e-9);
+  assert.equal(SPEED_SCALE, 2);
+  assert.ok(Math.abs(WALK_SPEED - 2 * WALK_CLIP_SPEED) < 1e-9 && Math.abs(RUN_SPEED - 2 * RUN_CLIP_SPEED) < 1e-9);
 });
 
 test('movement follows the camera and diagonals are not faster than straight lines', () => {
@@ -64,7 +66,7 @@ test('speed, turning and clip choice are frame-rate independent and settle to id
   assert.ok(Math.abs(fast.speed - RUN_SPEED) < 0.01);
   assert.ok(Math.abs(fast.position.x - slow.position.x) < 0.05, `${fast.position.x} vs ${slow.position.x}`);
   assert.ok(Math.abs(Math.sin(fast.yaw) + 1) < 0.01, 'turned to face the walking direction');
-  assert.ok(Math.abs(fast.clipRate() - 1) < 0.01, 'clip plays at authored speed at full run');
+  assert.ok(Math.abs(fast.clipRate() - SPEED_SCALE) < 0.01, 'the run clip plays as much faster as the character moves');
   for (let i = 0; i < 90; i++) fast.update(1 / 60, still, 0);
   assert.equal(fast.locomotion(), 'idle');
   assert.equal(fast.speed, 0);

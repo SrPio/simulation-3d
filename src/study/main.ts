@@ -152,14 +152,19 @@ const hudHint = element<HTMLParagraphElement>('#hud-hint');
 const hudHelp = element<HTMLButtonElement>('#hud-help');
 const hudHelpText = element<HTMLParagraphElement>('#hud-help-text');
 const hudReset = element<HTMLButtonElement>('#hud-reset');
+let running = false;
+let movementState: MovementState | null = null;
+let movementText: string | undefined;
 const movementHints: Record<MovementState, string> = {
-  ready: 'W A S D o flechas para caminar · Shift para correr · Espacio para saltar',
+  get ready() { return `W A S D o flechas para caminar · Shift: correr ${running ? 'activado' : 'desactivado'} · Espacio para saltar`; },
   unavailable: 'Elige V1 Animada o V4 Animada para moverte por la habitación.',
   seated: 'Está sentado: elige Reposo en Animación para volver a caminar.',
   interacting: 'E: sentarse o levantarse · L: portátil',
 };
 
 function updateMovement(state: MovementState | null, text?: string): void {
+  movementState = state;
+  movementText = text;
   roomHud.hidden = !state;
   roomHud.dataset.state = state ?? 'none';
   if (state) hudHint.textContent = text ?? movementHints[state];
@@ -300,6 +305,11 @@ function mount(): void {
     orbit: () => { if (current()) setViewSelection(null); },
     animation: (state) => { if (current()) updateAnimation(state); },
     movement: (state, text) => { if (current()) updateMovement(state, text); },
+    run: (on) => {
+      if (!current()) return;
+      running = on;
+      updateMovement(movementState, movementText);
+    },
     render: (state) => { if (current()) updateRender(state); },
   }, {
     modelId: selectedModel, view: selectedView, light: selectedLight, wireframe: wireframe.checked, scene: selectedScene,

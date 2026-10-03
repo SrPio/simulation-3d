@@ -68,7 +68,9 @@ export class NameLetters {
     const lowest = Math.abs(ax.y) + Math.abs(ay.y) + Math.abs(az.y);
     const lift = Math.max(0, p.y - lowest - this.groundY);
     const fade = Math.max(0, 1 - lift / 1.5) ** 2;
-    this.shadows.set(this.shadowOffset + index, p.x, p.z, yaw, along * 2 + 0.25, across * 2 + 0.25, 0.5 * fade);
+    // Flat pieces (the tagline) only get a faint contact shadow; standing letters a fuller one.
+    const presence = Math.min(1, lowest / 0.2);
+    this.shadows.set(this.shadowOffset + index, p.x, p.z, yaw, along * 2 + 0.25 * presence, across * 2 + 0.25 * presence, 0.5 * fade * presence);
   }
 
   /** Copy every letter's pose from the physics bodies. */

@@ -16,7 +16,8 @@ export const LETTER_MASS = 1.5;
 const STEP = 1 / 60;
 const MAX_SUBSTEPS = 3;
 const PUSHER_RADIUS = 0.3;
-const PUSHER_SPHERES = [0.55, 1.1];
+// Low enough to shove the flat tagline pieces, high enough to tip the standing letters over.
+const PUSHER_SPHERES = [0.3, 0.75, 1.2];
 /** The world only steps when a letter is awake or the character is this close to one. */
 const WAKE_DISTANCE = 1.6;
 const STRAY_DISTANCE = 30;
@@ -48,9 +49,11 @@ export class LetterPhysics {
     }));
     this.groundY = groundY;
     this.world = new World({ gravity: new Vec3(0, -9.82, 0), allowSleep: true });
+    // More solver passes: thin pieces resting on an edge settle and sleep instead of rocking forever.
+    (this.world.solver as unknown as { iterations: number }).iterations = 20;
     const letterMaterial = new Material('letter');
     const groundMaterial = new Material('ground');
-    this.world.addContactMaterial(new ContactMaterial(letterMaterial, groundMaterial, { friction: 0.6, restitution: 0.15 }));
+    this.world.addContactMaterial(new ContactMaterial(letterMaterial, groundMaterial, { friction: 0.6, restitution: 0.05 }));
     this.world.addContactMaterial(new ContactMaterial(letterMaterial, letterMaterial, { friction: 0.4, restitution: 0.1 }));
     const ground = new Body({ type: Body.STATIC, shape: new Plane(), material: groundMaterial });
     ground.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
@@ -65,9 +68,12 @@ export class LetterPhysics {
     for (const letter of this.rest) {
       const body = new Body({ mass: LETTER_MASS, shape: new Box(new Vec3(...letter.half)), material: letterMaterial });
       body.allowSleep = true;
-      body.sleepSpeedLimit = 0.08;
+      // Generous: a letter resting against another keeps a faint rocking that must still count as asleep.
+      body.sleepSpeedLimit = 0.2;
       body.sleepTimeLimit = 0.6;
-      body.angularDamping = 0.15;
+      // Damping settles thin pieces balanced on an edge instead of letting them rock forever.
+      body.angularDamping = 0.5;
+      body.linearDamping = 0.1;
       this.world.addBody(body);
       this.bodies.push(body);
     }
