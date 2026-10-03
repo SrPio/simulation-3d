@@ -1,7 +1,7 @@
 import type { MoveIntent } from '../character/CharacterController';
 
-export type PressAction = 'interact' | 'laptop' | 'jump';
-const PRESSES: Record<string, PressAction> = { KeyE: 'interact', KeyL: 'laptop', Space: 'jump' };
+export type PressAction = 'interact' | 'laptop' | 'jump' | 'open';
+const PRESSES: Record<string, PressAction> = { KeyE: 'interact', KeyL: 'laptop', Space: 'jump', Enter: 'open', NumpadEnter: 'open' };
 
 const BINDINGS: Record<string, 'forward' | 'back' | 'left' | 'right'> = {
   KeyW: 'forward', ArrowUp: 'forward', KeyS: 'back', ArrowDown: 'back',
@@ -16,14 +16,14 @@ function ownsKeyboard(target: EventTarget | null): boolean {
 }
 
 /**
- * WASD / arrows for movement, Shift to run, Space to jump, E and L for seats and the laptop. Keys are released when the window loses focus or the
+ * WASD / arrows for movement, Shift to run, Space to jump, E and L for seats and the laptop, Enter to open a sign's link. Keys are released when the window loses focus or the
  * page is hidden, so a key held while switching away never keeps the character walking.
  */
 export class KeyboardInput {
   private readonly held = new Set<'forward' | 'back' | 'left' | 'right'>();
   private shift = false;
   enabled = true;
-  /** One call per physical press of E (sit/stand), L (laptop) or Space (jump); key repeat is ignored. */
+  /** One call per physical press of E (sit/stand), L (laptop), Space (jump) or Enter (open); key repeat is ignored. */
   onPress?: (action: PressAction) => void;
 
   constructor(target: Window, signal: AbortSignal) {
@@ -51,7 +51,9 @@ export class KeyboardInput {
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === 'Shift') this.shift = true;
     const press = PRESSES[event.code];
-    if (press && this.enabled && !event.ctrlKey && !event.altKey && !event.metaKey && !ownsKeyboard(event.target)) {
+    // Enter on a focused button or link belongs to that control.
+    const control = press === 'open' && event.target instanceof Element && !!event.target.closest('button, a');
+    if (press && this.enabled && !control && !event.ctrlKey && !event.altKey && !event.metaKey && !ownsKeyboard(event.target)) {
       // Space would also scroll the page or press the focused button.
       if (press === 'jump') event.preventDefault();
       if (!event.repeat) this.onPress?.(press);

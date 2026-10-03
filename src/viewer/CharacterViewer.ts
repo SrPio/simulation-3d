@@ -15,16 +15,20 @@ import {
 } from '../core/loadAssets';
 import { InteractionController } from '../interactions/InteractionController.ts';
 import { readRoom, type RoomData } from '../scene/roomData.ts';
-import { readOutside, type OutsideData } from '../scene/outsideData.ts';
-import { PlateButtons } from '../scene/PlateButtons.ts';
-import { plateAt } from '../world/plates.ts';
+import { groundAt, readOutside, type OutsideData } from '../scene/outsideData.ts';
+import { SignAreas } from '../scene/SignAreas.ts';
+import { InfiniteFloor } from '../scene/InfiniteFloor.ts';
+import { BlobShadows } from '../scene/BlobShadows.ts';
+import { NameLetters } from '../scene/NameLetters.ts';
+import { signAt } from '../world/signs.ts';
+import type { LetterPhysics, StaticBox } from '../world/LetterPhysics.ts';
 
 export type ViewPreset = 'front' | 'left' | 'right' | 'back' | 'three-quarter';
 export type LightPreset = 'neutral' | 'violet';
 export type MovementState = 'ready' | 'unavailable' | 'seated' | 'interacting';
 /** Room camera: 'follow' keeps the isometric angle and widest zoom and only tracks the character; 'free' also orbits and zooms. */
 export type CameraMode = 'follow' | 'free';
-export type PlateLink = { id: string; link: string; label: string };
+export type SignLink = { id: string; link: string; label: string };
 export type ViewerStatus = { kind: 'loading' | 'ready' | 'error'; title: string; detail: string };
 export type ModelStats = { meshes: number; triangles: number };
 /** Measured rendering cost, sampled about twice a second. */
@@ -63,14 +67,18 @@ type ViewerEvents = {
   animation: (state: AnimationState | null) => void;
   movement?: (state: MovementState | null, text?: string) => void;
   render?: (stats: RenderStats | null) => void;
-  /** The character stepped on a floor plate (its link button is up) or left it. */
-  plate?: (plate: PlateLink | null) => void;
+  /** The character walked into a sign's floor zone (Enter opens its link) or left it. */
+  sign?: (sign: SignLink | null) => void;
 };
 
 const LOCOMOTION = new Set(['idle', 'walk', 'run', 'jump']);
 /** How quickly the camera catches up with the character (1/s); frame-rate independent. */
 const FOLLOW_RATE = 4;
 const SHADOWLESS = /^(FloorPlank|Platform|Wall|Baseboard|Poster|NightCity|WindowGlass)/;
+/** How quickly the character steps down to the outside ground or back up onto the room floor (1/s). */
+const STEP_RATE = 25;
+/** Blob shadow slots: the character first, then the signs, then the letters. */
+const CHARACTER_SHADOW = 0;
 
 export class CharacterViewer {
   private readonly scene = new Scene();
@@ -99,11 +107,19 @@ export class CharacterViewer {
   private interaction?: InteractionController;
   private outside?: Group;
   private outsideData?: OutsideData;
-  private buttons?: PlateButtons;
-  private plate?: string;
+  private areas?: SignAreas;
+  private sign?: string;
+  private ground?: InfiniteFloor;
+  private shadows?: BlobShadows;
+  private letters?: NameLetters;
+  private physics?: LetterPhysics;
+  private fallenLetters = -1;
+  /** Height of the character's feet: 0 on the room floor, the outside ground elsewhere. */
+  private elevation = 0;
   private readonly raycaster = new Raycaster();
   private readonly pointer = new Vector2();
   private pointerStart?: { x: number; y: number };
+  private hover?: { x: number; y: number };
   private cameraMode: CameraMode = 'free';
   /** Point the room camera looks at; it follows the character. */
   private readonly focus = new Vector3();
@@ -278,8 +294,8 @@ export class CharacterViewer {
       const stats: ModelStats = { meshes: 0, triangles: 0 };
       const count = (object: Object3D) => {
         if (!(object instanceof Mesh)) return;
-        if (!this.room || !this.isInRoom(object)) {
-          object.castShadow = true; // room pieces got their shadow flags before merging
+        if (!this.room || !(this.isInRoom(object) || this.isInRoom(object, this.outside))) {
+          object.castShadow = true; // room and outside pieces got their shadow flags before merging
           object.receiveShadow = true;
         }
         if (object instanceof SkinnedMesh && this.mixer) object.frustumCulled = false;
@@ -297,8 +313,8 @@ export class CharacterViewer {
       this.scene.add(this.model);
       if (this.room) this.scene.add(this.room);
       if (this.outside) this.scene.add(this.outside);
-      if (this.buttons) this.scene.add(this.buttons.root);
-      else this.createFloor(this.mixer ? 0 : box.min.y);
+      for (const object of [this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.letters?.mesh]) if (object) this.scene.add(object);
+      if (!this.ground) this.createFloor(this.mixer ? 0 : box.min.y);
       this.frameLights();
       this.cameraDistance = Math.max(this.bounds.length() * 2.5, 1);
       this.camera.far = this.cameraDistance * 10;
@@ -312,6 +328,7 @@ export class CharacterViewer {
       if (this.controls) this.controls.enabled = !this.contextLost;
       this.events.stats(stats);
       if (!this.contextLost) this.showReady();
+      void this.loadPhysics();
     } catch (error) {
       if (this.disposed || this.abort.signal.aborted) return;
       this.dispose();
@@ -350,8 +367,9 @@ export class CharacterViewer {
     for (const [seat, placement] of data.seatPlacements) this.standPoints.set(seat, placement);
     // With the outside ground the character can leave the room through its two open sides.
     const floor = this.outsideData?.bounds ?? data.halfSize;
-    this.controller = new CharacterController(data.spawn, data.boxes, floor);
-    this.interaction = new InteractionController(data.seats, data.boxes, floor, CHARACTER_RADIUS);
+    const boxes = [...data.boxes, ...(this.outsideData?.boxes ?? [])];
+    this.controller = new CharacterController(data.spawn, boxes, floor);
+    this.interaction = new InteractionController(data.seats, boxes, floor, CHARACTER_RADIUS);
     if (this.keyboard) this.keyboard.onPress = this.onPress;
     this.placeForClip('');
     room.traverse((object) => {
@@ -378,25 +396,67 @@ export class CharacterViewer {
     this.host.dataset.seat = seat;
   }
 
-  private isInRoom(object: Object3D): boolean {
-    for (let node: Object3D | null = object; node; node = node.parent) if (node === this.room) return true;
+  private isInRoom(object: Object3D, root: Object3D | undefined = this.room): boolean {
+    for (let node: Object3D | null = object; node; node = node.parent) if (node === root) return true;
     return false;
   }
 
-  /** Ground outside the room and its plates; the plates get their (hidden) link buttons. */
+  /**
+   * Everything outside the room: the endless ground, the signs with their floor zones and the name
+   * letters. None of it is in the shadow map; blob shadows stand in for it on the ground.
+   */
   private addOutside(outside: Group): void {
     this.outside = outside;
-    this.outsideData = readOutside(outside);
+    const data = readOutside(outside);
+    this.outsideData = data;
+    // The letters move on their own: they leave the static GLB before it is merged.
+    outside.getObjectByName('Letters')?.removeFromParent();
     outside.traverse((object) => {
       if (!(object instanceof Mesh)) return;
-      object.receiveShadow = true;
+      object.receiveShadow = false;
       object.castShadow = false;
     });
     mergeStaticMeshes(outside);
-    this.buttons = new PlateButtons(this.outsideData.plates);
-    this.buttons.setReducedMotion(this.reducedMotion);
-    this.host.dataset.plate = 'none';
-    this.host.dataset.plateButton = 'none';
+    this.ground = new InfiniteFloor(data.groundY);
+    this.shadows = new BlobShadows(1 + data.signs.length + data.letters.length, data.groundY);
+    for (const [index, sign] of data.signs.entries()) {
+      this.shadows.set(1 + index, sign.position.x, sign.position.z, sign.yaw, sign.board.width + 0.5, 0.55, 0.45);
+    }
+    if (data.letters.length) {
+      this.letters = new NameLetters(data.letters, this.shadows, 1 + data.signs.length, data.groundY);
+      // The batched mesh holds its own copy of the letter geometry.
+      for (const letter of data.letters) letter.geometry.dispose();
+    }
+    this.shadows.flush();
+    this.areas = new SignAreas(data.signs, data.groundY);
+    this.areas.setReducedMotion(this.reducedMotion);
+    this.host.dataset.sign = 'none';
+    this.host.dataset.signArea = 'none';
+    this.host.dataset.letters = '0';
+  }
+
+  /** Physics for the name letters, loaded after the scene is up (its own chunk); until then they stand still. */
+  private async loadPhysics(): Promise<void> {
+    const data = this.outsideData;
+    if (!data?.letters.length || this.physics) return;
+    const { platform, groundY } = data;
+    // The room platform (top at the room floor) and the sign boards: letters bounce off them.
+    const statics: StaticBox[] = [{
+      center: { x: (platform.minX + platform.maxX) / 2, y: -0.17, z: (platform.minZ + platform.maxZ) / 2 },
+      half: [(platform.maxX - platform.minX) / 2, 0.17, (platform.maxZ - platform.minZ) / 2],
+      yaw: 0,
+    }];
+    for (const sign of data.signs) {
+      const height = sign.board.bottom + sign.board.height;
+      statics.push({ center: { x: sign.position.x, y: sign.position.y + height / 2, z: sign.position.z }, half: [sign.board.width / 2 + 0.1, height / 2, 0.08], yaw: sign.yaw });
+    }
+    try {
+      const { LetterPhysics } = await import('../world/LetterPhysics.ts');
+      const physics = await LetterPhysics.load(data.letters, statics, groundY);
+      if (!this.disposed) this.physics = physics;
+    } catch {
+      // Without the physics chunk the letters simply stay where they stand.
+    }
   }
 
   private addLaptop(laptop: Group): void {
@@ -452,6 +512,10 @@ export class CharacterViewer {
   }
 
   private readonly onPress = (action: PressAction): void => {
+    if (action === 'open') {
+      if (this.ready) this.openSign(this.sign);
+      return;
+    }
     const interaction = this.interaction;
     if (!interaction || !this.controller || !this.ready || this.controller.jumping) return;
     if (action === 'jump') {
@@ -503,7 +567,7 @@ export class CharacterViewer {
     } else if (interaction.phase === 'seated') {
       this.placeForClip(this.activeClip);
     } else if (this.model) {
-      this.model.position.set(interaction.position.x, 0, interaction.position.z);
+      this.model.position.set(interaction.position.x, this.elevation, interaction.position.z);
       this.model.quaternion.setFromAxisAngle(new Vector3(0, 1, 0), interaction.yaw);
     }
     this.host.dataset.interaction = interaction.phase === 'seated' ? interaction.state.stage : interaction.phase;
@@ -512,7 +576,7 @@ export class CharacterViewer {
 
   private applyController(): void {
     if (!this.model || !this.controller) return;
-    this.model.position.set(this.controller.position.x, 0, this.controller.position.z);
+    this.model.position.set(this.controller.position.x, this.elevation, this.controller.position.z);
     this.model.quaternion.setFromAxisAngle(new Vector3(0, 1, 0), this.controller.yaw);
     const position = `${this.controller.position.x.toFixed(2)},${this.controller.position.z.toFixed(2)}`;
     if (this.host.dataset.position !== position) this.host.dataset.position = position;
@@ -535,8 +599,12 @@ export class CharacterViewer {
     this.driving = false;
     this.keyboard?.clear();
     if (this.actions.has('idle')) this.selectClip('idle');
+    this.elevation = 0;
     this.placeForClip(this.activeClip);
     this.host.dataset.locomotion = 'idle';
+    this.physics?.reset();
+    this.letters?.reset();
+    this.reportLetters();
   }
 
   /** Keyboard locomotion for the room: camera-relative movement with colliders and matched clip rates. */
@@ -569,56 +637,103 @@ export class CharacterViewer {
     if (!keys && mode === 'idle') this.driving = false;
   }
 
-  /** Floor plates: the button of the plate under the character rises; leaving it (or jumping off) sinks it. */
-  private checkPlate(): void {
-    if (!this.outsideData || !this.buttons || !this.model || this.controller?.airborne) return;
-    const plate = plateAt({ x: this.model.position.x, z: this.model.position.z }, this.outsideData.plates, this.plate);
-    if (plate?.id === this.plate) return;
-    this.plate = plate?.id;
-    this.buttons.show(plate?.id);
-    this.host.dataset.plate = plate?.id ?? 'none';
-    this.events.plate?.(plate ? { id: plate.id, link: plate.link, label: plate.label } : null);
+  /** Sign zones: the fence of the zone the character walks into rises; leaving it (or jumping out) lowers it. */
+  private checkSign(): void {
+    if (!this.outsideData || !this.areas || !this.model || this.controller?.airborne) return;
+    const sign = signAt({ x: this.model.position.x, z: this.model.position.z }, this.outsideData.signs, this.sign);
+    if (sign?.id === this.sign) return;
+    this.sign = sign?.id;
+    this.areas.show(sign?.id);
+    this.host.dataset.sign = sign?.id ?? 'none';
+    this.events.sign?.(sign ? { id: sign.id, link: sign.link, label: sign.label } : null);
   }
 
-  /** Screen position (CSS px) of the risen plate button, for tests and tooling. */
-  private reportButton(): void {
-    const center = this.plate && this.renderer ? this.buttons?.center(this.plate) : undefined;
+  /** Open a sign's site in a new tab (Enter in its zone, or a click on the zone or the board). */
+  private openSign(id: string | undefined): void {
+    const sign = id ? this.outsideData?.signs.find((entry) => entry.id === id) : undefined;
+    if (!sign) return;
+    this.areas?.pulse(sign.id);
+    window.open(sign.link, '_blank', 'noopener,noreferrer');
+  }
+
+  /** Screen position (CSS px) of the current sign zone's centre, for tests and tooling. */
+  private reportSign(): void {
+    const center = this.sign && this.renderer ? this.areas?.center(this.sign) : undefined;
     let value = 'none';
     if (center && this.renderer) {
       const point = center.project(this.camera);
       const bounds = this.renderer.domElement.getBoundingClientRect();
       value = `${Math.round(bounds.left + (point.x + 1) / 2 * bounds.width)},${Math.round(bounds.top + (1 - point.y) / 2 * bounds.height)}`;
     }
-    if (this.host.dataset.plateButton !== value && this.outside) this.host.dataset.plateButton = value;
+    if (this.host.dataset.signArea !== value && this.outside) this.host.dataset.signArea = value;
+  }
+
+  /** Feet step down onto the outside ground or up onto the room floor over a few frames, not in one jump. */
+  private updateElevation(delta: number): void {
+    if (!this.model || !this.outsideData) return;
+    const target = groundAt({ x: this.model.position.x, z: this.model.position.z }, this.outsideData);
+    if (this.reducedMotion || Math.abs(target - this.elevation) < 1e-3) this.elevation = target;
+    else this.elevation += (target - this.elevation) * (1 - Math.exp(-delta * STEP_RATE));
+    this.model.position.y = this.elevation;
+    const value = this.elevation.toFixed(2);
+    if (this.host.dataset.elevation !== value) this.host.dataset.elevation = value;
+  }
+
+  /** Letter physics, the character's blob shadow outside the room, and the ground that follows the view. */
+  private updateOutside(delta: number): void {
+    if (!this.model || !this.outsideData || !this.shadows) return;
+    const lift = this.controller?.lift ?? 0;
+    const { x, z } = this.model.position;
+    if (this.physics && this.letters && this.physics.step(delta, { x, y: this.elevation + lift, z })) {
+      this.letters.sync(this.physics.bodies);
+      this.reportLetters();
+    }
+    if (this.elevation < -1e-3 || groundAt({ x, z }, this.outsideData) < 0) {
+      const fade = 1 - lift / 0.8;
+      this.shadows.set(CHARACTER_SHADOW, x, z, 0, 0.8 * (1 - lift * 0.4), 0.8 * (1 - lift * 0.4), 0.5 * fade);
+    } else {
+      this.shadows.hide(CHARACTER_SHADOW);
+    }
+    this.shadows.flush();
+  }
+
+  private reportLetters(): void {
+    const fallen = this.physics?.fallen() ?? 0;
+    if (fallen === this.fallenLetters) return;
+    this.fallenLetters = fallen;
+    this.host.dataset.letters = String(fallen);
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
     this.pointerStart = { x: event.clientX, y: event.clientY };
   };
 
-  /** A click (not a drag of the orbit) on a raised plate button opens its site in a new tab. */
+  /** A click (not a drag of the orbit) on a sign or its floor zone opens its site in a new tab. */
   private readonly onPointerUp = (event: PointerEvent): void => {
     const start = this.pointerStart;
     this.pointerStart = undefined;
     if (!start || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 6) return;
-    const hit = this.buttonAt(event);
-    if (hit) window.open(hit.link, '_blank', 'noopener,noreferrer');
+    this.openSign(this.signUnder(event.clientX, event.clientY));
   };
 
+  /** Hover is resolved once per frame at most, however fast pointer events arrive. */
   private readonly onPointerMove = (event: PointerEvent): void => {
-    if (!this.buttons?.visible || !this.renderer) {
-      if (this.renderer && this.renderer.domElement.style.cursor) this.renderer.domElement.style.cursor = '';
-      return;
-    }
-    this.renderer.domElement.style.cursor = this.buttonAt(event) ? 'pointer' : '';
+    this.hover = { x: event.clientX, y: event.clientY };
   };
 
-  private buttonAt(event: PointerEvent): { id: string; link: string } | undefined {
-    if (!this.buttons?.visible || !this.renderer) return undefined;
+  private updateHover(): void {
+    if (!this.hover || !this.renderer) return;
+    const cursor = this.signUnder(this.hover.x, this.hover.y) ? 'pointer' : '';
+    this.hover = undefined;
+    if (this.renderer.domElement.style.cursor !== cursor) this.renderer.domElement.style.cursor = cursor;
+  }
+
+  private signUnder(clientX: number, clientY: number): string | undefined {
+    if (!this.areas || !this.renderer || !this.ready) return undefined;
     const bounds = this.renderer.domElement.getBoundingClientRect();
-    this.pointer.set((event.clientX - bounds.left) / bounds.width * 2 - 1, -((event.clientY - bounds.top) / bounds.height) * 2 + 1);
+    this.pointer.set((clientX - bounds.left) / bounds.width * 2 - 1, -((clientY - bounds.top) / bounds.height) * 2 + 1);
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    return this.buttons.hit(this.raycaster);
+    return this.areas.hit(this.raycaster)?.id;
   }
 
   /** Where the room camera should look: the character (at the room's mid height), or the model centre in the studio. */
@@ -731,6 +846,7 @@ export class CharacterViewer {
       this.rim.intensity = 0;
       this.ambient.color.set(violet ? 0x7a5cc4 : 0xf2edff);
       this.ambient.intensity = violet ? 0.45 : 1.2;
+      this.ground?.setLight(violet);
       this.host.dataset.light = preset;
       return;
     }
@@ -770,7 +886,7 @@ export class CharacterViewer {
     if (this.disposed) return;
     this.reducedMotion = enabled;
     if (this.controls) this.controls.enableDamping = !enabled;
-    this.buttons?.setReducedMotion(enabled);
+    this.areas?.setReducedMotion(enabled);
     this.host.dataset.reducedMotion = String(enabled);
   }
 
@@ -915,7 +1031,9 @@ export class CharacterViewer {
       if (this.interaction && this.interaction.phase !== 'free') this.driveInteraction(delta);
       else this.drive(delta);
       this.syncLaptop(delta);
-      this.checkPlate();
+      this.updateElevation(delta);
+      this.updateOutside(delta);
+      this.checkSign();
     }
     if (this.ready && this.mixer && this.playing) {
       this.mixer.update(delta);
@@ -927,8 +1045,10 @@ export class CharacterViewer {
     }
     if (this.ready && this.room) this.followCharacter(delta);
     this.controls?.update();
-    this.buttons?.update(delta, this.camera);
-    this.reportButton();
+    this.areas?.update(delta, this.camera);
+    this.updateHover();
+    this.reportSign();
+    if (this.ground && this.model) this.ground.update(this.camera, this.model.position);
     this.renderer.render(this.scene, this.camera);
     this.sampleRender(frame);
   };
@@ -1015,7 +1135,11 @@ export class CharacterViewer {
     this.events.animation(null);
     this.events.movement?.(null);
     this.events.render?.(null);
-    this.buttons?.dispose();
+    this.areas?.dispose();
+    this.ground?.dispose();
+    this.shadows?.dispose();
+    this.letters?.dispose();
+    this.physics = undefined;
     disposeObjects([...this.assetRoots, this.scene]);
     this.key.shadow.dispose();
     this.fill.shadow.dispose();

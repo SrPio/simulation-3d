@@ -16,6 +16,7 @@
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
+    "cannon-es": "^0.20.0",
     "three": "0.185.1"
   },
   "devDependencies": {

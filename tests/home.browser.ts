@@ -66,6 +66,7 @@ test('the root shows only the room with V4, neutral light, a fixed following cam
   });
   await ready(page);
   assert.deepEqual(models.sort(), ['developer-v4-interactions.glb', 'laptop.glb', 'outside.glb', 'room.glb']);
+  await expect(host(page)).toHaveAttribute('data-letters', '0');
   await expect(page.locator('.sidebar, .version-selector, #animation-controls')).toHaveCount(0);
   await expect(page.locator('canvas')).toHaveCount(1);
   await expect(host(page)).toHaveAttribute('data-scene', 'room');
@@ -102,12 +103,13 @@ test('the root shows only the room with V4, neutral light, a fixed following cam
   assert.deepEqual(errors, []);
 });
 
-test('Space hops forward and the character walks out to each plate, whose floating button opens the site in a new tab', async (t) => {
+test('Space hops forward, the character knocks over the name letters and steps down to the outside ground', async (t) => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   t.after(() => page.close());
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await ready(page);
+  await expect(host(page)).toHaveAttribute('data-elevation', '0.00');
   const start = await position(page);
   await page.keyboard.press('Space');
   await expect(host(page)).toHaveAttribute('data-locomotion', 'jump');
@@ -115,35 +117,68 @@ test('Space hops forward and the character walks out to each plate, whose floati
   const landed = await position(page);
   const hop = Math.hypot(landed[0] - start[0], landed[1] - start[1]);
   assert.ok(hop > 0.3 && hop < 0.7, `a short hop forward: ${hop}`);
-  await expect(page.locator('#plate-link')).toBeHidden();
-  await expect(host(page)).toHaveAttribute('data-plate-button', 'none');
-  for (const [id, link, target] of [
-    ['portfolio', 'https://andres-jaramillo.is-a.dev/', { x: 0.6, z: 4.7 }],
-    ['github', 'https://github.com/SrPio', { x: 4.7, z: 0.6 }],
+  // Through the middle of the name (J, A), towards the camera.
+  await walkTo(page, { x: 5.6, z: 5.6 });
+  await expect(host(page)).toHaveAttribute('data-elevation', '-0.12');
+  await expect.poll(async () => Number(await host(page).getAttribute('data-letters')), { timeout: 5000 }).toBeGreaterThan(0);
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: shot('home-letters.png') });
+  await page.locator('#hud-reset').click();
+  await expect(host(page)).toHaveAttribute('data-letters', '0');
+  await expect(host(page)).toHaveAttribute('data-elevation', '0.00');
+  assert.deepEqual(errors, []);
+});
+
+test('each sign has a floor zone: walking in raises it, and Enter or a click opens the site in a new tab', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  t.after(() => page.close());
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await ready(page);
+  await expect(page.locator('#sign-link')).toBeHidden();
+  await expect(host(page)).toHaveAttribute('data-sign', 'none');
+  await expect(host(page)).toHaveAttribute('data-sign-area', 'none');
+  // The zones lie in front of the signs (camera side): pass between the first two boards.
+  await walkTo(page, { x: 4.74, z: 7.42 });
+  await walkTo(page, { x: 6.72, z: 9.4 });
+  for (const [id, link, target, open] of [
+    ['portfolio', 'https://andres-jaramillo.is-a.dev/', { x: 5.48, z: 10.86 }, 'click'],
+    ['github', 'https://github.com/SrPio', { x: 8.17, z: 8.17 }, 'enter'],
+    ['linkedin', 'https://www.linkedin.com/in/andres-fernando-jaramillo-avila/', { x: 10.86, z: 5.48 }, 'enter'],
   ] as const) {
-    await walkTo(page, target, async () => (await host(page).getAttribute('data-plate')) === id);
-    await expect(host(page)).toHaveAttribute('data-plate', id);
-    const anchor = page.locator('#plate-link');
+    await walkTo(page, target, async () => (await host(page).getAttribute('data-sign')) === id);
+    await expect(host(page)).toHaveAttribute('data-sign', id);
+    const anchor = page.locator('#sign-link');
     await expect(anchor).toBeVisible();
     await expect(anchor).toHaveAttribute('href', link);
     await expect(anchor).toHaveAttribute('target', '_blank');
     await expect(anchor).toHaveAttribute('rel', /noopener/);
-    await expect(host(page)).toHaveAttribute('data-plate-button', /^\d+,\d+$/);
+    await expect(host(page)).toHaveAttribute('data-sign-area', /^\d+,\d+$/);
     await page.waitForTimeout(600);
-    await page.screenshot({ path: shot(`home-plate-${id}.png`) });
+    await page.screenshot({ path: shot(`home-sign-${id}.png`) });
     // The new tab is intercepted so the test stays offline.
     await page.context().route(link, (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<title>stub</title>' }));
-    const [x, y] = (await host(page).getAttribute('data-plate-button'))!.split(',').map(Number);
     const popup = page.waitForEvent('popup', { timeout: 5000 });
-    await page.mouse.click(x, y);
+    if (open === 'enter') {
+      await page.keyboard.press('Enter');
+    } else {
+      const [x, y] = (await host(page).getAttribute('data-sign-area'))!.split(',').map(Number);
+      await page.mouse.click(x, y);
+    }
     const tab = await popup;
     await tab.waitForURL(link);
     await tab.close();
   }
-  await walkTo(page, { x: 2.2, z: 2.2 });
-  await expect(host(page)).toHaveAttribute('data-plate', 'none');
-  await expect(page.locator('#plate-link')).toBeHidden();
-  await expect(host(page)).toHaveAttribute('data-plate-button', 'none', { timeout: 2000 });
+  await walkTo(page, { x: 9.0, z: 3.6 });
+  await expect(host(page)).toHaveAttribute('data-sign', 'none');
+  await expect(page.locator('#sign-link')).toBeHidden();
+  await expect(host(page)).toHaveAttribute('data-sign-area', 'none');
+  // Away from every zone Enter opens nothing.
+  let opened = false;
+  page.on('popup', () => { opened = true; });
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(500);
+  assert.equal(opened, false);
   assert.deepEqual(errors, []);
 });
 

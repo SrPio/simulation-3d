@@ -5,6 +5,8 @@ export const WALK_SPEED = 0.8035714285714285;
 export const RUN_SPEED = 2.131578947368421;
 /** The in-place jump clip (rig manifest): its length, the fraction with the feet off the floor and the hop length. */
 export const JUMP = { duration: 0.8, air: [0.26, 0.7] as [number, number], distance: 0.45 };
+/** Peak height of the feet during the jump, for what the character touches in the air (the clip draws the hop itself). */
+export const JUMP_HEIGHT = 0.4;
 export const CHARACTER_RADIUS = 0.3;
 export const MAX_STEP = 0.05;
 
@@ -106,11 +108,18 @@ export class CharacterController {
     return this.jumping ? 'jump' : 'idle';
   }
 
-  /** Whether the feet are off the floor right now (the character cannot trigger floor plates mid-air). */
+  /** Whether the feet are off the floor right now (the character cannot enter sign zones mid-air). */
   get airborne(): boolean {
     if (this.jumpTime === undefined) return false;
     const fraction = this.jumpTime / JUMP.duration;
     return fraction > JUMP.air[0] && fraction < JUMP.air[1];
+  }
+
+  /** Height of the feet above the floor right now: an arc while airborne, 0 otherwise. */
+  get lift(): number {
+    if (!this.airborne) return 0;
+    const fraction = (this.jumpTime! / JUMP.duration - JUMP.air[0]) / (JUMP.air[1] - JUMP.air[0]);
+    return JUMP_HEIGHT * Math.sin(Math.PI * fraction);
   }
 
   locomotion(): Locomotion {

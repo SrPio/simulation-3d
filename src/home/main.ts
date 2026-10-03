@@ -1,6 +1,6 @@
 import './home.css';
 import { QUALITY, isQualityId, readPreferences, savePreferences } from '../core/quality.ts';
-import { CharacterViewer, type CameraMode, type LightPreset, type MovementState, type PlateLink, type ViewerStatus } from '../viewer/CharacterViewer';
+import { CharacterViewer, type CameraMode, type LightPreset, type MovementState, type SignLink, type ViewerStatus } from '../viewer/CharacterViewer';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('No se encontró el contenedor de la habitación.');
@@ -34,12 +34,12 @@ app.innerHTML = `
     </nav>
     <section class="room-hud" aria-label="Controles del personaje">
       <p id="hud-hint" role="status" aria-live="polite">W A S D o flechas para caminar · Shift para correr · Espacio para saltar</p>
-      <a id="plate-link" class="plate-link" href="#" target="_blank" rel="noopener noreferrer" hidden></a>
+      <a id="sign-link" class="sign-link" href="#" target="_blank" rel="noopener noreferrer" hidden></a>
       <div class="hud-actions">
         <button type="button" id="hud-help" aria-expanded="false" aria-controls="hud-help-text">Ayuda</button>
         <button type="button" id="hud-reset">Restablecer posición</button>
       </div>
-      <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Mantén Shift: correr. Espacio: saltar hacia adelante. Cerca de la silla o la cama, E: sentarse y levantarse. Sentado, L: abrir o cerrar el portátil. Sal por los lados abiertos de la habitación y pisa una lámina para mostrar su enlace.</p>
+      <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Mantén Shift: correr. Espacio: saltar hacia adelante. Cerca de la silla o la cama, E: sentarse y levantarse. Sentado, L: abrir o cerrar el portátil. Sal por los lados abiertos de la habitación: entra en la zona marcada frente a un cartel y pulsa Enter (o haz clic en el cartel) para abrir su enlace. Empuja las letras del nombre para tirarlas.</p>
     </section>
     <div class="room-overlay" id="viewer-overlay">
       <div class="room-overlay-card"><span class="room-ring" id="loading-ring" aria-hidden="true"></span><h1 id="overlay-title">Cargando la habitación</h1><p id="overlay-detail">Preparando el personaje, la habitación y el exterior.</p><button type="button" class="room-retry" id="retry" hidden>Volver a intentar</button></div>
@@ -65,7 +65,7 @@ const hint = element<HTMLParagraphElement>('#hud-hint');
 const help = element<HTMLButtonElement>('#hud-help');
 const helpText = element<HTMLParagraphElement>('#hud-help-text');
 const reset = element<HTMLButtonElement>('#hud-reset');
-const plateLink = element<HTMLAnchorElement>('#plate-link');
+const signLink = element<HTMLAnchorElement>('#sign-link');
 const cameraFree = element<HTMLButtonElement>('#camera-free');
 const qualityButtons = Array.from(app.querySelectorAll<HTMLButtonElement>('[data-quality]'));
 const lightButtons = Array.from(app.querySelectorAll<HTMLButtonElement>('[data-light]'));
@@ -104,12 +104,12 @@ function updateMovement(state: MovementState | null, text?: string): void {
   reset.disabled = state !== 'ready' && state !== 'interacting';
 }
 
-function updatePlate(plate: PlateLink | null): void {
-  plateLink.hidden = !plate;
-  if (!plate) return;
-  plateLink.href = plate.link;
-  plateLink.textContent = `${plate.label} ↗`;
-  plateLink.dataset.plate = plate.id;
+function updateSign(sign: SignLink | null): void {
+  signLink.hidden = !sign;
+  if (!sign) return;
+  signLink.href = sign.link;
+  signLink.textContent = `${sign.label} ↗`;
+  signLink.dataset.sign = sign.id;
 }
 
 function mount(): void {
@@ -117,7 +117,7 @@ function mount(): void {
   const current = ++generation;
   const live = () => !disposed && current === generation;
   viewer?.dispose();
-  updatePlate(null);
+  updateSign(null);
   host.dataset.light = light;
   host.dataset.scene = 'room';
   host.dataset.model = 'v4rig';
@@ -127,7 +127,7 @@ function mount(): void {
     orbit: () => {},
     animation: () => {},
     movement: (state, text) => { if (live()) updateMovement(state, text); },
-    plate: (plate) => { if (live()) updatePlate(plate); },
+    sign: (sign) => { if (live()) updateSign(sign); },
   }, {
     modelId: 'v4rig', view: 'three-quarter', light, wireframe: false, scene: 'room',
     quality: preferences.quality, reducedMotion: motionReduced(), cameraMode: camera,

@@ -116,7 +116,7 @@ app.innerHTML = `
           <button type="button" id="hud-help" aria-expanded="false" aria-controls="hud-help-text">Ayuda</button>
           <button type="button" id="hud-reset">Restablecer posición</button>
         </div>
-        <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Mantén Shift: correr. Espacio: saltar. Cerca de la silla (por cualquiera de sus lados) o la cama, E: sentarse y levantarse. Sentado, L: abrir o cerrar el portátil. Sal por los lados abiertos y pisa las láminas para abrir el portafolio o GitHub. Arrastra para girar la cámara: el movimiento sigue la vista. Las teclas no actúan mientras usas un desplegable o un control deslizante.</p>
+        <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Mantén Shift: correr. Espacio: saltar. Cerca de la silla (por cualquiera de sus lados) o la cama, E: sentarse y levantarse. Sentado, L: abrir o cerrar el portátil. Sal por los lados abiertos: en la zona marcada frente a cada cartel, Enter (o un clic en el cartel) abre el portafolio, GitHub o LinkedIn. Empuja las letras del nombre para tirarlas. Arrastra para girar la cámara: el movimiento sigue la vista. Las teclas no actúan mientras usas un desplegable o un control deslizante.</p>
       </section>
       <div class="view-caption"><span class="caption-line" aria-hidden="true"></span><span id="view-label">Vista tres cuartos</span><span class="orbit-label">ÓRBITA 360°</span></div>
       <footer class="viewport-footer"><p><span class="interaction-icon" aria-hidden="true">↔</span> Arrastrar para girar <span class="hint-divider">/</span> Scroll para zoom</p><p id="model-stats" aria-label="Estadísticas del modelo">— mallas <span aria-hidden="true">·</span> — triángulos</p></footer>

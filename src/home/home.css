@@ -72,13 +72,13 @@ h1, p { margin: 0; }
 .hud-actions { display: flex; gap: 8px; }
 .hud-actions button { flex: 1; min-height: 40px; }
 .hud-help { color: var(--muted); font-size: 11px; }
-.plate-link {
+.sign-link {
   display: flex; align-items: center; justify-content: center; min-height: 44px; border-radius: 8px; text-decoration: none; font-weight: 600;
   color: #fbf6ff; background: linear-gradient(#ffffff1c, #00000000), #6c48c9; border: 1px solid #c4a2ed88;
-  box-shadow: 0 3px 0 #2e1d52, 0 0 18px #8a5cf060; animation: plate-in 320ms cubic-bezier(.2, 1.4, .4, 1) both;
+  box-shadow: 0 3px 0 #2e1d52, 0 0 18px #8a5cf060; animation: sign-in 320ms cubic-bezier(.2, 1.4, .4, 1) both;
 }
-.plate-link:hover { background-color: #7d58da; }
-@keyframes plate-in { from { opacity: 0; transform: translateY(8px) scale(0.96); } }
+.sign-link:hover { background-color: #7d58da; }
+@keyframes sign-in { from { opacity: 0; transform: translateY(8px) scale(0.96); } }
 
 .room-overlay { position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; padding: 24px; background: #17121ecc; backdrop-filter: blur(8px); }
 .room-overlay-card { max-width: 380px; text-align: center; }

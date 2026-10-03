@@ -104,7 +104,7 @@ export function loadLaptop(signal: AbortSignal): Promise<GLTF> {
 
 export const outsideFile = 'models/outside.glb';
 
-/** Ground outside the room with the portfolio and GitHub plates. Its failures are reported as room failures. */
+/** Signs, name letters and walkable bounds outside the room. Its failures are reported as room failures. */
 export function loadOutside(signal: AbortSignal): Promise<GLTF> {
   return loadGlb(outsideFile, 'ROOM', signal);
 }
