@@ -48,9 +48,9 @@ test('outside GLB: no ground mesh, three standing signs linking to the portfolio
     assert.ok(sign.label.length > 3, sign.id);
     assert.ok(Math.abs(sign.position.y - groundY) < 1e-4, `${sign.id} stands on the outside ground`);
     assert.ok(sign.board.bottom > 0.3 && sign.board.height > 1, `${sign.id}: a standing board`);
-    // Boards face the corner camera (+X +Z).
-    const facing = { x: Math.sin(sign.yaw), z: Math.cos(sign.yaw) };
-    assert.ok(facing.x * Math.SQRT1_2 + facing.z * Math.SQRT1_2 > 0.99, `${sign.id} faces the camera`);
+    // In a row along the line of the back (-Z) wall, past the room's open +X side, facing +Z like its window.
+    assert.ok(Math.abs(sign.position.z + 3.05) < 0.05 && sign.position.x - sign.board.width / 2 > 3.2, `${sign.id} at ${sign.position.x},${sign.position.z}`);
+    assert.ok(Math.cos(sign.yaw) > 0.999, `${sign.id} faces +Z`);
   }
   // A large walkable ground that still holds the whole room floor.
   assert.ok(bounds.minX <= -2.9 && bounds.minZ <= -2.9 && bounds.maxX > 15 && bounds.maxZ > 15, JSON.stringify(bounds));
@@ -61,7 +61,7 @@ test('sign zones lie in front of their boards, outside the room, and are detecte
   for (const sign of signs) {
     const { area } = sign;
     const toZone = { x: area.center.x - sign.position.x, z: area.center.z - sign.position.z };
-    assert.ok(toZone.x > 0.5 && toZone.z > 0.5, `${sign.id}: the zone is on the camera side of the board`);
+    assert.ok(toZone.z > 0.5 && Math.abs(toZone.x) < 1e-3, `${sign.id}: the zone is in front of the board`);
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
       const corner = {
         x: area.center.x + sx * area.halfX * area.axisX.x + sz * area.halfZ * area.axisZ.x,
@@ -80,7 +80,7 @@ test('sign zones lie in front of their boards, outside the room, and are detecte
   }
 });
 
-test('the character walks out of the room, around the boards into each zone, but never through walls or signs', async () => {
+test('the character walks out of the room into each zone, but never through walls or signs', async () => {
   const room = readRoom((await load('room')).gltf.scene);
   const outside = readOutside((await load('outside')).gltf.scene);
   const { signs, bounds } = outside;
@@ -97,20 +97,19 @@ test('the character walks out of the room, around the boards into each zone, but
       assert.equal(overlaps(controller.position, CHARACTER_RADIUS, boxes), undefined);
     }
   };
-  // Between the first two boards to the camera side, then along the zones.
-  walk({ x: 4.74, z: 7.42 });
-  walk({ x: 6.72, z: 9.4 });
+  // Out through the open +X side, then along the zones.
+  walk({ x: 3.6, z: 0.6 });
   assert.equal(groundAt(controller.position, outside), outside.groundY, 'down on the outside ground');
   for (const sign of signs) {
     let current: string | undefined;
     walk(sign.area.center, () => (current = signAt(controller.position, signs, current)?.id) === sign.id);
     assert.equal(current, sign.id, `reached the ${sign.id} zone: ${JSON.stringify(controller.position)}`);
   }
-  // Walking straight at a board from the room side stops at it.
+  // Walking straight at a board from behind stops at it.
   const github = signs.find((sign) => sign.id === 'github')!;
-  const blocked = new CharacterController({ position: { x: 5.5, z: 5.5 }, yaw: 0 }, boxes, bounds);
-  for (let i = 0; i < 60 * 8; i++) blocked.update(1 / 60, { forward: 1, right: 0, run: false }, Math.atan2(-(github.position.x - 5.5), -(github.position.z - 5.5)));
-  assert.ok(blocked.position.x + blocked.position.z < github.position.x + github.position.z, `stopped behind the board: ${JSON.stringify(blocked.position)}`);
+  const blocked = new CharacterController({ position: { x: github.position.x, z: -6 }, yaw: 0 }, boxes, bounds);
+  for (let i = 0; i < 60 * 8; i++) blocked.update(1 / 60, { forward: 1, right: 0, run: false }, Math.PI);
+  assert.ok(blocked.position.z < github.position.z, `stopped behind the board: ${JSON.stringify(blocked.position)}`);
   // Walls on -X and -Z still hold, also from outside, and the ground hidden behind them cannot be reached.
   for (const azimuth of [Math.PI / 2, 0]) {
     const walker = new CharacterController({ position: { x: 4, z: 4 }, yaw: 0 }, boxes, bounds);

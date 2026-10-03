@@ -14,6 +14,8 @@ const ENTER = 0.35;
 const LEAVE = 0.25;
 const FLASH = 1.2;
 const VIOLET = new Color(0xb79bff);
+/** The project typeface (see --font in the stylesheets). */
+const FONT = '"Bahnschrift", "Segoe UI", system-ui, sans-serif';
 
 const fenceVertex = /* glsl */ `
 varying vec2 vUv;
@@ -86,7 +88,7 @@ function labelTexture(text: string): CanvasTexture {
   context.fillStyle = '#ffffff';
   context.strokeStyle = '#ffffff';
   context.lineWidth = 7;
-  context.font = '700 54px system-ui, "Segoe UI", Roboto, sans-serif';
+  context.font = `700 54px ${FONT}`;
   context.textBaseline = 'middle';
   // The Enter key cap, then the destination.
   const key = 'ENTER';
@@ -95,7 +97,7 @@ function labelTexture(text: string): CanvasTexture {
   context.roundRect(8, 28, keyWidth, 104, 18);
   context.stroke();
   context.fillText(key, 36, 82);
-  context.font = '600 60px system-ui, "Segoe UI", Roboto, sans-serif';
+  context.font = `600 60px ${FONT}`;
   context.fillText(`${text}  ↗`, keyWidth + 44, 82);
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;

@@ -3,12 +3,15 @@
 Builds assets/blender/outside.blend and public/models/outside.glb. The GLB holds the `Outside` root.
 There is no ground mesh: the viewer draws the endless ground itself at `ground_y` (a little below
 the room floor, so the room reads as a raised platform) and uses the walkable `bounds`.
-- `Sign_<Name>`: a standing board on two posts with a screenshot of the site (assets/textures/outside/),
-  facing the isometric corner camera. Extras: `link`, `label`, `board` [width, height, bottom] and the
+- `Sign_<Name>`: a standing board on two posts with a screenshot of the site (assets/textures/outside/).
+  They stand in a row continuing the room's back (+Y) wall past its open side and face the same way
+  as that wall's window (-Y, three.js +Z). Extras: `link`, `label`, `board` [width, height, bottom] and the
   floor zone in front of it, `area` [width, depth] at `area_offset` metres towards the camera.
 - `Collider_*`: boxes the character cannot enter (the signs and the hidden ground behind the room walls).
-- `Letters`: one mesh per letter of NAME, origin at its centre, with a `box` [width, height, depth] extra
-  in three.js axes for the physics body.
+- `Letters`: one mesh per letter of the name, origin at its centre, with a `box` [width, height, depth] extra
+  in three.js axes for the physics body. The outlines (Bahnschrift SemiBold SemiCondensed) come from
+  assets/name/name-glyphs.json (scripts/name_glyphs.ts). The name runs along +X in front of the room's
+  open -Y side, to its left as seen from the corner camera, facing -Y like the signs.
 The room itself (room.glb) is not modified.
 """
 import argparse
@@ -17,6 +20,7 @@ import sys
 from pathlib import Path
 
 import bpy
+import json
 from mathutils import Matrix
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -33,28 +37,24 @@ FAR = 24.0          # walkable ground from the room centre
 PLATFORM = [-HALF - WALL_T, HALF + 0.1, -HALF - 0.1, HALF + WALL_T]
 BOARD_W, BOARD_H, BOARD_BOTTOM, BOARD_T, BORDER, POST = 2.4, 1.5, 0.6, 0.06, 0.07, 0.08
 AREA, AREA_OFFSET = (2.6, 1.8), 1.55
-# Screen axes of the isometric corner camera on the Blender ground: towards the camera and screen-right.
-TOWARDS = (math.sqrt(0.5), -math.sqrt(0.5))
-RIGHT = (math.sqrt(0.5), math.sqrt(0.5))
-YAW = math.radians(45)  # local -Y (the board front) turned towards the camera
-SIGN_DISTANCE, SIGN_SPACING = 10.0, 3.8
+# Signs: along the line of the back wall (Y just inside its outer face), from past the room's +X side.
+SIGN_Y, SIGN_FIRST_X, SIGN_SPACING = HALF + 0.15, 5.3, 3.2
 SIGNS = {
-    'Portfolio': {'link': 'https://andres-jaramillo.is-a.dev/', 'label': 'Ver portafolio', 'slot': -1, 'image': 'portfolio.png'},
-    'GitHub': {'link': 'https://github.com/SrPio', 'label': 'Ver GitHub', 'slot': 0, 'image': 'github.png'},
-    'LinkedIn': {'link': 'https://www.linkedin.com/in/andres-fernando-jaramillo-avila/', 'label': 'Ver LinkedIn', 'slot': 1, 'image': 'linkedin.png'},
+    'Portfolio': {'link': 'https://andres-jaramillo.is-a.dev/', 'label': 'Ver portafolio', 'slot': 0, 'image': 'portfolio.png'},
+    'GitHub': {'link': 'https://github.com/SrPio', 'label': 'Ver GitHub', 'slot': 1, 'image': 'github.png'},
+    'LinkedIn': {'link': 'https://www.linkedin.com/in/andres-fernando-jaramillo-avila/', 'label': 'Ver LinkedIn', 'slot': 2, 'image': 'linkedin.png'},
 }
-NAME = 'ANDRES JARAMILLO'
-NAME_DISTANCE = 6.2
-LETTER_SIZE = 0.82   # font size; caps come out about 0.6 m tall
+GLYPHS = ROOT / 'assets' / 'name' / 'name-glyphs.json'
+# Name: a line parallel to the room's open -Y side, ending a little left of the room's -X edge.
+NAME_Y, NAME_END_X = -4.9, -1.2
+CAP_HEIGHT = 0.58
 LETTER_DEPTH = 0.2
-
-
-def ground_point(distance, offset):
-    return (TOWARDS[0] * distance + RIGHT[0] * offset, TOWARDS[1] * distance + RIGHT[1] * offset)
+TRACKING = 0.03      # extra space between letters (m)
+WORD_SPACE = 0.15    # extra space at the word gap (m)
 
 
 def build_sign(name, sign, frame, glow, root):
-    holder = room.anchor(f'Sign_{name}', (*ground_point(SIGN_DISTANCE, sign['slot'] * SIGN_SPACING), GROUND_Z), root, YAW,
+    holder = room.anchor(f'Sign_{name}', (SIGN_FIRST_X + sign['slot'] * SIGN_SPACING, SIGN_Y, GROUND_Z), root, 0.0,
                          link=sign['link'], label=sign['label'], board=[BOARD_W, BOARD_H, BOARD_BOTTOM],
                          area=list(AREA), area_offset=AREA_OFFSET)
     w, t = BOARD_W / 2, BOARD_T / 2
@@ -72,55 +72,64 @@ def build_sign(name, sign, frame, glow, root):
                          ('E', (w - s, BOARD_BOTTOM), (w, top)), ('W', (-w, BOARD_BOTTOM), (-w + s, top))):
         room.box(f'SignGlow_{name}_{side}', (lo[0], -t - 0.004, lo[1]), (hi[0], -t - 0.002, hi[1]), glow, holder)
     # The character walks around the posts and under nothing: one rotated box along the board.
-    collider = room.anchor(f'Collider_Sign_{name}', holder.location, root, YAW, collider='box',
+    collider = room.anchor(f'Collider_Sign_{name}', holder.location, root, 0.0, collider='box',
                            size=[BOARD_W + 2 * POST, 0.16, top])
     return holder, collider
 
 
-def build_letters(root):
-    letters = room.anchor('Letters', (*ground_point(NAME_DISTANCE, 0), GROUND_Z), root, YAW)
-    mat = room.material('Letter', (0.84, 0.8, 0.94), 0.5)
-    curve = bpy.data.curves.new('NameText', 'FONT')
-    curve.body = NAME
-    curve.size = LETTER_SIZE
+def letter_object(name, polygons, scale, offset, mat):
+    """One extruded letter from its outline polygons (outer ring then holes), standing up and facing -Y."""
+    curve = bpy.data.curves.new(name, 'CURVE')
+    curve.dimensions = '2D'
+    curve.fill_mode = 'BOTH'
     curve.extrude = LETTER_DEPTH / 2
-    curve.bevel_depth = 0.012
-    curve.bevel_resolution = 1
-    curve.resolution_u = 4
-    curve.align_x = 'CENTER'
-    curve.space_character = 1.12
-    curve.space_word = 2.2
+    curve.bevel_depth = 0.01
+    curve.bevel_resolution = 0   # a single chamfer: rounder edges would multiply the triangles
     curve.materials.append(mat)
-    text = bpy.data.objects.new('NameText', curve)
-    bpy.context.collection.objects.link(text)
+    for polygon in polygons:
+        for ring in polygon:
+            spline = curve.splines.new('POLY')
+            spline.points.add(len(ring) - 1)
+            for point, (x, y) in zip(spline.points, ring):
+                point.co = (x * scale + offset, y * scale, 0, 1)
+            spline.use_cyclic_u = True
+    obj = bpy.data.objects.new(name, curve)
+    bpy.context.collection.objects.link(obj)
     bpy.ops.object.select_all(action='DESELECT')
-    bpy.context.view_layer.objects.active = text
-    text.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
     bpy.ops.object.convert(target='MESH')
-    # Stand the text up: glyphs read along +X, caps point +Z and the front faces -Y (the camera side).
-    text.data.transform(Matrix.Rotation(math.pi / 2, 4, 'X'))
+    # Stand the letter up: it reads along +X, caps point +Z and the front faces -Y.
+    obj.data.transform(Matrix.Rotation(math.pi / 2, 4, 'X'))
     bpy.ops.object.mode_set(mode='EDIT')
     bpy.ops.mesh.select_all(action='SELECT')
     bpy.ops.mesh.remove_doubles(threshold=0.0005)
-    bpy.ops.mesh.separate(type='LOOSE')
     bpy.ops.object.mode_set(mode='OBJECT')
-    parts = [obj for obj in bpy.context.selected_objects if obj.type == 'MESH']
     bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='BOUNDS')
-    parts.sort(key=lambda obj: obj.location.x)
-    chars = NAME.replace(' ', '')
-    if len(parts) != len(chars):
-        raise RuntimeError(f'Expected {len(chars)} letters, got {len(parts)} pieces')
-    cap = min(obj.dimensions.z for obj in parts)
-    for index, (obj, char) in enumerate(zip(parts, chars)):
-        obj.name = obj.data.name = f'Letter_{index:02d}_{char}'
-        if obj.dimensions.z > cap * 1.06:
-            # The font's J descends below the baseline: squash it to cap height so the name stays level.
-            obj.data.transform(Matrix.Diagonal((1, 1, cap / obj.dimensions.z, 1)))
-            obj.data.update()
+    return obj
+
+
+def build_letters(root):
+    glyphs = json.loads(GLYPHS.read_text(encoding='utf8'))
+    scale = CAP_HEIGHT / glyphs['capHeight']
+    mat = room.material('Letter', (0.84, 0.8, 0.94), 0.5)
+    pen, placed = 0.0, []
+    for glyph in glyphs['letters']:
+        if glyph['polygons']:
+            placed.append((glyph['char'], glyph['polygons'], pen))
+            pen += glyph['advance'] * scale + TRACKING
+        else:
+            pen += glyph['advance'] * scale + WORD_SPACE
+    width = pen - TRACKING
+    letters = room.anchor('Letters', (NAME_END_X - width / 2, NAME_Y, GROUND_Z), root, 0.0)
+    for index, (char, polygons, x) in enumerate(placed):
+        obj = letter_object(f'Letter_{index:02d}_{char}', polygons, scale, x - width / 2, mat)
+        obj.data.name = obj.name
         dx, dy, dz = (max(v.co[i] for v in obj.data.vertices) - min(v.co[i] for v in obj.data.vertices) for i in range(3))
         obj['box'] = [round(dx, 4), round(dz, 4), round(dy, 4)]   # three.js: width, height, depth
+        location = obj.location.copy()
         obj.parent = letters
-        obj.location.z = dz / 2   # every glyph stands on the ground, the J too
+        obj.location = (location.x, location.y, dz / 2)   # every glyph stands on the ground
         obj.data.shade_smooth()
         obj.data.set_sharp_from_angle(angle=math.radians(35))
     return letters
@@ -157,6 +166,8 @@ def main():
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else [])
     if (BLEND.exists() or GLB.exists()) and not args.replace_generated:
         raise RuntimeError('Outside outputs exist. Review them before using --replace-generated.')
+    if not GLYPHS.exists():
+        raise RuntimeError(f'Missing {GLYPHS}: run node scripts/name_glyphs.ts first.')
     for sign in SIGNS.values():
         if not (TEXTURES / sign['image']).exists():
             raise RuntimeError(f'Missing {TEXTURES / sign["image"]}: run node scripts/capture_sites.ts first.')
@@ -164,7 +175,7 @@ def main():
     bpy.context.scene.unit_settings.system = 'METRIC'
     root = bpy.data.objects.new('Outside', None)
     bpy.context.collection.objects.link(root)
-    root['stage'] = '08-outside-signs'
+    root['stage'] = '09-outside-signs-row'
     build(root)
     BLEND.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(BLEND), compress=True)

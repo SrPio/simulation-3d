@@ -1,5 +1,7 @@
 :root {
-  font-family: 'Segoe UI', system-ui, sans-serif;
+  /* Project typeface: Bahnschrift (installed with Windows; nothing is downloaded), then close fallbacks. */
+  --font: Bahnschrift, 'DIN Alternate', 'Segoe UI', system-ui, sans-serif;
+  font-family: var(--font);
   color: #ebe3f2;
   background: #120f18;
   font-synthesis: none;

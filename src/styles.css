@@ -1,5 +1,7 @@
 :root {
-  font-family: 'Segoe UI', system-ui, sans-serif;
+  /* Project typeface: Bahnschrift (installed with Windows; nothing is downloaded), then close fallbacks. */
+  --font: Bahnschrift, 'DIN Alternate', 'Segoe UI', system-ui, sans-serif;
+  font-family: var(--font);
   color: #e8e2ed;
   background: #17131e;
   font-synthesis: none;
@@ -23,7 +25,7 @@ h1, h2, p { margin: 0; }
 .studio { display: grid; grid-template-columns: 290px minmax(0, 1fr); grid-template-rows: 72px minmax(0, 1fr); height: 100vh; height: 100dvh; min-height: 540px; }
 .header { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 0 30px; background: #18141f; border-bottom: 1px solid var(--border); z-index: 2; }
 .wordmark { display: flex; gap: 13px; align-items: center; text-decoration: none; color: #e9e2f0; font-size: 10px; font-weight: 650; letter-spacing: 2px; white-space: nowrap; }
-.brand-mark { display: grid; place-items: center; width: 29px; height: 32px; border: 1px solid #8c6eaa; color: #d6b8f4; border-radius: 8px 8px 8px 2px; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 25px; font-weight: 800; letter-spacing: -3px; padding-right: 3px; padding-bottom: 5px; }
+.brand-mark { display: grid; place-items: center; width: 29px; height: 32px; border: 1px solid #8c6eaa; color: #d6b8f4; border-radius: 8px 8px 8px 2px; font-family: var(--font); font-size: 25px; font-weight: 700; letter-spacing: -1px; padding-right: 3px; padding-bottom: 5px; }
 .header-edition { font-size: 9px; letter-spacing: 1.9px; color: var(--faint); }
 .header-edition span { margin: 0 15px; color: #564a62; }
 .status { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 11px; }
@@ -33,7 +35,7 @@ h1, h2, p { margin: 0; }
 .sidebar { display: flex; flex-direction: column; gap: 27px; padding: 32px 25px 22px; border-right: 1px solid var(--border); background: #1c1723; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #44354f transparent; }
 .eyebrow { font-size: 9px; font-weight: 600; letter-spacing: 2px; line-height: 1.5; }
 .accent { color: var(--accent); }
-h1 { font-family: 'Segoe UI', system-ui, sans-serif; font-weight: 650; font-size: 33px; letter-spacing: -1.6px; line-height: 1.25; margin-top: 14px; }
+h1 { font-family: var(--font); font-weight: 600; font-size: 33px; letter-spacing: -0.5px; line-height: 1.25; margin-top: 14px; }
 h1 span { display: block; color: var(--muted); font-size: 19px; font-weight: 400; letter-spacing: -0.6px; margin-top: 3px; }
 .intro-copy { font-size: 11px; color: var(--muted); line-height: 1.85; margin-top: 16px; }
 h2, legend { font-size: 11px; font-weight: 550; }
@@ -106,7 +108,7 @@ legend > span { font-size: 8px; font-weight: 400; color: var(--faint); letter-sp
 .canvas-host canvas:active { cursor: grabbing; }
 .viewport-overlay { position: absolute; inset: 70px 0 89px; display: grid; place-items: center; z-index: 3; padding: 24px; background: #231c2c80; backdrop-filter: blur(8px); }
 .overlay-card { max-width: 365px; text-align: center; }
-.overlay-card h2 { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 20px; font-weight: 500; letter-spacing: -0.5px; color: #e2d6ec; }
+.overlay-card h2 { font-family: var(--font); font-size: 20px; font-weight: 500; letter-spacing: -0.5px; color: #e2d6ec; }
 .overlay-card p { color: #b2a3bf; font-size: 12px; line-height: 1.85; margin-top: 13px; }
 .loading-ring { display: block; width: 28px; height: 28px; border: 1px solid #c4a2ed22; border-top-color: #c4a2ed; border-radius: 50%; margin: 0 auto 23px; animation: spin 1.2s linear infinite; }
 .retry-button { display: inline-flex; align-items: center; gap: 23px; border: 1px solid #b18cd255; border-radius: 5px; background: #493458; padding: 11px 15px; margin-top: 23px; color: #ead9fa; font-size: 11px; }

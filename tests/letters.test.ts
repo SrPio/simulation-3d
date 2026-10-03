@@ -32,7 +32,8 @@ test('the name: one standing letter per character of ANDRES JARAMILLO, on the ou
     const triangles = (letter.geometry.index?.count ?? letter.geometry.getAttribute('position').count) / 3;
     assert.ok(triangles < 800, `${letter.name}: ${triangles} triangles`);
   }
-  // Read left to right on screen (screen-right is +X -Z from the corner camera).
+  // In a row along +X in front of the room (+Z), reading left to right on screen (screen-right is +X -Z).
+  for (const letter of data.letters) assert.ok(letter.position.z > 4 && letter.position.x < -1, `${letter.name} left of the room's front`);
   const along = data.letters.map((letter) => letter.position.x - letter.position.z);
   assert.deepEqual([...along].sort((a, b) => a - b), along);
 });
@@ -54,9 +55,9 @@ test('letters stay standing and asleep without contact, and the world is skipped
 test('the character walking through the name knocks letters over, and reset stands them up again', async () => {
   const data = await outside();
   const physics = new LetterPhysics(cannon, bodies(data), [], data.groundY);
-  // Walk from the camera side through the middle letters (towards -X -Z), at walking speed.
+  // Walk from the front through the middle letters (towards -Z), at walking speed.
   const target = data.letters[7].position;
-  const direction = { x: -Math.SQRT1_2, z: -Math.SQRT1_2 };
+  const direction = { x: 0, z: -1 };
   let fallen = 0;
   for (let i = 0; i < 60 * 6; i++) {
     const t = i / 60;

@@ -117,8 +117,9 @@ test('Space hops forward, the character knocks over the name letters and steps d
   const landed = await position(page);
   const hop = Math.hypot(landed[0] - start[0], landed[1] - start[1]);
   assert.ok(hop > 0.3 && hop < 0.7, `a short hop forward: ${hop}`);
-  // Through the middle of the name (J, A), towards the camera.
-  await walkTo(page, { x: 5.6, z: 5.6 });
+  // Out of the open front and through the name (between R and A).
+  await walkTo(page, { x: 0.5, z: 3.6 });
+  await walkTo(page, { x: -3.7, z: 6.2 });
   await expect(host(page)).toHaveAttribute('data-elevation', '-0.12');
   await expect.poll(async () => Number(await host(page).getAttribute('data-letters')), { timeout: 5000 }).toBeGreaterThan(0);
   await page.waitForTimeout(800);
@@ -138,13 +139,12 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
   await expect(page.locator('#sign-link')).toBeHidden();
   await expect(host(page)).toHaveAttribute('data-sign', 'none');
   await expect(host(page)).toHaveAttribute('data-sign-area', 'none');
-  // The zones lie in front of the signs (camera side): pass between the first two boards.
-  await walkTo(page, { x: 4.74, z: 7.42 });
-  await walkTo(page, { x: 6.72, z: 9.4 });
+  // Out through the open +X side; the zones lie in front of the row of signs.
+  await walkTo(page, { x: 3.6, z: 0.6 });
   for (const [id, link, target, open] of [
-    ['portfolio', 'https://andres-jaramillo.is-a.dev/', { x: 5.48, z: 10.86 }, 'click'],
-    ['github', 'https://github.com/SrPio', { x: 8.17, z: 8.17 }, 'enter'],
-    ['linkedin', 'https://www.linkedin.com/in/andres-fernando-jaramillo-avila/', { x: 10.86, z: 5.48 }, 'enter'],
+    ['portfolio', 'https://andres-jaramillo.is-a.dev/', { x: 5.3, z: -1.5 }, 'click'],
+    ['github', 'https://github.com/SrPio', { x: 8.5, z: -1.5 }, 'enter'],
+    ['linkedin', 'https://www.linkedin.com/in/andres-fernando-jaramillo-avila/', { x: 11.7, z: -1.5 }, 'enter'],
   ] as const) {
     await walkTo(page, target, async () => (await host(page).getAttribute('data-sign')) === id);
     await expect(host(page)).toHaveAttribute('data-sign', id);
@@ -169,7 +169,7 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
     await tab.waitForURL(link);
     await tab.close();
   }
-  await walkTo(page, { x: 9.0, z: 3.6 });
+  await walkTo(page, { x: 10.0, z: 1.6 });
   await expect(host(page)).toHaveAttribute('data-sign', 'none');
   await expect(page.locator('#sign-link')).toBeHidden();
   await expect(host(page)).toHaveAttribute('data-sign-area', 'none');
