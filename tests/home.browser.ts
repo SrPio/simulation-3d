@@ -11,6 +11,14 @@ after(() => browser.close());
 const shot = (name: string) => new URL(name, output).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 const host = (page: Page) => page.locator('#canvas-host');
 const position = async (page: Page) => (await host(page).getAttribute('data-position'))!.split(',').map(Number);
+/** Spanish pages unless a test asks for another language (the first visit follows the browser language). */
+const spanish = { locale: 'es-ES' } as const;
+
+/** The options live in a menu that starts closed; open it before using them. */
+async function openMenu(page: Page) {
+  if (await page.locator('#room-tools').isHidden()) await page.locator('#menu-toggle').click();
+  await expect(page.locator('#room-tools')).toBeVisible();
+}
 
 async function ready(page: Page) {
   await page.goto(baseURL);
@@ -56,7 +64,7 @@ const drag = async (page: Page) => {
 };
 
 test('the root shows only the room with V4, neutral light, a fixed following camera and no external requests', async (t) => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce', ...spanish });
   t.after(() => page.close());
   const errors: string[] = [];
   const external: string[] = [];
@@ -68,6 +76,16 @@ test('the root shows only the room with V4, neutral light, a fixed following cam
     if (url.pathname.endsWith('.glb')) models.push(url.pathname.split('/').at(-1)!);
   });
   await ready(page);
+  // The options start folded away behind the menu button; Escape folds them again.
+  const menu = page.locator('#menu-toggle');
+  await expect(page.locator('#room-tools')).toBeHidden();
+  await expect(menu).toHaveAttribute('aria-expanded', 'false');
+  await menu.click();
+  await expect(page.locator('#room-tools')).toBeVisible();
+  await expect(menu).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#room-tools')).toBeHidden();
+  await openMenu(page);
   // The room page ignores the system setting: reduced motion starts off and its own switch turns it on (stored).
   const motion = page.getByRole('button', { name: 'Reducido' });
   await expect(motion).toHaveAttribute('aria-pressed', 'false');
@@ -93,11 +111,15 @@ test('the root shows only the room with V4, neutral light, a fixed following cam
   await page.mouse.wheel(0, -600);
   await page.waitForTimeout(400);
   assert.equal(await host(page).getAttribute('data-orbit'), before, 'dragging and the wheel do not move the fixed camera');
+  // A press on the scene folded the menu away.
+  await expect(page.locator('#room-tools')).toBeHidden();
+  await openMenu(page);
   await page.locator('#camera-free').click();
   await expect(host(page)).toHaveAttribute('data-camera', 'free');
   await expect(page.locator('#camera-free')).toHaveAttribute('aria-pressed', 'true');
   await drag(page);
   assert.notEqual(await host(page).getAttribute('data-orbit'), before, 'the free camera orbits');
+  await openMenu(page);
   await page.locator('#camera-free').click();
   await expect(host(page)).toHaveAttribute('data-camera', 'follow');
   await expect(host(page)).toHaveAttribute('data-orbit', before!);
@@ -114,13 +136,15 @@ test('the root shows only the room with V4, neutral light, a fixed following cam
   assert.deepEqual(errors, []);
 });
 
-test('Space hops forward, F throws in place, the character knocks over the name letters and steps down to the outside ground', async (t) => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+test('Space hops forward, F throws a laptop, the character knocks over the name letters and steps down to the outside ground', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, ...spanish });
   t.after(() => page.close());
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await ready(page);
+  await expect(host(page)).toHaveAttribute('data-physics', 'ready', { timeout: 10000 });
   await expect(host(page)).toHaveAttribute('data-elevation', '0.00');
+  await expect(host(page)).toHaveAttribute('data-thrown', '0');
   const start = await position(page);
   await page.keyboard.press('Space');
   await expect(host(page)).toHaveAttribute('data-locomotion', 'jump');
@@ -128,15 +152,23 @@ test('Space hops forward, F throws in place, the character knocks over the name 
   const landed = await position(page);
   const hop = Math.hypot(landed[0] - start[0], landed[1] - start[1]);
   assert.ok(hop > 0.3 && hop < 0.7, `a short hop forward: ${hop}`);
-  // F plays the throw where the character stands; held movement keys wait until it ends.
+  // F plays the throw where the character stands and a laptop leaves the hand; held movement keys wait until it ends.
   await page.keyboard.press('KeyF');
   await expect(host(page)).toHaveAttribute('data-locomotion', 'throw');
   await page.keyboard.down('KeyW');
   await page.waitForTimeout(500);
   assert.deepEqual(await position(page), landed, 'no movement while throwing');
+  await expect(host(page)).toHaveAttribute('data-thrown', '1');
+  await expect(host(page)).toHaveAttribute('data-thrown-lid', /^-?\d+\.\d\d$/);
   await expect(host(page)).toHaveAttribute('data-locomotion', 'walk', { timeout: 3000 });
   await page.keyboard.up('KeyW');
   await expect(host(page)).toHaveAttribute('data-locomotion', 'idle', { timeout: 3000 });
+  // Three at most: the fourth throw retires the oldest.
+  for (let throws = 2; throws <= 4; throws++) {
+    await page.keyboard.press('KeyF');
+    await expect(host(page)).toHaveAttribute('data-locomotion', 'idle', { timeout: 4000 });
+    await expect(host(page)).toHaveAttribute('data-thrown', String(Math.min(throws, 3)));
+  }
   // Out of the open front and through the name (between R and A).
   await walkTo(page, { x: 0.5, z: 3.6 });
   await walkTo(page, { x: -3.7, z: 6.2 });
@@ -146,12 +178,62 @@ test('Space hops forward, F throws in place, the character knocks over the name 
   await page.screenshot({ path: shot('home-letters.png') });
   await page.locator('#hud-reset').click();
   await expect(host(page)).toHaveAttribute('data-letters', '0');
+  await expect(host(page)).toHaveAttribute('data-thrown', '0');
   await expect(host(page)).toHaveAttribute('data-elevation', '0.00');
   assert.deepEqual(errors, []);
 });
 
+test('near a seat a speech bubble shows the key to sit down; it leaves when the character sits', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, ...spanish });
+  t.after(() => page.close());
+  await ready(page);
+  // The character starts by the room's front corner, out of reach of both seats; walking towards the bed offers it.
+  await expect(host(page)).toHaveAttribute('data-bubble', 'hidden');
+  await expect(host(page)).toHaveAttribute('data-position', '2.30,2.30');
+  await walkTo(page, { x: 0.2, z: -0.6 }, async () => (await host(page).getAttribute('data-prompt')) === 'bed');
+  await expect(host(page)).toHaveAttribute('data-prompt', 'bed');
+  await expect(host(page)).toHaveAttribute('data-bubble', 'shown');
+  const bubble = page.locator('.seat-bubble-body');
+  await expect(bubble).toBeVisible();
+  await expect(bubble).toContainText('Sentarse');
+  const box = (await bubble.boundingBox())!;
+  const canvas = (await page.locator('canvas').boundingBox())!;
+  assert.ok(box.y > canvas.y && box.y + box.height < canvas.y + canvas.height / 2 + 120, 'over the character');
+  await page.screenshot({ path: shot('home-bubble.png') });
+  await page.keyboard.press('KeyE');
+  await expect(host(page)).toHaveAttribute('data-bubble', 'hidden');
+  await expect(bubble).toBeHidden();
+  await expect(host(page)).toHaveAttribute('data-interaction', 'seated', { timeout: 8000 });
+});
+
+test('the language switch turns the page and the floor texts to English or Spanish and remembers the choice', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: 'en-US' });
+  t.after(() => page.close());
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await ready(page);
+  // First visit: the browser language.
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.locator('#hud-hint')).toHaveText(/^E: sit on the bed$|W A S D or arrows/);
+  await expect(page.getByRole('button', { name: 'EN', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#status-label')).toHaveText('Ready');
+  await expect(page.locator('.seat-bubble')).toContainText('Sit down');
+  await page.getByRole('button', { name: 'ES', exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'es');
+  await expect(page.locator('#status-label')).toHaveText('Listo');
+  await expect(page.locator('#hud-reset')).toHaveText('Restablecer posición');
+  await expect(page.locator('.seat-bubble')).toContainText('Sentarse');
+  await openMenu(page);
+  await expect(page.getByRole('button', { name: 'Neutra' })).toBeVisible();
+  await page.reload();
+  await expect(page.locator('.room-status')).toHaveAttribute('data-state', 'ready', { timeout: 30000 });
+  await expect(page.locator('html')).toHaveAttribute('lang', 'es');
+  await expect(page.getByRole('button', { name: 'ES', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  assert.deepEqual(errors, []);
+});
+
 test('each sign has a floor zone: walking in raises it, and Enter or a click opens the site in a new tab', async (t) => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, ...spanish });
   t.after(() => page.close());
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -159,12 +241,14 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
   await expect(page.locator('#sign-link')).toBeHidden();
   await expect(host(page)).toHaveAttribute('data-sign', 'none');
   await expect(host(page)).toHaveAttribute('data-sign-area', 'none');
-  // Out through the open +X side; the zones lie in front of the row of signs.
+  // Out through the open +X side, past the intro keys to the crossroads; the zones lie in front of the row of signs.
   await walkTo(page, { x: 3.6, z: 0.6 });
+  await walkTo(page, { x: 7.0, z: 1.8 });
+  await walkTo(page, { x: 19.5, z: 1.2 });
   for (const [id, link, target, open] of [
-    ['portfolio', 'https://andres-jaramillo.is-a.dev/', { x: 5.3, z: -1.5 }, 'click'],
-    ['github', 'https://github.com/SrPio', { x: 8.5, z: -1.5 }, 'enter'],
-    ['linkedin', 'https://www.linkedin.com/in/andres-fernando-jaramillo-avila/', { x: 11.7, z: -1.5 }, 'enter'],
+    ['portfolio', 'https://andres-jaramillo.is-a.dev/', { x: 24.0, z: -1.5 }, 'click'],
+    ['github', 'https://github.com/SrPio', { x: 27.2, z: -1.5 }, 'enter'],
+    ['linkedin', 'https://www.linkedin.com/in/andres-fernando-jaramillo-avila/', { x: 30.4, z: -1.5 }, 'enter'],
   ] as const) {
     await walkTo(page, target, async () => (await host(page).getAttribute('data-sign')) === id);
     await expect(host(page)).toHaveAttribute('data-sign', id);
@@ -189,7 +273,7 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
     await tab.waitForURL(link);
     await tab.close();
   }
-  await walkTo(page, { x: 10.0, z: 1.6 });
+  await walkTo(page, { x: 28.0, z: 1.6 });
   await expect(host(page)).toHaveAttribute('data-sign', 'none');
   await expect(page.locator('#sign-link')).toBeHidden();
   await expect(host(page)).toHaveAttribute('data-sign-area', 'none');
@@ -199,14 +283,25 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
   await page.keyboard.press('Enter');
   await page.waitForTimeout(500);
   assert.equal(opened, false);
+  // The bowling reset zone: Enter puts the pins back, no link, no new tab.
+  await walkTo(page, { x: 25.0, z: 19.6 }, async () => (await host(page).getAttribute('data-sign')) === 'reset-bowling');
+  await expect(host(page)).toHaveAttribute('data-sign', 'reset-bowling');
+  await expect(page.locator('#sign-link')).toBeHidden();
+  await page.keyboard.press('Enter');
+  await expect(host(page)).toHaveAttribute('data-pins', '0');
+  await page.waitForTimeout(500);
+  assert.equal(opened, false);
+  await page.screenshot({ path: shot('home-playground.png') });
   assert.deepEqual(errors, []);
 });
 
 test('the root works on a phone-sized viewport without horizontal scrolling', async (t) => {
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, ...spanish });
   t.after(() => page.close());
   await ready(page);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal overflow');
+  await expect(page.getByRole('button', { name: 'ES', exact: true })).toBeVisible();
+  await openMenu(page);
   for (const name of ['Auto', 'Alta', 'Baja', 'Neutra', 'Violeta', 'Libre']) {
     const button = page.getByRole('button', { name, exact: true });
     await expect(button).toBeVisible();

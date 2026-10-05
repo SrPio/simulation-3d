@@ -2,6 +2,8 @@ import {
   BufferAttribute, BufferGeometry, CanvasTexture, Color, DoubleSide, Group, Mesh, MeshBasicMaterial, PlaneGeometry, SRGBColorSpace,
   ShaderMaterial, Vector3, type Raycaster,
 } from 'three';
+import { MESSAGES, t, type MessageKey } from '../core/i18n.ts';
+import { FONT } from './canvasText.ts';
 import type { Sign } from './outsideData.ts';
 
 const BORDER = 0.09;
@@ -18,8 +20,6 @@ const ENTER = 0.35;
 const LEAVE = 0.25;
 const FLASH = 1.2;
 const VIOLET = new Color(0xb79bff);
-/** The project typeface (see --font in the stylesheets). */
-const FONT = '"Bahnschrift", "Segoe UI", system-ui, sans-serif';
 
 const fenceVertex = /* glsl */ `
 varying vec2 vUv;
@@ -84,7 +84,15 @@ function fenceGeometry(halfX: number, halfZ: number, height: number): BufferGeom
   return geometry;
 }
 
-function labelTexture(text: string): CanvasTexture {
+/** Title on the ground and label of a zone in the current language (the GLB's words when there is no translation). */
+export function signText(sign: Sign): { title: string; label: string } {
+  if (sign.kind === 'reset') return { title: t('zone.title'), label: t(sign.target === 'bricks' ? 'zone.bricks' : 'zone.bowling') };
+  const key = (part: string) => `sign.${sign.id}.${part}` as MessageKey;
+  const known = key('title') in MESSAGES.es;
+  return { title: known ? t(key('title')) : sign.title || sign.id.toUpperCase(), label: known ? t(key('label')) : sign.label };
+}
+
+function labelTexture(text: string, external: boolean): CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 840;
   canvas.height = 160;
@@ -102,7 +110,7 @@ function labelTexture(text: string): CanvasTexture {
   context.stroke();
   context.fillText(key, 36, 82);
   context.font = `600 60px ${FONT}`;
-  context.fillText(`${text}  ↗`, keyWidth + 44, 82);
+  context.fillText(external ? `${text}  ↗` : text, keyWidth + 44, 82, canvas.width - keyWidth - 52);
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
   texture.anisotropy = 4;
@@ -132,7 +140,7 @@ function titlesMesh(signs: readonly Sign[], groundY: number): Mesh<BufferGeometr
   const uv: number[] = [];
   const index: number[] = [];
   for (const [i, sign] of signs.entries()) {
-    const text = sign.title || sign.id.toUpperCase();
+    const text = signText(sign).title;
     context.fillText(text, 8, row * i + row / 2 + 6, canvas.width - 16);
     const u = Math.min(1, (Math.min(context.measureText(text).width, canvas.width - 16) + 20) / canvas.width);
     const width = TITLE_HEIGHT * u * canvas.width / row;
@@ -185,13 +193,15 @@ export class SignAreas {
   private readonly zones: Zone[] = [];
   // Lying on the ground, the top of the text away from the camera.
   private readonly labelGeometry = new PlaneGeometry(LABEL_WIDTH, LABEL_WIDTH * 160 / 840).rotateX(-Math.PI / 2);
-  private readonly titles: Mesh<BufferGeometry, MeshBasicMaterial>;
+  private titles: Mesh<BufferGeometry, MeshBasicMaterial>;
+  private readonly signs: readonly Sign[];
   private readonly groundY: number;
   private reducedMotion = false;
   private clock = 0;
 
   constructor(signs: readonly Sign[], groundY: number) {
     this.groundY = groundY;
+    this.signs = signs;
     this.root.name = 'SignAreas';
     this.titles = titlesMesh(signs, groundY);
     this.root.add(this.titles);
@@ -212,7 +222,7 @@ export class SignAreas {
         depthWrite: false,
         side: DoubleSide,
       })), groundY - FENCE_HEIGHT) as Zone['fence'];
-      const label = new Mesh(this.labelGeometry, new MeshBasicMaterial({ map: labelTexture(sign.label), transparent: true, depthWrite: false }));
+      const label = new Mesh(this.labelGeometry, new MeshBasicMaterial({ map: labelTexture(signText(sign).label, sign.kind === 'link'), transparent: true, depthWrite: false }));
       label.position.set(...onZone(sign, -area.halfX + LABEL_WIDTH / 2, area.halfZ + LABEL_AHEAD + LABEL_WIDTH * 160 / 840 / 2, groundY + 0.008));
       label.rotation.y = sign.yaw;
       label.userData.rest = label.position.clone();
@@ -223,11 +233,13 @@ export class SignAreas {
       border.matrixAutoUpdate = false;
       border.updateMatrix();
       // Click targets: the zone on the ground and the board itself.
-      const floorHit = placed(new Mesh(new PlaneGeometry(area.halfX * 2, area.halfZ * 2).rotateX(-Math.PI / 2)), groundY);
-      const boardHit = new Mesh(new PlaneGeometry(sign.board.width, sign.board.height));
-      boardHit.position.copy(sign.position).setY(sign.position.y + sign.board.bottom + sign.board.height / 2);
-      boardHit.rotation.y = sign.yaw;
-      const hits = [floorHit, boardHit];
+      const hits = [placed(new Mesh(new PlaneGeometry(area.halfX * 2, area.halfZ * 2).rotateX(-Math.PI / 2)), groundY)];
+      if (sign.board) {
+        const boardHit = new Mesh(new PlaneGeometry(sign.board.width, sign.board.height));
+        boardHit.position.copy(sign.position).setY(sign.position.y + sign.board.bottom + sign.board.height / 2);
+        boardHit.rotation.y = sign.yaw;
+        hits.push(boardHit);
+      }
       for (const hit of hits) hit.updateMatrixWorld(true);
       this.root.add(border, fence, label);
       this.zones.push({ sign, border, fence, label, hits, progress: 0, target: 0, flash: 0 });
@@ -236,6 +248,21 @@ export class SignAreas {
 
   setReducedMotion(enabled: boolean): void {
     this.reducedMotion = enabled;
+  }
+
+  /** Rewrite the titles on the ground and the ENTER labels in the current language. */
+  setLanguage(): void {
+    this.titles.geometry.dispose();
+    this.titles.material.map?.dispose();
+    this.titles.material.dispose();
+    this.titles.removeFromParent();
+    this.titles = titlesMesh(this.signs, this.groundY);
+    this.root.add(this.titles);
+    for (const zone of this.zones) {
+      zone.label.material.map?.dispose();
+      zone.label.material.map = labelTexture(signText(zone.sign).label, zone.sign.kind === 'link');
+      zone.label.material.needsUpdate = true;
+    }
   }
 
   /** Raise the fence of this sign's zone (undefined lowers them all). */

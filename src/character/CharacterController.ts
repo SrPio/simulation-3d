@@ -18,8 +18,16 @@ export const CLIP_ALTERNATIVES: Readonly<Record<string, { gait: Gait; speed?: nu
 };
 /** Clips that play while walking, running and jumping when the model has them (otherwise the procedural ones). */
 export const DEFAULT_GAIT_CLIPS: Readonly<Record<Gait, string>> = { walk: 'walk_ual', run: 'run_ual_sprint', jump: 'jump_ual' };
-/** One-shot clip played in place with F (nothing is thrown yet). */
+/** One-shot clip played in place with F: the character throws a laptop. */
 export const THROW_CLIP = 'throw_ual';
+/**
+ * The hand that holds the laptop until it leaves it, and when (seconds into THROW_CLIP): above the head and
+ * already in front of it, whipping forward. The rig's side names are mirrored: hand_L is the character's right hand.
+ */
+export const THROW_HAND = 'hand_L';
+export const THROW_RELEASE = 0.53;
+/** Launch speed of the thrown laptop (m/s) along the character's facing and upwards. */
+export const THROW_SPEED = { forward: 5.5, up: 1.8 };
 /** The character moves this many times faster than the clips were authored for; the clips play faster to keep the feet planted. */
 export const SPEED_SCALE = 2;
 export const WALK_SPEED = WALK_CLIP_SPEED * SPEED_SCALE;

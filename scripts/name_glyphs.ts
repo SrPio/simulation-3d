@@ -1,4 +1,4 @@
-// Outlines of the name letters (and the "<developer />" tagline) in Bahnschrift SemiBold SemiCondensed,
+// Outlines of the name letters (and the "<Developer />" tagline) in Bahnschrift SemiBold SemiCondensed,
 // for scripts/blender/create_outside.py.
 // Windows ships Bahnschrift as one variable font; Blender only reads its default instance, so the
 // instance is resolved here and only the glyph contours of NAME and TAG are written, flattened to polygons.
@@ -12,7 +12,7 @@ import * as fontkit from 'fontkit';
 import polygonClipping, { type Polygon } from 'polygon-clipping';
 
 const NAME = 'ANDRES JARAMILLO';
-const TAG = '<developer />';
+const TAG = '<Developer />';
 const SOURCE = process.argv[2] ?? 'C:/Windows/Fonts/bahnschrift.ttf';
 const OUTPUT = fileURLToPath(new URL('../assets/name/name-glyphs.json', import.meta.url));
 const VARIATION = { wght: 600, wdth: 87.5 }; // the SemiBold SemiCondensed named instance

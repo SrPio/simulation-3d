@@ -44,8 +44,29 @@ h1, p { margin: 0; }
 .room-status[data-state='ready'] .room-dot { background: #9ebba1; }
 .room-status[data-state='error'] .room-dot { background: #dfa297; }
 
-.room-tools { top: 16px; right: 16px; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px 14px; padding: 8px 10px; max-width: calc(100% - 32px); }
-.tool-group { display: flex; align-items: center; gap: 8px; }
+/* Language switch, always visible beside the status. */
+.language-switch button { min-height: 28px; padding: 0 9px; font-size: 11px; letter-spacing: 1px; }
+
+/* Options behind a menu button, closed by default: one panel of labelled rows under the button. */
+.menu-toggle {
+  position: absolute; z-index: 3; top: 16px; right: 16px; display: grid; place-items: center; width: 46px; height: 46px;
+  border: 1px solid var(--edge); border-radius: 10px; color: #e6dcf1; background: var(--panel);
+  box-shadow: 0 1px 0 #ffffff12 inset, 0 10px 24px #00000055; backdrop-filter: blur(6px); transition: background-color 160ms ease;
+}
+.menu-toggle:hover { background-color: #2a2135f0; }
+.menu-icon { position: relative; display: grid; gap: 4px; width: 18px; }
+.menu-icon span { display: block; height: 2px; border-radius: 2px; background: currentColor; transition: transform 200ms ease, opacity 160ms ease; }
+.menu-toggle[aria-expanded='true'] .menu-icon span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.menu-toggle[aria-expanded='true'] .menu-icon span:nth-child(2) { opacity: 0; }
+.menu-toggle[aria-expanded='true'] .menu-icon span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+
+.room-tools {
+  top: 70px; right: 16px; display: grid; gap: 12px; padding: 14px; width: max-content; max-width: calc(100% - 32px);
+  transform-origin: top right; animation: tools-in 200ms cubic-bezier(.2, 1.2, .4, 1) both;
+}
+@keyframes tools-in { from { opacity: 0; transform: translateY(-6px) scale(0.97); } }
+.tool-group { display: grid; grid-template-columns: 96px auto; align-items: center; gap: 12px; }
+.tool-group > .tool-toggle, .tool-group > .tool-segmented { justify-self: start; }
 .tool-label { font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); }
 .tool-segmented { display: flex; gap: 4px; padding: 3px; border-radius: 8px; background: #120e18; box-shadow: 0 1px 2px #00000080 inset; }
 
@@ -90,16 +111,13 @@ h1, p { margin: 0; }
 .room-retry { margin-top: 22px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* With four groups the labelled toolbar would cover the status beside the brand; the buttons name themselves. */
-@media (max-width: 1100px) {
-  .tool-label { display: none; }
-}
-
 @media (max-width: 760px) {
-  .room-bar { top: 12px; left: 12px; right: 12px; justify-content: space-between; }
-  .room-tools { top: 66px; left: 12px; right: 12px; max-width: none; justify-content: flex-start; }
+  .room-bar { top: 12px; left: 12px; right: 70px; justify-content: space-between; gap: 10px; }
+  .room-status { display: none; }
+  .menu-toggle { top: 12px; right: 12px; }
+  .room-tools { top: 66px; left: 12px; right: 12px; width: auto; max-width: none; }
+  .tool-group { grid-template-columns: 84px auto; }
   .room-hud { left: 12px; right: 12px; bottom: 12px; width: auto; }
-  .tool-label { display: none; }
 }
 
 :root[data-reduced-motion='true'] *, :root[data-reduced-motion='true'] *::before, :root[data-reduced-motion='true'] *::after { animation: none !important; transition: none !important; }

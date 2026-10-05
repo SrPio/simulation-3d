@@ -8,20 +8,26 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createRenderer } from '../core/renderer';
 import { QUALITY, defaultQuality, nextPixelRatio, ratioRange, type QualityId } from '../core/quality.ts';
 import { mergeSkinnedMeshes, mergeStaticMeshes } from '../scene/mergeStatic.ts';
-import { CHARACTER_RADIUS, CLIP_ALTERNATIVES, CharacterController, DEFAULT_GAIT_CLIPS, JUMP, RUN_CLIP_SPEED, THROW_CLIP, WALK_CLIP_SPEED, type Gait, type Locomotion } from '../character/CharacterController';
+import {
+  CHARACTER_RADIUS, CLIP_ALTERNATIVES, CharacterController, DEFAULT_GAIT_CLIPS, JUMP, RUN_CLIP_SPEED, THROW_CLIP, THROW_HAND, THROW_RELEASE, THROW_SPEED,
+  WALK_CLIP_SPEED, type Gait, type Locomotion,
+} from '../character/CharacterController';
+import { onLanguage, t } from '../core/i18n.ts';
 import { KeyboardInput, type PressAction } from '../input/KeyboardInput';
 import {
   disposeObjects, laptopFile, loadCharacter, loadLaptop, loadOutside, loadRoom, modelVersions, outsideFile, roomFile, type ModelVersionId, type SceneId,
 } from '../core/loadAssets';
 import { InteractionController } from '../interactions/InteractionController.ts';
 import { readRoom, type RoomData } from '../scene/roomData.ts';
-import { groundAt, readOutside, type OutsideData } from '../scene/outsideData.ts';
-import { SignAreas } from '../scene/SignAreas.ts';
+import { groundAt, readOutside, type OutsideData, type Piece, type Sign } from '../scene/outsideData.ts';
+import { SignAreas, signText } from '../scene/SignAreas.ts';
+import { FloorTexts } from '../scene/FloorTexts.ts';
+import { SeatBubble } from '../scene/SeatBubble.ts';
 import { InfiniteFloor } from '../scene/InfiniteFloor.ts';
 import { BlobShadows } from '../scene/BlobShadows.ts';
-import { NameLetters } from '../scene/NameLetters.ts';
+import { PieceMeshes } from '../scene/PieceMeshes.ts';
 import { signAt } from '../world/signs.ts';
-import type { LetterPhysics, StaticBox } from '../world/LetterPhysics.ts';
+import { LAPTOP, PropPhysics, type StaticBox, type ThrownLaptop } from '../world/PropPhysics.ts';
 
 export type ViewPreset = 'front' | 'left' | 'right' | 'back' | 'three-quarter';
 export type LightPreset = 'neutral' | 'violet';
@@ -53,6 +59,8 @@ type ViewerOptions = {
   reducedMotion?: boolean;
   /** Room only; defaults to 'free' (the studio's limited orbit). */
   cameraMode?: CameraMode;
+  /** Room only: where the character starts (and Restablecer returns it) instead of the room's Spawn anchor. */
+  spawn?: { position: { x: number; z: number }; yaw: number };
 };
 
 // Isometric diorama: the camera stays on the open side of the two room walls.
@@ -79,8 +87,14 @@ const FOLLOW_RATE = 4;
 const SHADOWLESS = /^(FloorPlank|Platform|Wall|Baseboard|Poster|NightCity|WindowGlass)/;
 /** How quickly the character steps down to the outside ground or back up onto the room floor (1/s). */
 const STEP_RATE = 25;
-/** Blob shadow slots: the character first, then the signs, then the letters. */
+/** Blob shadow slots: the character first, then the signs, then the loose pieces, then the thrown laptops. */
 const CHARACTER_SHADOW = 0;
+/** Blob shadow slots of the thrown laptops, after the pieces. */
+const THROWN_SHADOWS = 3;
+/** Seconds a retired thrown laptop takes to shrink away. */
+const SHRINK_TIME = 0.3;
+/** Head height for the seat bubble's tail, above the character's feet. */
+const BUBBLE_HEIGHT = 2.45;
 
 export class CharacterViewer {
   private readonly scene = new Scene();
@@ -113,8 +127,20 @@ export class CharacterViewer {
   private sign?: string;
   private ground?: InfiniteFloor;
   private shadows?: BlobShadows;
-  private letters?: NameLetters;
-  private physics?: LetterPhysics;
+  private pieces?: PieceMeshes;
+  private pieceList: Piece[] = [];
+  private floorTexts?: FloorTexts;
+  private bubble?: SeatBubble;
+  /** Link signs and playground reset zones: the floor zones the character can step into. */
+  private zones: Sign[] = [];
+  private physics?: PropPhysics;
+  /** The laptop in the hand during the throw, until THROW_RELEASE. */
+  private heldLaptop?: Group;
+  private released = false;
+  /** A seat is in reach of the character moving freely: the speech bubble shows over its head. */
+  private nearSeat = false;
+  /** Thrown laptops on screen: base and lid follow their bodies; retired ones shrink away. */
+  private thrown: { laptop: ThrownLaptop; base: Group; lid: Object3D; shrink: number }[] = [];
   private fallenLetters = -1;
   /** Height of the character's feet: 0 on the room floor, the outside ground elsewhere. */
   private elevation = 0;
@@ -170,11 +196,13 @@ export class CharacterViewer {
     this.cameraMode = options.cameraMode ?? 'free';
     this.pixelRatio = ratioRange(this.quality, window.devicePixelRatio).max;
     const version = modelVersions[options.modelId];
-    this.events.status({ kind: 'loading', title: `Cargando ${version.label}`, detail: `Preparando ${version.file}. ${version.copy}` });
+    this.events.status({ kind: 'loading', title: t('viewer.loading', { label: version.label }), detail: t('viewer.preparing', { file: version.file, copy: version.copy }) });
     this.events.stats(null);
     this.events.animation(null);
     try {
       document.addEventListener('visibilitychange', this.resetDelta, { signal: this.abort.signal });
+      const stopLanguage = onLanguage(this.onLanguage);
+      this.abort.signal.addEventListener('abort', () => { stopLanguage(); });
       if (this.inRoom) this.keyboard = new KeyboardInput(window, this.abort.signal);
       this.renderer = createRenderer();
       this.host.append(this.renderer.domElement);
@@ -219,10 +247,10 @@ export class CharacterViewer {
       const unavailable = error instanceof Error && error.message === 'WEBGL_UNAVAILABLE';
       this.events.status({
         kind: 'error',
-        title: unavailable ? 'WebGL 2 no está disponible' : 'No se pudo iniciar el visor',
+        title: unavailable ? t('viewer.webgl') : t('viewer.start'),
         detail: unavailable
-          ? 'Activa la aceleración gráfica o abre este estudio en un navegador compatible. Después, vuelve a intentarlo.'
-          : 'El estudio no pudo crear el contexto gráfico. Puedes volver a intentarlo.',
+          ? t('viewer.webglDetail')
+          : t('viewer.startDetail'),
       });
     }
   }
@@ -321,7 +349,7 @@ export class CharacterViewer {
       this.scene.add(this.model);
       if (this.room) this.scene.add(this.room);
       if (this.outside) this.scene.add(this.outside);
-      for (const object of [this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.letters?.mesh]) if (object) this.scene.add(object);
+      for (const object of [this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.pieces?.mesh]) if (object) this.scene.add(object);
       if (!this.ground) this.createFloor(this.mixer ? 0 : box.min.y);
       this.frameLights();
       this.cameraDistance = Math.max(this.bounds.length() * 2.5, 1);
@@ -343,21 +371,22 @@ export class CharacterViewer {
       this.events.stats(null);
       const message = error instanceof Error ? error.message : '';
       if (message.startsWith('ROOM_')) {
+        const files = `${roomFile}, ${laptopFile} ${t('word.or')} ${outsideFile}`;
         this.events.status({
           kind: 'error',
-          title: 'No se pudo cargar la habitación',
+          title: t('viewer.room'),
           detail: message === 'ROOM_HTTP_404'
-            ? `Falta el archivo ${roomFile}, ${laptopFile} u ${outsideFile}. Genera la habitación y vuelve a intentarlo, o vuelve al estudio.`
-            : `El archivo ${roomFile}, ${laptopFile} u ${outsideFile} no está disponible o no es un GLB válido. Vuelve a intentarlo, o vuelve al estudio.`,
+            ? t('viewer.roomMissing', { files })
+            : t('viewer.roomInvalid', { files }),
         });
         return;
       }
       this.events.status({
         kind: 'error',
-        title: `No se pudo cargar ${modelVersions[this.options.modelId].label}`,
+        title: t('viewer.model', { label: modelVersions[this.options.modelId].label }),
         detail: message === 'MODEL_HTTP_404'
-          ? `Falta el archivo ${modelVersions[this.options.modelId].file}. Añade el modelo y vuelve a intentarlo, o selecciona otra versión.`
-          : `El archivo ${modelVersions[this.options.modelId].file} no está disponible o no es un GLB válido. Comprueba el modelo y vuelve a intentarlo, o selecciona otra versión.`,
+          ? t('viewer.modelMissing', { file: modelVersions[this.options.modelId].file })
+          : t('viewer.modelInvalid', { file: modelVersions[this.options.modelId].file }),
       });
     }
   }
@@ -368,15 +397,16 @@ export class CharacterViewer {
     // Spawn, seats (approach, stand point, facing), laptop spots and colliders from the room anchors.
     const data = readRoom(room);
     this.roomData = data;
+    const spawn = this.options.spawn ?? data.spawn;
     this.standPoints.set('spawn', {
-      position: new Vector3(data.spawn.position.x, 0, data.spawn.position.z),
-      quaternion: new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), data.spawn.yaw),
+      position: new Vector3(spawn.position.x, 0, spawn.position.z),
+      quaternion: new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), spawn.yaw),
     });
     for (const [seat, placement] of data.seatPlacements) this.standPoints.set(seat, placement);
     // With the outside ground the character can leave the room through its two open sides.
     const floor = this.outsideData?.bounds ?? data.halfSize;
     const boxes = [...data.boxes, ...(this.outsideData?.boxes ?? [])];
-    this.controller = new CharacterController(data.spawn, boxes, floor);
+    this.controller = new CharacterController(spawn, boxes, floor);
     this.interaction = new InteractionController(data.seats, boxes, floor, CHARACTER_RADIUS);
     if (this.keyboard) {
       this.keyboard.onPress = this.onPress;
@@ -417,15 +447,15 @@ export class CharacterViewer {
   }
 
   /**
-   * Everything outside the room: the endless ground, the signs with their floor zones and the name
-   * letters. None of it is in the shadow map; blob shadows stand in for it on the ground.
+   * Everything outside the room: the endless ground, the signs and reset zones, the painted floor, the name
+   * letters and the playground pieces. None of it is in the shadow map; blob shadows stand in for it on the ground.
    */
   private addOutside(outside: Group): void {
     this.outside = outside;
     const data = readOutside(outside);
     this.outsideData = data;
-    // The letters move on their own: they leave the static GLB before it is merged.
-    for (const group of ['Letters', 'Tagline']) outside.getObjectByName(group)?.removeFromParent();
+    // The loose pieces move on their own: they leave the static GLB before it is merged.
+    for (const group of ['Letters', 'Tagline', 'Keys', 'Bowling', 'Bricks']) outside.getObjectByName(group)?.removeFromParent();
     outside.traverse((object) => {
       if (!(object instanceof Mesh)) return;
       object.receiveShadow = false;
@@ -433,44 +463,64 @@ export class CharacterViewer {
     });
     mergeStaticMeshes(outside);
     this.ground = new InfiniteFloor(data.groundY);
-    this.shadows = new BlobShadows(1 + data.signs.length + data.letters.length, data.groundY);
+    this.pieceList = [...data.letters, ...data.props];
+    const pieceShadows = 1 + data.signs.length;
+    this.shadows = new BlobShadows(pieceShadows + this.pieceList.length + THROWN_SHADOWS, data.groundY);
     for (const [index, sign] of data.signs.entries()) {
-      this.shadows.set(1 + index, sign.position.x, sign.position.z, sign.yaw, sign.board.width + 0.5, 0.55, 0.45);
+      this.shadows.set(1 + index, sign.position.x, sign.position.z, sign.yaw, (sign.board?.width ?? 2) + 0.5, 0.55, 0.45);
     }
-    if (data.letters.length) {
-      this.letters = new NameLetters(data.letters, this.shadows, 1 + data.signs.length, data.groundY);
-      // The batched mesh holds its own copy of the letter geometry.
-      for (const letter of data.letters) letter.geometry.dispose();
+    if (this.pieceList.length) {
+      this.pieces = new PieceMeshes(this.pieceList, this.shadows, pieceShadows, data.groundY);
+      // The batched mesh holds its own copy of the pieces' geometry.
+      for (const geometry of new Set(this.pieceList.flatMap((piece) => piece.parts.map((part) => part.geometry)))) geometry.dispose();
     }
     this.shadows.flush();
-    this.areas = new SignAreas(data.signs, data.groundY);
+    this.zones = [...data.signs, ...data.zones];
+    this.areas = new SignAreas(this.zones, data.groundY);
     this.areas.setReducedMotion(this.reducedMotion);
+    this.floorTexts = new FloorTexts(data.floors, data.groundY);
+    this.bubble = new SeatBubble(this.host);
     this.host.dataset.sign = 'none';
     this.host.dataset.signArea = 'none';
     this.host.dataset.letters = '0';
+    this.host.dataset.pins = '0';
+    this.host.dataset.thrown = '0';
   }
 
-  /** Physics for the name letters, loaded after the scene is up (its own chunk); until then they stand still. */
+  /**
+   * Physics for the loose pieces and thrown laptops, loaded after the scene is up (cannon-es is its own
+   * chunk); until then the pieces stand still and F only plays the throw.
+   */
   private async loadPhysics(): Promise<void> {
     const data = this.outsideData;
-    if (!data?.letters.length || this.physics) return;
+    if (!data || this.physics) return;
     const { platform, groundY } = data;
-    // The room platform (top at the room floor) and the sign boards: letters bounce off them.
+    // The room platform (top at the room floor), the sign boards, and the room's furniture and walls: pieces bounce off them.
     const statics: StaticBox[] = [{
       center: { x: (platform.minX + platform.maxX) / 2, y: -0.17, z: (platform.minZ + platform.maxZ) / 2 },
       half: [(platform.maxX - platform.minX) / 2, 0.17, (platform.maxZ - platform.minZ) / 2],
       yaw: 0,
     }];
     for (const sign of data.signs) {
+      if (!sign.board) continue;
       const height = sign.board.bottom + sign.board.height;
       statics.push({ center: { x: sign.position.x, y: sign.position.y + height / 2, z: sign.position.z }, half: [sign.board.width / 2 + 0.1, height / 2, 0.08], yaw: sign.yaw });
     }
+    this.room?.traverse((object) => {
+      const extras = object.userData as { collider?: string; size?: number[] };
+      if (extras.collider !== 'box' || extras.size?.length !== 3) return;
+      // Blender sizes: X, Y (three.js Z) and Z (height); the anchor sits at the box centre.
+      const [sx, sy, sz] = extras.size;
+      const center = object.getWorldPosition(new Vector3());
+      statics.push({ center: { x: center.x, y: center.y, z: center.z }, half: [sx / 2, sz / 2, sy / 2], yaw: 0 });
+    });
     try {
-      const { LetterPhysics } = await import('../world/LetterPhysics.ts');
-      const physics = await LetterPhysics.load(data.letters, statics, groundY);
-      if (!this.disposed) this.physics = physics;
+      const physics = await PropPhysics.load(this.pieceList, statics, groundY);
+      if (this.disposed) return;
+      this.physics = physics;
+      this.host.dataset.physics = 'ready';
     } catch {
-      // Without the physics chunk the letters simply stay where they stand.
+      // Without the physics chunk the pieces simply stay where they stand.
     }
   }
 
@@ -542,6 +592,7 @@ export class CharacterViewer {
       if (!this.playing) this.setPlaying(true);
       this.selectClip(THROW_CLIP, false);
       this.host.dataset.locomotion = 'throw';
+      this.holdLaptop();
       return;
     }
     if (action === 'jump') {
@@ -577,6 +628,7 @@ export class CharacterViewer {
 
   /** Phase 5: the interaction walks the character to a seat and runs the seat/laptop clips. */
   private driveInteraction(delta: number): void {
+    this.nearSeat = false;
     const interaction = this.interaction!;
     interaction.update(delta);
     const request = interaction.clip();
@@ -620,14 +672,151 @@ export class CharacterViewer {
   private endThrow(): void {
     this.throwing = false;
     this.driving = false;
+    this.dropHeldLaptop();
     if (this.actions.has('idle')) this.selectClip('idle');
     this.host.dataset.locomotion = 'idle';
+  }
+
+  /** A closed copy of the room laptop (it shares geometry and materials) for the throw. */
+  private laptopCopy(): Group | undefined {
+    if (!this.deskLaptop) return undefined;
+    const copy = this.deskLaptop.clone(true);
+    const hinge = copy.getObjectByName('LaptopHinge');
+    if (hinge) hinge.rotation.x = 0;
+    copy.position.set(0, 0, 0);
+    copy.quaternion.identity();
+    copy.scale.setScalar(1);
+    copy.visible = true;
+    return copy;
+  }
+
+  /** F: a laptop appears in the throwing hand; it leaves it at THROW_RELEASE (releaseLaptop). */
+  private holdLaptop(): void {
+    this.dropHeldLaptop();
+    this.released = false;
+    if (!this.physics || !this.model?.getObjectByName(THROW_HAND)) return;
+    this.heldLaptop = this.laptopCopy();
+    if (this.heldLaptop) this.scene.add(this.heldLaptop);
+  }
+
+  private dropHeldLaptop(): void {
+    this.heldLaptop?.removeFromParent();
+    this.heldLaptop = undefined;
+  }
+
+  /** Base centre and orientation of the laptop in the hand: closed, level, facing where the character faces. */
+  private heldPose(): { position: Vector3; quaternion: Quaternion } | undefined {
+    const hand = this.model?.getObjectByName(THROW_HAND);
+    if (!hand || !this.controller) return undefined;
+    const position = hand.getWorldPosition(new Vector3());
+    // Held by its back edge, the keys facing up.
+    const quaternion = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), this.controller.yaw);
+    position.add(new Vector3(0, 0.02, -LAPTOP.depth / 2 + 0.04).applyQuaternion(quaternion));
+    return { position, quaternion };
+  }
+
+  /** Follow the hand while held; at the release time hand the laptop over to the physics. */
+  private updateThrow(): void {
+    const action = this.actions.get(THROW_CLIP);
+    if (!this.throwing || !this.heldLaptop || !action || !this.model) return;
+    this.model.updateMatrixWorld(true);
+    const pose = this.heldPose();
+    if (!pose) return;
+    this.placeLaptop(this.heldLaptop, pose.position, pose.quaternion);
+    if (this.released || action.time < THROW_RELEASE) return;
+    this.released = true;
+    this.dropHeldLaptop();
+    this.throwLaptop(pose);
+  }
+
+  /** Put a laptop copy (origin at the foot of its base) so its base centre is at `center`. */
+  private placeLaptop(copy: Group, center: Vector3, quaternion: Quaternion): void {
+    copy.quaternion.copy(quaternion);
+    copy.position.copy(center).sub(new Vector3(0, LAPTOP.base / 2, 0).applyQuaternion(quaternion));
+  }
+
+  private throwLaptop(pose: { position: Vector3; quaternion: Quaternion }): void {
+    if (!this.physics || !this.controller) return;
+    const yaw = this.controller.yaw;
+    const forward = { x: Math.sin(yaw), z: Math.cos(yaw) };
+    const jitter = () => (Math.random() - 0.5) * 2;
+    const laptop = this.physics.throwLaptop(
+      { position: pose.position, quaternion: pose.quaternion },
+      { x: forward.x * THROW_SPEED.forward, y: THROW_SPEED.up, z: forward.z * THROW_SPEED.forward },
+      { x: jitter() * 0.6, y: jitter() * 1.5, z: jitter() * 0.6 },
+      4 + Math.random() * 4,
+    );
+    const base = this.laptopCopy();
+    const lid = base?.getObjectByName('LaptopHinge');
+    if (!base || !lid) return;
+    // The lid follows its own body: it leaves the copy and goes straight into the scene.
+    this.scene.add(base, lid);
+    this.thrown.push({ laptop, base, lid, shrink: 0 });
+    this.syncThrown(0);
+  }
+
+  /** Thrown laptops follow their bodies; ones the physics retired shrink away, then leave the scene. */
+  private syncThrown(delta: number): void {
+    const physics = this.physics;
+    if (!physics) return;
+    for (const laptop of physics.retired.splice(0)) {
+      const entry = this.thrown.find((item) => item.laptop === laptop);
+      if (entry) entry.shrink = this.reducedMotion ? SHRINK_TIME : Math.max(entry.shrink, 1e-6);
+    }
+    const shadowStart = 1 + (this.outsideData?.signs.length ?? 0) + this.pieceList.length;
+    const center = new Vector3();
+    const quaternion = new Quaternion();
+    this.thrown = this.thrown.filter((entry) => {
+      if (entry.shrink >= SHRINK_TIME) {
+        entry.base.removeFromParent();
+        entry.lid.removeFromParent();
+        return false;
+      }
+      return true;
+    });
+    for (const [index, entry] of this.thrown.entries()) {
+      const { base, lid } = entry.laptop;
+      if (entry.shrink > 0) entry.shrink = Math.min(SHRINK_TIME, entry.shrink + delta);
+      const size = entry.shrink > 0 ? Math.max(0.001, 1 - entry.shrink / SHRINK_TIME) : 1;
+      center.set(base.position.x, base.position.y, base.position.z);
+      quaternion.set(base.quaternion.x, base.quaternion.y, base.quaternion.z, base.quaternion.w);
+      this.placeLaptop(entry.base, center, quaternion);
+      // The hinge node sits on the lid's back edge, turned like the lid (rotation 0 is closed on the keys).
+      const hinge = new Vector3(0, -LAPTOP.lid / 2 - 0.001, LAPTOP.depth / 2 - 0.005);
+      quaternion.set(lid.quaternion.x, lid.quaternion.y, lid.quaternion.z, lid.quaternion.w);
+      entry.lid.position.set(lid.position.x, lid.position.y, lid.position.z).add(hinge.applyQuaternion(quaternion));
+      entry.lid.quaternion.copy(quaternion);
+      entry.base.scale.setScalar(size);
+      entry.lid.scale.setScalar(size);
+      if (this.shadows && index < THROWN_SHADOWS) {
+        const lift = Math.max(0, base.position.y - (this.outsideData?.groundY ?? 0));
+        const yaw = Math.atan2(2 * (quaternion.w * quaternion.y + quaternion.x * quaternion.z), 1 - 2 * (quaternion.y ** 2 + quaternion.z ** 2));
+        this.shadows.set(shadowStart + index, base.position.x, base.position.z, yaw, LAPTOP.width * size + 0.15, LAPTOP.depth * size + 0.15,
+          0.45 * Math.max(0, 1 - lift / 2) ** 2 * size);
+      }
+    }
+    if (this.shadows) for (let index = this.thrown.length; index < THROWN_SHADOWS; index++) this.shadows.hide(shadowStart + index);
+    const count = String(physics.laptops.length);
+    if (this.host.dataset.thrown !== count) this.host.dataset.thrown = count;
+    const last = physics.laptops.at(-1);
+    const lid = last ? physics.lidAngle(last).toFixed(2) : 'none';
+    if (this.host.dataset.thrownLid !== lid) this.host.dataset.thrownLid = lid;
+  }
+
+  private clearThrown(): void {
+    for (const entry of this.thrown) {
+      entry.base.removeFromParent();
+      entry.lid.removeFromParent();
+    }
+    this.thrown = [];
+    this.dropHeldLaptop();
   }
 
   /** Back to the spawn point, standing idle. */
   resetPosition(): void {
     if (!this.controller || this.disposed) return;
     this.throwing = false;
+    this.clearThrown();
     this.controller.reset();
     this.interaction?.reset();
     this.syncLaptop(0);
@@ -638,7 +827,8 @@ export class CharacterViewer {
     this.placeForClip(this.activeClip);
     this.host.dataset.locomotion = 'idle';
     this.physics?.reset();
-    this.letters?.reset();
+    this.pieces?.reset();
+    this.syncThrown(0);
     this.reportLetters();
   }
 
@@ -654,11 +844,13 @@ export class CharacterViewer {
       this.setMovement('seated');
       return;
     }
-    const prompt = this.hasSeatClips() ? this.interaction?.prompt(this.controller.position) ?? '' : '';
+    const seat = this.hasSeatClips() ? this.interaction?.available(this.controller.position)?.seat : undefined;
+    const prompt = seat ? this.interaction!.prompt(this.controller.position) : '';
     this.setMovement('ready', this.noticeText() || prompt);
     this.host.dataset.interaction = 'free';
     this.syncGait();
-    this.host.dataset.prompt = prompt ? (prompt.includes('silla') ? 'chair' : 'bed') : 'none';
+    this.host.dataset.prompt = seat ?? 'none';
+    this.nearSeat = !!seat;
     const keys = this.keyboard?.active ?? false;
     if (!keys && !this.driving && !this.controller.jumping) return;
     if (keys && !this.driving) {
@@ -677,21 +869,42 @@ export class CharacterViewer {
   /** Sign zones: the fence of the zone the character walks into rises; leaving it (or jumping out) lowers it. */
   private checkSign(): void {
     if (!this.outsideData || !this.areas || !this.model || this.controller?.airborne) return;
-    const sign = signAt({ x: this.model.position.x, z: this.model.position.z }, this.outsideData.signs, this.sign);
+    const sign = signAt({ x: this.model.position.x, z: this.model.position.z }, this.zones, this.sign);
     if (sign?.id === this.sign) return;
     this.sign = sign?.id;
     this.areas.show(sign?.id);
     this.host.dataset.sign = sign?.id ?? 'none';
-    this.events.sign?.(sign ? { id: sign.id, link: sign.link, label: sign.label } : null);
+    this.emitSign();
   }
 
-  /** Open a sign's site in a new tab (Enter in its zone, or a click on the zone or the board). */
+  /** The HUD link for the link zone the character stands in (reset zones only need Enter on the ground). */
+  private emitSign(): void {
+    const sign = this.zones.find((entry) => entry.id === this.sign);
+    this.events.sign?.(sign?.kind === 'link' ? { id: sign.id, link: sign.link, label: signText(sign).label } : null);
+  }
+
+  /** A link zone opens its site in a new tab; a reset zone puts its pieces back (Enter in the zone, or a click on it or the board). */
   private openSign(id: string | undefined): void {
-    const sign = id ? this.outsideData?.signs.find((entry) => entry.id === id) : undefined;
+    const sign = id ? this.zones.find((entry) => entry.id === id) : undefined;
     if (!sign) return;
     this.areas?.pulse(sign.id);
+    if (sign.kind === 'reset') {
+      if (sign.target) this.physics?.reset(sign.target);
+      if (this.physics) this.pieces?.sync(this.physics.bodies, true);
+      this.reportLetters();
+      return;
+    }
     window.open(sign.link, '_blank', 'noopener,noreferrer');
   }
+
+  private readonly onLanguage = (): void => {
+    if (this.disposed) return;
+    this.areas?.setLanguage();
+    this.floorTexts?.paint();
+    this.bubble?.setLanguage();
+    this.notice = { text: '', until: 0 };
+    if (this.sign) this.emitSign();
+  };
 
   /** Screen position (CSS px) of the current sign zone's centre, for tests and tooling. */
   private reportSign(): void {
@@ -716,15 +929,16 @@ export class CharacterViewer {
     if (this.host.dataset.elevation !== value) this.host.dataset.elevation = value;
   }
 
-  /** Letter physics, the character's blob shadow outside the room, and the ground that follows the view. */
+  /** Piece physics, thrown laptops, the character's blob shadow outside the room, and the ground that follows the view. */
   private updateOutside(delta: number): void {
     if (!this.model || !this.outsideData || !this.shadows) return;
     const lift = this.controller?.lift ?? 0;
     const { x, z } = this.model.position;
-    if (this.physics && this.letters && this.physics.step(delta, { x, y: this.elevation + lift, z })) {
-      this.letters.sync(this.physics.bodies);
+    if (this.physics && this.physics.step(delta, { x, y: this.elevation + lift, z })) {
+      this.pieces?.sync(this.physics.bodies);
       this.reportLetters();
     }
+    if (this.thrown.length || this.physics?.retired.length) this.syncThrown(delta);
     if (this.elevation < -1e-3 || groundAt({ x, z }, this.outsideData) < 0) {
       const fade = 1 - lift / 0.8;
       this.shadows.set(CHARACTER_SHADOW, x, z, 0, 0.8 * (1 - lift * 0.4), 0.8 * (1 - lift * 0.4), 0.5 * fade);
@@ -734,11 +948,28 @@ export class CharacterViewer {
     this.shadows.flush();
   }
 
+  /** Toppled name letters and bowling pins (data-letters, data-pins). */
   private reportLetters(): void {
-    const fallen = this.physics?.fallen() ?? 0;
+    const fallen = this.physics?.fallen(['name', 'tag']) ?? 0;
+    const pins = String(this.physics?.fallen(['bowling']) ?? 0);
+    if (this.host.dataset.pins !== pins && this.outside) this.host.dataset.pins = pins;
     if (fallen === this.fallenLetters) return;
     this.fallenLetters = fallen;
     this.host.dataset.letters = String(fallen);
+  }
+
+  /** The speech bubble over the head while a seat is in reach (free movement only), placed on the screen each frame. */
+  private updateBubble(): void {
+    if (!this.bubble || !this.model || !this.renderer) return;
+    const visible = this.nearSeat && !this.throwing && this.interaction?.phase === 'free' && this.isLocomotion(this.activeClip);
+    if (!visible) {
+      this.bubble.update(false);
+      return;
+    }
+    const point = this.model.position.clone().setY(this.model.position.y + BUBBLE_HEIGHT).project(this.camera);
+    const width = this.host.clientWidth;
+    const height = this.host.clientHeight;
+    this.bubble.update(true, (point.x + 1) / 2 * width, (1 - point.y) / 2 * height);
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
@@ -979,6 +1210,7 @@ export class CharacterViewer {
   /** A clip picked by hand in the UI: it takes over from any seat interaction in progress. */
   chooseClip(name: string): void {
     this.throwing = false;
+    this.dropHeldLaptop();
     if (this.interaction && this.interaction.phase !== 'free') {
       this.interaction.reset();
       this.syncLaptop(0);
@@ -1110,6 +1342,7 @@ export class CharacterViewer {
     }
     if (this.ready && this.mixer && this.playing) {
       this.mixer.update(delta);
+      this.updateThrow();
       if (this.fadeRemaining > 0) {
         this.fadeRemaining -= delta * this.speed;
         if (this.fadeRemaining <= 0) this.finishFade();
@@ -1121,6 +1354,7 @@ export class CharacterViewer {
     this.areas?.update(delta);
     this.updateHover();
     this.reportSign();
+    this.updateBubble();
     if (this.ground && this.model) this.ground.update(this.camera, this.model.position);
     this.renderer.render(this.scene, this.camera);
     this.sampleRender(frame);
@@ -1172,7 +1406,7 @@ export class CharacterViewer {
     this.resetDelta();
     this.renderer?.setAnimationLoop(null);
     if (this.controls) this.controls.enabled = false;
-    this.events.status({ kind: 'error', title: 'Se ha interrumpido el contexto gráfico', detail: 'Esperando a que se restablezca la GPU. También puedes reiniciar el visor con Volver a intentar.' });
+    this.events.status({ kind: 'error', title: t('viewer.contextLost'), detail: t('viewer.contextLostDetail') });
   };
 
   private readonly onContextRestored = (): void => {
@@ -1182,7 +1416,7 @@ export class CharacterViewer {
     if (this.controls) this.controls.enabled = this.ready;
     this.renderer?.setAnimationLoop(this.animate);
     if (this.ready) this.showReady();
-    else this.events.status({ kind: 'loading', title: `Cargando ${modelVersions[this.options.modelId].label}`, detail: `Contexto recuperado. Preparando ${modelVersions[this.options.modelId].file}.` });
+    else this.events.status({ kind: 'loading', title: t('viewer.loading', { label: modelVersions[this.options.modelId].label }), detail: t('viewer.contextBack', { file: modelVersions[this.options.modelId].file }) });
   };
 
   private showReady(): void {
@@ -1209,9 +1443,12 @@ export class CharacterViewer {
     this.events.movement?.(null);
     this.events.render?.(null);
     this.areas?.dispose();
+    this.floorTexts?.dispose();
+    this.bubble?.dispose();
+    this.clearThrown();
     this.ground?.dispose();
     this.shadows?.dispose();
-    this.letters?.dispose();
+    this.pieces?.dispose();
     this.physics = undefined;
     disposeObjects([...this.assetRoots, this.scene]);
     this.key.shadow.dispose();

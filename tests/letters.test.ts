@@ -5,7 +5,7 @@ import * as cannon from 'cannon-es';
 import { Texture } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { readOutside, type OutsideData } from '../src/scene/outsideData.ts';
-import { LetterPhysics, type LetterBody } from '../src/world/LetterPhysics.ts';
+import { PropPhysics, type PieceBody } from '../src/world/PropPhysics.ts';
 
 async function outside(): Promise<OutsideData> {
   const data = await readFile(new URL('../public/models/outside.glb', import.meta.url));
@@ -15,7 +15,7 @@ async function outside(): Promise<OutsideData> {
   return readOutside(gltf.scene);
 }
 
-const bodies = (data: OutsideData): LetterBody[] => data.letters.map((letter) => ({
+const bodies = (data: OutsideData): PieceBody[] => data.letters.map((letter) => ({
   position: letter.position, quaternion: letter.quaternion, half: letter.half,
 }));
 
@@ -39,11 +39,11 @@ test('the name: one standing letter per character of ANDRES JARAMILLO, on the ou
   assert.deepEqual([...along].sort((a, b) => a - b), along);
 });
 
-test('the tagline: "<developer />" pieces lie flat in front of the name, smaller than its letters', async () => {
+test('the tagline: "<Developer />" pieces lie flat in front of the name, smaller than its letters', async () => {
   const data = await outside();
   const name = data.letters.filter((letter) => letter.word === 'name');
   const tag = data.letters.filter((letter) => letter.word === 'tag');
-  assert.equal(tag.length, 12, 'one piece per visible character of <developer />');
+  assert.equal(tag.length, 12, 'one piece per visible character of <Developer />');
   const capHeight = Math.min(...name.map((letter) => letter.half[1] * 2));
   for (const piece of tag) {
     const [w, h, d] = piece.half.map((half) => half * 2);
@@ -59,7 +59,7 @@ test('the tagline: "<developer />" pieces lie flat in front of the name, smaller
 
 test('letters stay standing and asleep without contact, and the world is skipped far from them', async () => {
   const data = await outside();
-  const physics = new LetterPhysics(cannon, bodies(data), [], data.groundY);
+  const physics = new PropPhysics(cannon, bodies(data), [], data.groundY);
   assert.equal(physics.step(1 / 60, { x: 0, y: 0, z: 0 }), false, 'nothing near or awake: skipped');
   const first = data.letters[0].position;
   // Close by but not touching: the world steps, nothing moves.
@@ -73,7 +73,7 @@ test('letters stay standing and asleep without contact, and the world is skipped
 
 test('the character walking through the name knocks letters over, and reset stands them up again', async () => {
   const data = await outside();
-  const physics = new LetterPhysics(cannon, bodies(data), [], data.groundY);
+  const physics = new PropPhysics(cannon, bodies(data), [], data.groundY);
   // Walk from the front through the middle letters (towards -Z), at walking speed.
   const target = data.letters[7].position;
   const direction = { x: 0, z: -1 };

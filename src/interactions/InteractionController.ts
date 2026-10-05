@@ -1,5 +1,6 @@
 import { WALK_CLIP_SPEED as WALK_SPEED } from '../character/CharacterController.ts';
 import { overlaps, sweep, type Box2, type Floor, type Point2 } from '../world/collisions.ts';
+import { t } from '../core/i18n.ts';
 import { InteractionState, type Seat } from './interactionState.ts';
 
 /** A seat as the room exports it: where to walk to (one point per free side), where its clips start, and which way they face. */
@@ -16,7 +17,7 @@ export const APPEAR_TIME = 0.15;
 export const LID_TIME = 0.3;
 const ARRIVED = 0.03;
 const TURN_RATE = 9;
-const SEAT_NAMES: Record<Seat, string> = { chair: 'la silla', bed: 'la cama' };
+const seatName = (seat: Seat) => t(seat === 'chair' ? 'seat.chair' : 'seat.bed');
 
 const distance = (a: Point2, b: Point2) => Math.hypot(a.x - b.x, a.z - b.z);
 const wrap = (angle: number) => Math.atan2(Math.sin(angle), Math.cos(angle));
@@ -39,7 +40,7 @@ export class InteractionController {
   shown = 0;
   position: Point2 = { x: 0, z: 0 };
   yaw = 0;
-  /** Why the last command was refused (Spanish, for the HUD); empty when it was accepted. */
+  /** Why the last command was refused (for the HUD, in the current language); empty when it was accepted. */
   message = '';
   private entry?: Point2;
   private stalled = 0;
@@ -77,7 +78,7 @@ export class InteractionController {
     this.message = '';
     if (this.phase === 'free') {
       const target = this.reachable(from);
-      if (!target) return this.refuse('Acércate a la silla o a la cama para sentarte.');
+      if (!target) return this.refuse(t('refuse.near'));
       this.seat = target.spot;
       this.entry = target.approach;
       this.position = { ...from };
@@ -86,9 +87,9 @@ export class InteractionController {
       this.phase = 'approaching';
       return true;
     }
-    if (this.phase !== 'seated' || !this.state.can('stand')) return this.refuse('Espera a que termine el movimiento.');
+    if (this.phase !== 'seated' || !this.state.can('stand')) return this.refuse(t('refuse.wait'));
     const exit = this.exitPoint();
-    if (!exit) return this.refuse('La salida está bloqueada.');
+    if (!exit) return this.refuse(t('refuse.exit'));
     this.entry = exit;
     return this.state.command('stand');
   }
@@ -97,7 +98,7 @@ export class InteractionController {
   laptopPress(): boolean {
     this.message = '';
     if (this.phase !== 'seated' || !this.state.can('laptop')) {
-      return this.refuse(this.phase === 'free' ? 'Siéntate para usar el portátil.' : 'Espera a que termine el movimiento.');
+      return this.refuse(this.phase === 'free' ? t('refuse.sit') : t('refuse.wait'));
     }
     if (this.state.stage === 'seated') this.laptop = this.seat!.seat === 'bed' ? 'lap' : 'desk';
     return this.state.command('laptop');
@@ -143,16 +144,16 @@ export class InteractionController {
   prompt(from: Point2): string {
     if (this.phase === 'free') {
       const spot = this.available(from);
-      return spot ? `E: sentarse en ${SEAT_NAMES[spot.seat]}` : '';
+      return spot ? t('prompt.sit', { seat: seatName(spot.seat) }) : '';
     }
-    const where = SEAT_NAMES[this.seat!.seat];
-    if (this.phase === 'approaching' || this.phase === 'aligning') return `Yendo a ${where}…`;
-    if (this.phase === 'exiting') return 'Levantándose…';
+    const seat = seatName(this.seat!.seat);
+    if (this.phase === 'approaching' || this.phase === 'aligning') return t('prompt.going', { seat });
+    if (this.phase === 'exiting') return t('prompt.standing');
     const stage = this.state.stage;
-    if (stage === 'seated') return `Sentado en ${where} · L: abrir el portátil · E: levantarse`;
-    if (stage === 'typing') return 'Programando · L: cerrar el portátil · E: cerrarlo y levantarse';
+    if (stage === 'seated') return t('prompt.seated', { seat });
+    if (stage === 'typing') return t('prompt.typing');
     const transitions: Partial<Record<typeof stage, string>> = {
-      sitting: 'Sentándose…', opening: 'Abriendo el portátil…', closing: 'Cerrando el portátil…', standing: 'Levantándose…',
+      sitting: t('prompt.sitting'), opening: t('prompt.opening'), closing: t('prompt.closing'), standing: t('prompt.standing'),
     };
     return transitions[stage] ?? '';
   }
@@ -208,7 +209,7 @@ export class InteractionController {
     this.moving = true;
     if (this.stalled > 0.6) {
       this.reset();
-      this.message = 'El camino al asiento está bloqueado.';
+      this.message = t('refuse.blocked');
     }
   }
 

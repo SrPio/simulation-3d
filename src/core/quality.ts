@@ -1,3 +1,5 @@
+import { isLanguage, type Language } from './i18n.ts';
+
 export type QualityId = 'auto' | 'high' | 'low';
 
 export type QualityProfile = {
@@ -45,7 +47,8 @@ export function nextPixelRatio(current: number, averageFrame: number, range: { m
   return clamped;
 }
 
-export type Preferences = { quality: QualityId; reducedMotion: boolean | null };
+/** language null means "not chosen yet": the room page starts from the browser's language. */
+export type Preferences = { quality: QualityId; reducedMotion: boolean | null; language: Language | null };
 const STORAGE_KEY = 'simulation-3d:preferences';
 
 /** Stored viewer preferences; reducedMotion null means "follow the system setting". Storage may be unavailable. */
@@ -56,9 +59,10 @@ export function readPreferences(storage: Pick<Storage, 'getItem'> | undefined): 
     return {
       quality: isQualityId(stored.quality) ? stored.quality : defaultQuality,
       reducedMotion: typeof stored.reducedMotion === 'boolean' ? stored.reducedMotion : null,
+      language: isLanguage(stored.language) ? stored.language : null,
     };
   } catch {
-    return { quality: defaultQuality, reducedMotion: null };
+    return { quality: defaultQuality, reducedMotion: null, language: null };
   }
 }
 
