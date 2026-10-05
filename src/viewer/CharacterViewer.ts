@@ -8,7 +8,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createRenderer } from '../core/renderer';
 import { QUALITY, defaultQuality, nextPixelRatio, ratioRange, type QualityId } from '../core/quality.ts';
 import { mergeSkinnedMeshes, mergeStaticMeshes } from '../scene/mergeStatic.ts';
-import { CHARACTER_RADIUS, CharacterController, type Locomotion } from '../character/CharacterController';
+import { CHARACTER_RADIUS, CLIP_ALTERNATIVES, CharacterController, DEFAULT_GAIT_CLIPS, JUMP, RUN_CLIP_SPEED, THROW_CLIP, WALK_CLIP_SPEED, type Gait, type Locomotion } from '../character/CharacterController';
 import { KeyboardInput, type PressAction } from '../input/KeyboardInput';
 import {
   disposeObjects, laptopFile, loadCharacter, loadLaptop, loadOutside, loadRoom, modelVersions, outsideFile, roomFile, type ModelVersionId, type SceneId,
@@ -150,6 +150,10 @@ export class CharacterViewer {
   private mixer?: AnimationMixer;
   private readonly actions = new Map<string, AnimationAction>();
   private activeClip = '';
+  /** Clips that play while walking, running and jumping with the keyboard: procedural or one of CLIP_ALTERNATIVES. */
+  private readonly gait: Record<Gait, string> = { ...DEFAULT_GAIT_CLIPS };
+  /** F plays the throw in place; movement keys wait until it ends. */
+  private throwing = false;
   private playing = true;
   private speed = 1;
   private lastFrame?: number;
@@ -274,7 +278,9 @@ export class CharacterViewer {
         this.mixer = new AnimationMixer(this.model);
         // One-shot seat clips advance the interaction when they end (no timers).
         this.mixer.addEventListener('finished', (event) => {
-          if (event.action === this.actions.get(this.activeClip)) this.interaction?.clipFinished();
+          if (event.action !== this.actions.get(this.activeClip)) return;
+          if (this.throwing) this.endThrow();
+          else this.interaction?.clipFinished();
         });
         for (const [index, clip] of gltf.animations.entries()) {
           const name = clip.name || `Clip ${index + 1}`;
@@ -526,19 +532,30 @@ export class CharacterViewer {
       return;
     }
     const interaction = this.interaction;
-    if (!interaction || !this.controller || !this.ready || this.controller.jumping) return;
+    if (!interaction || !this.controller || !this.ready || this.controller.jumping || this.throwing) return;
+    if (action === 'throw') {
+      // Like the jump: only from free keyboard movement, never from a seat or a clip picked by hand.
+      if (interaction.phase !== 'free' || !this.isLocomotion(this.activeClip) || !this.actions.has(THROW_CLIP)) return;
+      this.throwing = true;
+      this.controller.speed = 0;
+      this.driving = true;
+      if (!this.playing) this.setPlaying(true);
+      this.selectClip(THROW_CLIP, false);
+      this.host.dataset.locomotion = 'throw';
+      return;
+    }
     if (action === 'jump') {
       // Only from free keyboard movement, never from a seat or a clip picked by hand.
-      if (interaction.phase !== 'free' || !LOCOMOTION.has(this.activeClip) || !this.actions.has('jump')) return;
+      if (interaction.phase !== 'free' || !this.isLocomotion(this.activeClip) || !this.actions.has('jump')) return;
       this.controller.jump();
       this.driving = true;
       if (!this.playing) this.setPlaying(true);
-      this.selectClip('jump', false);
+      this.selectClip(this.gaitClip('jump'), false);
       this.host.dataset.locomotion = 'jump';
       return;
     }
     if (!this.hasSeatClips()) return;
-    if (interaction.phase === 'free' && !LOCOMOTION.has(this.activeClip)) return; // a seat clip picked by hand
+    if (interaction.phase === 'free' && !this.isLocomotion(this.activeClip)) return; // a seat clip picked by hand
     const accepted = action === 'interact'
       ? interaction.interact(this.controller.position, this.controller.yaw)
       : interaction.laptopPress();
@@ -599,9 +616,18 @@ export class CharacterViewer {
     this.events.movement?.(state, text || undefined);
   }
 
+  /** The throw clip ended: back to idle, and the keys move the character again. */
+  private endThrow(): void {
+    this.throwing = false;
+    this.driving = false;
+    if (this.actions.has('idle')) this.selectClip('idle');
+    this.host.dataset.locomotion = 'idle';
+  }
+
   /** Back to the spawn point, standing idle. */
   resetPosition(): void {
     if (!this.controller || this.disposed) return;
+    this.throwing = false;
     this.controller.reset();
     this.interaction?.reset();
     this.syncLaptop(0);
@@ -623,13 +649,15 @@ export class CharacterViewer {
       this.setMovement('unavailable');
       return;
     }
-    if (!LOCOMOTION.has(this.activeClip)) {
+    if (this.throwing) return;
+    if (!this.isLocomotion(this.activeClip)) {
       this.setMovement('seated');
       return;
     }
     const prompt = this.hasSeatClips() ? this.interaction?.prompt(this.controller.position) ?? '' : '';
     this.setMovement('ready', this.noticeText() || prompt);
     this.host.dataset.interaction = 'free';
+    this.syncGait();
     this.host.dataset.prompt = prompt ? (prompt.includes('silla') ? 'chair' : 'bed') : 'none';
     const keys = this.keyboard?.active ?? false;
     if (!keys && !this.driving && !this.controller.jumping) return;
@@ -638,7 +666,7 @@ export class CharacterViewer {
       if (!this.playing) this.setPlaying(true);
     }
     const mode: Locomotion = this.controller.update(delta, this.keyboard!.intent, this.controls.getAzimuthalAngle());
-    const clip = this.actions.has(mode) ? mode : 'walk';
+    const clip = mode === 'idle' ? 'idle' : this.gaitClip(mode);
     if (clip !== this.activeClip) this.selectClip(clip, mode !== 'jump');
     if (this.fadeRemaining <= 0) this.actions.get(clip)?.setEffectiveTimeScale(this.controller.clipRate());
     this.applyController();
@@ -913,8 +941,44 @@ export class CharacterViewer {
     this.host.dataset.wireframe = String(enabled);
   }
 
+  private isLocomotion(clip: string): boolean {
+    return LOCOMOTION.has(clip) || clip in CLIP_ALTERNATIVES;
+  }
+
+  /** The clip that plays for a gait: the chosen one when this model has it, else the procedural one (or walk). */
+  private gaitClip(gait: Gait): string {
+    if (this.actions.has(this.gait[gait])) return this.gait[gait];
+    return this.actions.has(gait) ? gait : 'walk';
+  }
+
+  /** Clip rates and jump timing follow the clips in use; hooks data-walk-clip/data-run-clip/data-jump-clip. */
+  private syncGait(): void {
+    const controller = this.controller!;
+    const walk = this.gaitClip('walk');
+    const run = this.gaitClip('run');
+    const jump = this.gaitClip('jump');
+    controller.walkClipSpeed = CLIP_ALTERNATIVES[walk]?.speed ?? WALK_CLIP_SPEED;
+    controller.runClipSpeed = CLIP_ALTERNATIVES[run]?.speed ?? RUN_CLIP_SPEED;
+    if (!controller.jumping) controller.jumpSpec = CLIP_ALTERNATIVES[jump]?.jump ?? JUMP;
+    for (const [key, clip] of [['walkClip', walk], ['runClip', run], ['jumpClip', jump]] as const) {
+      if (this.host.dataset[key] !== clip) this.host.dataset[key] = clip;
+    }
+  }
+
+  /** Which clip plays while walking, running or jumping with the keyboard: the procedural one or a matching alternative. */
+  setGaitClip(gait: Gait, name: string): void {
+    if (this.disposed || (name !== gait && CLIP_ALTERNATIVES[name]?.gait !== gait)) return;
+    const previous = this.gaitClip(gait);
+    this.gait[gait] = name;
+    if (!this.controller) return;
+    this.syncGait();
+    const next = this.gaitClip(gait);
+    if (gait !== 'jump' && this.activeClip === previous && this.driving && next !== previous) this.selectClip(next);
+  }
+
   /** A clip picked by hand in the UI: it takes over from any seat interaction in progress. */
   chooseClip(name: string): void {
+    this.throwing = false;
     if (this.interaction && this.interaction.phase !== 'free') {
       this.interaction.reset();
       this.syncLaptop(0);

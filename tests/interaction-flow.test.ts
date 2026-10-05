@@ -174,11 +174,11 @@ test('bed: the laptop appears on the lap and opens, even with the desk laptop in
   assert.equal(interaction.shown, 0);
 });
 
-test('sitting down and standing up are quick one-second clips', () => {
+test('sitting down and standing up are quick clips of under a second', () => {
   for (const seat of ['chair', 'bed']) {
     for (const action of ['sit_down', 'stand_up']) {
       const duration = durations.get(`${action}_${seat}`)!;
-      assert.ok(duration > 0.7 && duration <= 1.0, `${action}_${seat}: ${duration}s`);
+      assert.ok(duration > 0.6 && duration <= 0.8, `${action}_${seat}: ${duration}s`);
     }
   }
 });

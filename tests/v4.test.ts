@@ -260,3 +260,69 @@ test('V4 feet never tip the toe up while stepping', async () => {
   mixer.stopAllAction();
   mixer.uncacheRoot(scene);
 });
+
+test('UAL clips are seamless, in place and grounded; walks and runs keep the arms lowered and match their speeds', async () => {
+  const bytes = await readFile(new URL('public/models/developer-v4-interactions.glb', root));
+  const { scene, animations } = await new GLTFLoader().parseAsync(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length), '');
+  const manifest = JSON.parse(await readFile(new URL('public/models/developer-v4-interactions.manifest.json', root), 'utf8'));
+  const { CLIP_ALTERNATIVES, DEFAULT_GAIT_CLIPS } = await import('../src/character/CharacterController.ts');
+  const clips = animations.filter((clip) => clip.name.includes('_ual'));
+  // The throw is not locomotion: it is only listed in the study, so it has no CLIP_ALTERNATIVES entry.
+  assert.deepEqual(clips.map((clip) => clip.name).sort(), [...Object.keys(CLIP_ALTERNATIVES), 'throw_ual'].sort());
+  for (const gait of ['walk', 'run', 'jump'] as const) {
+    const name = DEFAULT_GAIT_CLIPS[gait];
+    assert.ok(name === gait || CLIP_ALTERNATIVES[name]?.gait === gait, `default ${gait}: ${name}`);
+  }
+  assert.deepEqual(DEFAULT_GAIT_CLIPS, { walk: 'walk_ual', run: 'run_ual_sprint', jump: 'jump_ual' });
+  const bones = ['thigh_L', 'thigh_R', 'shin_L', 'shin_R'].map((name) => scene.getObjectByName(name)!);
+  const feet = ['foot_L', 'foot_R'].map((name) => scene.getObjectByName(name)!);
+  pose(scene);
+  const hinge = (bone: Object3D) => new Vector3(1, 0, 0).applyQuaternion(bone.getWorldQuaternion(new Quaternion()));
+  const along = (bone: Object3D) => new Vector3(0, 1, 0).applyQuaternion(bone.getWorldQuaternion(new Quaternion())).y;
+  const restHinge = bones.map(hinge);
+  const restAlong = feet.map(along);
+  const mixer = new AnimationMixer(scene);
+  for (const clip of clips) {
+    const entry = manifest.clips.find((item: { name: string }) => item.name === clip.name);
+    const alternative = CLIP_ALTERNATIVES[clip.name];
+    const gait = alternative?.gait ?? 'throw';
+    const cycle = gait === 'walk' || gait === 'run';
+    assert.ok(clip.name.startsWith(gait) && entry.source.includes('CC0') && entry.loop === cycle, clip.name);
+    if (cycle) assert.ok(Math.abs(entry.speed - alternative.speed!) < 1e-9, `${clip.name}: speed`);
+    if (gait === 'jump') {
+      assert.deepEqual({ duration: entry.duration, air: entry.air, distance: entry.distance }, alternative.jump, `${clip.name}: jump timing`);
+      assert.ok(entry.air[0] > 0.05 && entry.air[1] < 0.6 && entry.air[1] - entry.air[0] > 0.15, `${clip.name}: air ${entry.air}`);
+    }
+    assert.ok(Math.abs(entry.duration - clip.duration) < 1e-3, `${clip.name}: duration`);
+    mixer.stopAllAction();
+    const action = mixer.clipAction(clip).reset().setLoop(LoopOnce, 1).play();
+    action.clampWhenFinished = true;
+    const sampleHand = (time: number) => { mixer.setTime(time); pose(scene); return scene.getObjectByName('hand_L')!.getWorldPosition(new Vector3()); };
+    // Loops close their cycle; one-shot clips start and end on the idle frame.
+    assert.ok(sampleHand(0).distanceTo(sampleHand(clip.duration)) < 0.005, `${clip.name}: seam`);
+    action.reset().play(); // a finished one-shot action ignores later setTime calls
+    const stride: number[] = [];
+    for (let i = 0; i < 24; i++) {
+      mixer.setTime(clip.duration * i / 24);
+      pose(scene);
+      const bounds = new Box3().setFromObject(scene, true);
+      const size = bounds.getSize(new Vector3());
+      assert.ok(bounds.min.y > -0.025, `${clip.name} frame ${i}: floor ${bounds.min.y}`);
+      assert.ok(size.x < (cycle ? 1.6 : 1.9) && size.y > (cycle ? 2.3 : 1.9) && size.y < (cycle ? 2.8 : 3.1), `${clip.name} frame ${i}: arms lowered, intact ${size.toArray()}`);
+      for (const side of cycle ? ['L', 'R'] : []) {
+        const hand = scene.getObjectByName(`hand_${side}`)!.getWorldPosition(new Vector3()).y;
+        // The forward swing of the jog brings the wrist about 1 cm higher than the procedural clips allow.
+        assert.ok(hand < 1.5, `${clip.name} frame ${i}: hand ${side} height ${hand}`);
+      }
+      const rootBone = scene.getObjectByName('root')!.getWorldPosition(new Vector3());
+      assert.ok(Math.abs(rootBone.x) < 0.0001 && Math.abs(rootBone.z) < 0.0001, `${clip.name}: in place`);
+      // The throwing lunge splays the legs sideways, tilting the hinge more than a stride does.
+      bones.forEach((bone, index) => assert.ok(hinge(bone).dot(restHinge[index]) > (cycle ? 0.95 : 0.85), `${clip.name} ${bone.name} frame ${i}: knee hinge twisted`));
+      feet.forEach((foot, index) => assert.ok(along(foot) - restAlong[index] < 0.02, `${clip.name} ${foot.name} frame ${i}: toe tilts up`));
+      stride.push(feet[0].getWorldPosition(new Vector3()).z);
+    }
+    if (cycle) assert.ok(Math.max(...stride) - Math.min(...stride) > 0.4, `${clip.name}: stride ${Math.max(...stride) - Math.min(...stride)}`);
+  }
+  mixer.stopAllAction();
+  mixer.uncacheRoot(scene);
+});

@@ -41,6 +41,9 @@ async function walkTo(page: Page, target: { x: number; z: number }, until?: () =
   }
   await hold([]);
   await expect(host(page)).toHaveAttribute('data-locomotion', 'idle');
+  await expect(host(page)).toHaveAttribute('data-run-clip', 'run_ual_sprint');
+  await expect(host(page)).toHaveAttribute('data-walk-clip', 'walk_ual');
+  await expect(host(page)).toHaveAttribute('data-jump-clip', 'jump_ual');
 }
 
 const drag = async (page: Page) => {
@@ -65,6 +68,14 @@ test('the root shows only the room with V4, neutral light, a fixed following cam
     if (url.pathname.endsWith('.glb')) models.push(url.pathname.split('/').at(-1)!);
   });
   await ready(page);
+  // The room page ignores the system setting: reduced motion starts off and its own switch turns it on (stored).
+  const motion = page.getByRole('button', { name: 'Reducido' });
+  await expect(motion).toHaveAttribute('aria-pressed', 'false');
+  await expect(host(page)).toHaveAttribute('data-reduced-motion', 'false');
+  await motion.click();
+  await expect(motion).toHaveAttribute('aria-pressed', 'true');
+  await expect(host(page)).toHaveAttribute('data-reduced-motion', 'true');
+  await expect(page.locator('html')).toHaveAttribute('data-reduced-motion', 'true');
   assert.deepEqual(models.sort(), ['developer-v4-interactions.glb', 'laptop.glb', 'outside.glb', 'room.glb']);
   await expect(host(page)).toHaveAttribute('data-letters', '0');
   await expect(page.locator('.sidebar, .version-selector, #animation-controls')).toHaveCount(0);
@@ -103,7 +114,7 @@ test('the root shows only the room with V4, neutral light, a fixed following cam
   assert.deepEqual(errors, []);
 });
 
-test('Space hops forward, the character knocks over the name letters and steps down to the outside ground', async (t) => {
+test('Space hops forward, F throws in place, the character knocks over the name letters and steps down to the outside ground', async (t) => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   t.after(() => page.close());
   const errors: string[] = [];
@@ -117,6 +128,15 @@ test('Space hops forward, the character knocks over the name letters and steps d
   const landed = await position(page);
   const hop = Math.hypot(landed[0] - start[0], landed[1] - start[1]);
   assert.ok(hop > 0.3 && hop < 0.7, `a short hop forward: ${hop}`);
+  // F plays the throw where the character stands; held movement keys wait until it ends.
+  await page.keyboard.press('KeyF');
+  await expect(host(page)).toHaveAttribute('data-locomotion', 'throw');
+  await page.keyboard.down('KeyW');
+  await page.waitForTimeout(500);
+  assert.deepEqual(await position(page), landed, 'no movement while throwing');
+  await expect(host(page)).toHaveAttribute('data-locomotion', 'walk', { timeout: 3000 });
+  await page.keyboard.up('KeyW');
+  await expect(host(page)).toHaveAttribute('data-locomotion', 'idle', { timeout: 3000 });
   // Out of the open front and through the name (between R and A).
   await walkTo(page, { x: 0.5, z: 3.6 });
   await walkTo(page, { x: -3.7, z: 6.2 });

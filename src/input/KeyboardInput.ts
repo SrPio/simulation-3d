@@ -1,7 +1,7 @@
 import type { MoveIntent } from '../character/CharacterController';
 
-export type PressAction = 'interact' | 'laptop' | 'jump' | 'open';
-const PRESSES: Record<string, PressAction> = { KeyE: 'interact', KeyL: 'laptop', Space: 'jump', Enter: 'open', NumpadEnter: 'open' };
+export type PressAction = 'interact' | 'laptop' | 'jump' | 'open' | 'throw';
+const PRESSES: Record<string, PressAction> = { KeyE: 'interact', KeyL: 'laptop', Space: 'jump', Enter: 'open', NumpadEnter: 'open', KeyF: 'throw' };
 
 const BINDINGS: Record<string, 'forward' | 'back' | 'left' | 'right'> = {
   KeyW: 'forward', ArrowUp: 'forward', KeyS: 'back', ArrowDown: 'back',
@@ -16,7 +16,7 @@ function ownsKeyboard(target: EventTarget | null): boolean {
 }
 
 /**
- * WASD / arrows for movement, Shift toggles running on and off, Space to jump, E and L for seats and the laptop, Enter to open a sign's link. Keys are released when the window loses focus or the
+ * WASD / arrows for movement, Shift toggles running on and off, Space to jump, F to throw, E and L for seats and the laptop, Enter to open a sign's link. Keys are released when the window loses focus or the
  * page is hidden, so a key held while switching away never keeps the character walking.
  */
 export class KeyboardInput {
@@ -26,7 +26,7 @@ export class KeyboardInput {
   enabled = true;
   /** Called when Shift switches running on or off. */
   onRunChange?: (running: boolean) => void;
-  /** One call per physical press of E (sit/stand), L (laptop), Space (jump) or Enter (open); key repeat is ignored. */
+  /** One call per physical press of E (sit/stand), L (laptop), Space (jump), F (throw) or Enter (open); key repeat is ignored. */
   onPress?: (action: PressAction) => void;
 
   constructor(target: Window, signal: AbortSignal) {

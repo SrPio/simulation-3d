@@ -31,15 +31,20 @@ app.innerHTML = `
         <button type="button" class="tool-toggle" id="camera-free" aria-pressed="false" aria-describedby="camera-copy"><span class="toggle-track" aria-hidden="true"></span>Libre</button>
         <span id="camera-copy" class="sr-only">Desactivada: vista isométrica fija que sigue al personaje. Activada: arrastra para girar y usa la rueda para acercar.</span>
       </div>
+      <div class="tool-group" role="group" aria-labelledby="motion-label">
+        <span class="tool-label" id="motion-label">Movimiento</span>
+        <button type="button" class="tool-toggle" id="reduced-motion" aria-pressed="false" aria-describedby="motion-copy"><span class="toggle-track" aria-hidden="true"></span>Reducido</button>
+        <span id="motion-copy" class="sr-only">Activado: cámara sin inercia, zonas de los carteles y pantalla del portátil quietas, sin transiciones de la interfaz. Las animaciones del personaje se mantienen.</span>
+      </div>
     </nav>
     <section class="room-hud" aria-label="Controles del personaje">
-      <p id="hud-hint" role="status" aria-live="polite">W A S D o flechas para caminar · Shift: correr desactivado · Espacio para saltar</p>
+      <p id="hud-hint" role="status" aria-live="polite">W A S D o flechas para caminar · Shift: correr desactivado · Espacio para saltar · F para lanzar</p>
       <a id="sign-link" class="sign-link" href="#" target="_blank" rel="noopener noreferrer" hidden></a>
       <div class="hud-actions">
         <button type="button" id="hud-help" aria-expanded="false" aria-controls="hud-help-text">Ayuda</button>
         <button type="button" id="hud-reset">Restablecer posición</button>
       </div>
-      <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Shift: activar o desactivar correr. Espacio: saltar hacia adelante. Cerca de la silla o la cama, E: sentarse y levantarse. Sentado, L: abrir o cerrar el portátil. Sal por los lados abiertos de la habitación: entra en la zona marcada frente a un cartel y pulsa Enter (o haz clic en el cartel) para abrir su enlace. Empuja las letras del nombre para tirarlas.</p>
+      <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Shift: activar o desactivar correr. Espacio: saltar hacia adelante. F: lanzar. Cerca de la silla o la cama, E: sentarse y levantarse. Sentado, L: abrir o cerrar el portátil. Sal por los lados abiertos de la habitación: entra en la zona marcada frente a un cartel y pulsa Enter (o haz clic en el cartel) para abrir su enlace. Empuja las letras del nombre para tirarlas.</p>
     </section>
     <div class="room-overlay" id="viewer-overlay">
       <div class="room-overlay-card"><span class="room-ring" id="loading-ring" aria-hidden="true"></span><h1 id="overlay-title">Cargando la habitación</h1><p id="overlay-detail">Preparando el personaje, la habitación y el exterior.</p><button type="button" class="room-retry" id="retry" hidden>Volver a intentar</button></div>
@@ -67,14 +72,14 @@ const helpText = element<HTMLParagraphElement>('#hud-help-text');
 const reset = element<HTMLButtonElement>('#hud-reset');
 const signLink = element<HTMLAnchorElement>('#sign-link');
 const cameraFree = element<HTMLButtonElement>('#camera-free');
+const reducedMotion = element<HTMLButtonElement>('#reduced-motion');
 const qualityButtons = Array.from(app.querySelectorAll<HTMLButtonElement>('[data-quality]'));
 const lightButtons = Array.from(app.querySelectorAll<HTMLButtonElement>('[data-light]'));
 const storage = (() => { try { return window.localStorage; } catch { return undefined; } })();
 // Quality and reduced motion are shared with the studio; light and camera start from their defaults on every visit.
 const preferences = readPreferences(storage);
-const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 const listeners = new AbortController();
-const readyHint = (running: boolean) => `W A S D o flechas para caminar · Shift: correr ${running ? 'activado' : 'desactivado'} · Espacio para saltar`;
+const readyHint = (running: boolean) => `W A S D o flechas para caminar · Shift: correr ${running ? 'activado' : 'desactivado'} · Espacio para saltar · F para lanzar`;
 let running = false;
 let movementState: MovementState | null = null;
 let movementText: string | undefined;
@@ -84,11 +89,13 @@ let viewer: CharacterViewer | undefined;
 let generation = 0;
 let disposed = false;
 
-const motionReduced = () => preferences.reducedMotion ?? motionQuery.matches;
+// Off until switched on here or in the studio (the room page does not follow the system setting).
+const motionReduced = () => preferences.reducedMotion ?? false;
 
 function applyPreferences(): void {
   for (const button of qualityButtons) button.setAttribute('aria-pressed', String(button.dataset.quality === preferences.quality));
   document.documentElement.dataset.reducedMotion = String(motionReduced());
+  reducedMotion.setAttribute('aria-pressed', String(motionReduced()));
 }
 
 function updateStatus(state: ViewerStatus): void {
@@ -166,8 +173,9 @@ cameraFree.addEventListener('click', () => {
   cameraFree.setAttribute('aria-pressed', String(camera === 'free'));
   viewer?.setCameraMode(camera);
 }, { signal: listeners.signal });
-motionQuery.addEventListener('change', () => {
-  if (preferences.reducedMotion !== null) return;
+reducedMotion.addEventListener('click', () => {
+  preferences.reducedMotion = !motionReduced();
+  savePreferences(storage, preferences);
   applyPreferences();
   viewer?.setReducedMotion(motionReduced());
 }, { signal: listeners.signal });

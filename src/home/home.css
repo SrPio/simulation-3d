@@ -90,6 +90,11 @@ h1, p { margin: 0; }
 .room-retry { margin-top: 22px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* With four groups the labelled toolbar would cover the status beside the brand; the buttons name themselves. */
+@media (max-width: 1100px) {
+  .tool-label { display: none; }
+}
+
 @media (max-width: 760px) {
   .room-bar { top: 12px; left: 12px; right: 12px; justify-content: space-between; }
   .room-tools { top: 66px; left: 12px; right: 12px; max-width: none; justify-content: flex-start; }

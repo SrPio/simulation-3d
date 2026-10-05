@@ -1,6 +1,7 @@
 import '../styles.css';
 import { defaultModelVersion, isModelVersionId, modelVersions, type ModelVersionId, type SceneId } from '../core/loadAssets';
 import { QUALITY, isQualityId, readPreferences, savePreferences, type QualityId } from '../core/quality.ts';
+import { DEFAULT_GAIT_CLIPS, type Gait } from '../character/CharacterController';
 import { CharacterViewer, type AnimationState, type LightPreset, type MovementState, type RenderStats, type ViewPreset, type ViewerStatus } from '../viewer/CharacterViewer';
 
 const sceneCopy: Record<SceneId, string> = {
@@ -44,6 +45,12 @@ app.innerHTML = `
         <p id="animation-copy" class="animation-copy">Rig y ciclos en el sitio: reposo, caminar y correr. Sin objetos ni gameplay. Sentarse y usar el portátil vendrán después.</p>
         <label for="animation-clip">Clip</label>
         <select id="animation-clip"></select>
+        <label for="walk-clip" hidden>Caminata al moverse en la habitación</label>
+        <select id="walk-clip" hidden></select>
+        <label for="run-clip" hidden>Carrera al moverse en la habitación</label>
+        <select id="run-clip" hidden></select>
+        <label for="jump-clip" hidden>Salto al moverse en la habitación</label>
+        <select id="jump-clip" hidden></select>
         <button type="button" id="animation-play" aria-label="Pausar animación">Pausar</button>
         <label for="animation-speed">Velocidad de animación</label>
         <select id="animation-speed">
@@ -116,7 +123,7 @@ app.innerHTML = `
           <button type="button" id="hud-help" aria-expanded="false" aria-controls="hud-help-text">Ayuda</button>
           <button type="button" id="hud-reset">Restablecer posición</button>
         </div>
-        <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Mantén Shift: correr. Espacio: saltar. Cerca de la silla (por cualquiera de sus lados) o la cama, E: sentarse y levantarse. Sentado, L: abrir o cerrar el portátil. Sal por los lados abiertos: en la zona marcada frente a cada cartel, Enter (o un clic en el cartel) abre el portafolio, GitHub o LinkedIn. Empuja las letras del nombre para tirarlas. Arrastra para girar la cámara: el movimiento sigue la vista. Las teclas no actúan mientras usas un desplegable o un control deslizante.</p>
+        <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Mantén Shift: correr. Espacio: saltar. F: lanzar. Cerca de la silla (por cualquiera de sus lados) o la cama, E: sentarse y levantarse. Sentado, L: abrir o cerrar el portátil. Sal por los lados abiertos: en la zona marcada frente a cada cartel, Enter (o un clic en el cartel) abre el portafolio, GitHub o LinkedIn. Empuja las letras del nombre para tirarlas. Arrastra para girar la cámara: el movimiento sigue la vista. Las teclas no actúan mientras usas un desplegable o un control deslizante.</p>
       </section>
       <div class="view-caption"><span class="caption-line" aria-hidden="true"></span><span id="view-label">Vista tres cuartos</span><span class="orbit-label">ÓRBITA 360°</span></div>
       <footer class="viewport-footer"><p><span class="interaction-icon" aria-hidden="true">↔</span> Arrastrar para girar <span class="hint-divider">/</span> Scroll para zoom</p><p id="model-stats" aria-label="Estadísticas del modelo">— mallas <span aria-hidden="true">·</span> — triángulos</p></footer>
@@ -142,6 +149,9 @@ const cameraControls = element<HTMLFieldSetElement>('#camera-controls');
 const lightControls = element<HTMLFieldSetElement>('#light-controls');
 const animationControls = element<HTMLFieldSetElement>('#animation-controls');
 const animationClip = element<HTMLSelectElement>('#animation-clip');
+const gaitSelects = (['walk', 'run', 'jump'] as const).map((gait) => ({
+  gait, select: element<HTMLSelectElement>(`#${gait}-clip`), label: element<HTMLLabelElement>(`label[for="${gait}-clip"]`),
+}));
 const animationPlay = element<HTMLButtonElement>('#animation-play');
 const animationSpeed = element<HTMLSelectElement>('#animation-speed');
 const animationTimeline = element<HTMLInputElement>('#animation-timeline');
@@ -156,7 +166,7 @@ let running = false;
 let movementState: MovementState | null = null;
 let movementText: string | undefined;
 const movementHints: Record<MovementState, string> = {
-  get ready() { return `W A S D o flechas para caminar · Shift: correr ${running ? 'activado' : 'desactivado'} · Espacio para saltar`; },
+  get ready() { return `W A S D o flechas para caminar · Shift: correr ${running ? 'activado' : 'desactivado'} · Espacio para saltar · F para lanzar`; },
   unavailable: 'Elige V1 Animada o V4 Animada para moverte por la habitación.',
   seated: 'Está sentado: elige Reposo en Animación para volver a caminar.',
   interacting: 'E: sentarse o levantarse · L: portátil',
@@ -215,6 +225,13 @@ let selectedScene: SceneId = 'studio';
 let selectedView: ViewPreset = 'three-quarter';
 let selectedLight: LightPreset = 'neutral';
 let animationState: AnimationState | null = null;
+const selectedGait: Record<Gait, string> = { ...DEFAULT_GAIT_CLIPS };
+const clipLabels: Record<string, string> = {
+  idle: 'Reposo', walk: 'Caminar', walk_ual: 'Caminar · UAL', run: 'Correr', run_ual_jog: 'Correr · trote UAL', run_ual_sprint: 'Correr · sprint UAL', jump: 'Saltar', jump_ual: 'Saltar · UAL', throw_ual: 'Lanzar · UAL 2',
+  sit_down_chair: 'Sentarse · silla', seated_chair: 'Sentado · silla', stand_up_chair: 'Levantarse · silla', typing_chair: 'Escribir · silla',
+  sit_down_bed: 'Sentarse · cama', seated_bed: 'Sentado · cama', stand_up_bed: 'Levantarse · cama', typing_bed: 'Escribir · cama',
+};
+const clipLabel = (clip: string) => (clipLabels[clip.toLowerCase()] ? `${clipLabels[clip.toLowerCase()]} (${clip})` : clip);
 
 function updateAnimation(state: AnimationState | null): void {
   animationState = state;
@@ -222,6 +239,10 @@ function updateAnimation(state: AnimationState | null): void {
   animationControls.disabled = !state || status.dataset.state !== 'ready';
   if (!state) {
     animationClip.replaceChildren();
+    for (const { select, label } of gaitSelects) {
+      select.replaceChildren();
+      select.hidden = label.hidden = true;
+    }
     animationTimeline.value = '0';
     animationSpeed.value = '1';
     animationControls.dataset.playing = 'false';
@@ -229,16 +250,18 @@ function updateAnimation(state: AnimationState | null): void {
     animationTimeline.setAttribute('aria-valuetext', animationTime.value);
     return;
   }
-  const order = ['idle', 'walk', 'run', 'jump', ...['chair', 'bed'].flatMap((seat) => ['sit_down', 'seated', 'typing', 'stand_up'].map((action) => `${action}_${seat}`))];
+  const order = ['idle', 'walk', 'walk_ual', 'run', 'run_ual_jog', 'run_ual_sprint', 'jump', 'jump_ual', 'throw_ual', ...['chair', 'bed'].flatMap((seat) => ['sit_down', 'seated', 'typing', 'stand_up'].map((action) => `${action}_${seat}`))];
   const rank = (clip: string) => (order.includes(clip) ? order.indexOf(clip) : order.length);
   const clips = [...state.clips].sort((a, b) => rank(a) - rank(b));
   if (clips.length !== animationClip.options.length || clips.some((clip, index) => animationClip.options[index]?.value !== clip)) {
-    const labels: Record<string, string> = {
-      idle: 'Reposo', walk: 'Caminar', run: 'Correr', jump: 'Saltar',
-      sit_down_chair: 'Sentarse · silla', seated_chair: 'Sentado · silla', stand_up_chair: 'Levantarse · silla', typing_chair: 'Escribir · silla',
-      sit_down_bed: 'Sentarse · cama', seated_bed: 'Sentado · cama', stand_up_bed: 'Levantarse · cama', typing_bed: 'Escribir · cama',
-    };
-    animationClip.replaceChildren(...clips.map((clip) => new Option(labels[clip.toLowerCase()] ? `${labels[clip.toLowerCase()]} (${clip})` : clip, clip)));
+    animationClip.replaceChildren(...clips.map((clip) => new Option(clipLabel(clip), clip)));
+    // Alternative walk/run clips (V4 Animada): pick which ones play while moving with the keyboard.
+    for (const { gait, select, label } of gaitSelects) {
+      const options = clips.filter((clip) => clip === gait || clip.startsWith(`${gait}_`));
+      select.replaceChildren(...options.map((clip) => new Option(clipLabel(clip), clip)));
+      select.hidden = label.hidden = options.length < 2;
+      select.value = options.includes(selectedGait[gait]) ? selectedGait[gait] : gait;
+    }
   }
   animationClip.value = state.clip;
   animationPlay.textContent = state.playing ? 'Pausar' : 'Reproducir';
@@ -315,6 +338,7 @@ function mount(): void {
     modelId: selectedModel, view: selectedView, light: selectedLight, wireframe: wireframe.checked, scene: selectedScene,
     quality: preferences.quality, reducedMotion: motionReduced(),
   });
+  for (const gait of ['walk', 'run', 'jump'] as const) viewer.setGaitClip(gait, selectedGait[gait]);
 }
 
 for (const button of viewButtons) {
@@ -350,6 +374,12 @@ for (const button of sceneButtons) {
   }, { signal: listeners.signal });
 }
 animationClip.addEventListener('change', () => viewer?.chooseClip(animationClip.value), { signal: listeners.signal });
+for (const { gait, select } of gaitSelects) {
+  select.addEventListener('change', () => {
+    selectedGait[gait] = select.value;
+    viewer?.setGaitClip(gait, select.value);
+  }, { signal: listeners.signal });
+}
 animationPlay.addEventListener('click', () => { if (animationState) viewer?.setPlaying(!animationState.playing); }, { signal: listeners.signal });
 animationSpeed.addEventListener('change', () => viewer?.setAnimationSpeed(Number(animationSpeed.value)), { signal: listeners.signal });
 animationTimeline.addEventListener('input', () => viewer?.scrub(Number(animationTimeline.value)), { signal: listeners.signal });

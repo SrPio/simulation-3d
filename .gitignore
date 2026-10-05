@@ -16,3 +16,6 @@ playwright-report/
 # Private reference images and the review sheets built from them stay local.
 assets/reference/
 assets/renders/**/compare-*.png
+
+# Downloaded third-party source packs (see the scripts that read them for the URLs).
+assets/external/

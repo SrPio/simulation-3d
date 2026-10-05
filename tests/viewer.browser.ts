@@ -397,9 +397,26 @@ test('in the room, chair and bed clips move V4 to their seat and locomotion retu
   await page.getByRole('button', { name: 'V4 Animada', exact: true }).click();
   await expectModel(page, 'v4rig');
   const clip = page.getByLabel('Clip', { exact: true });
-  await expect(page.locator('#animation-clip option')).toHaveCount(12);
-  await expect(page.locator('#animation-clip option').nth(3)).toHaveText('Saltar (jump)');
-  await expect(page.locator('#animation-clip option').nth(4)).toHaveText('Sentarse · silla (sit_down_chair)');
+  await expect(page.locator('#animation-clip option')).toHaveCount(17);
+  await expect(page.locator('#animation-clip option').nth(2)).toHaveText('Caminar · UAL (walk_ual)');
+  await expect(page.locator('#animation-clip option').nth(4)).toHaveText('Correr · trote UAL (run_ual_jog)');
+  await expect(page.locator('#animation-clip option').nth(6)).toHaveText('Saltar (jump)');
+  await expect(page.locator('#animation-clip option').nth(7)).toHaveText('Saltar · UAL (jump_ual)');
+  await expect(page.locator('#animation-clip option').nth(8)).toHaveText('Lanzar · UAL 2 (throw_ual)');
+  await expect(page.locator('#animation-clip option').nth(9)).toHaveText('Sentarse · silla (sit_down_chair)');
+  // The UAL walk, sprint and jump are the defaults; each select can switch back to the procedural clip.
+  const host = page.locator('#canvas-host');
+  for (const [gait, label, count, value] of [['walk', 'Caminata', 2, 'walk_ual'], ['run', 'Carrera', 3, 'run_ual_sprint'], ['jump', 'Salto', 2, 'jump_ual']] as const) {
+    const select = page.getByLabel(`${label} al moverse en la habitación`);
+    await expect(select.locator('option')).toHaveCount(count);
+    await expect(select).toHaveValue(value);
+    await expect(host).toHaveAttribute(`data-${gait}-clip`, value);
+    const other = value === gait ? `${gait}_ual` : gait;
+    await select.selectOption(other);
+    await expect(host).toHaveAttribute(`data-${gait}-clip`, other);
+    await select.selectOption(value);
+    await expect(host).toHaveAttribute(`data-${gait}-clip`, value);
+  }
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-seat', 'spawn');
   const frames: Record<string, Buffer> = {};
   for (const [name, seat] of [['typing_chair', 'chair'], ['typing_bed', 'bed'], ['walk', 'spawn']] as const) {
@@ -439,7 +456,7 @@ test('in the room WASD walks, Shift switches running on and off, releasing stops
   const spawn = await position(page);
   await page.keyboard.down('KeyW');
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-locomotion', 'walk');
-  await expect(page.locator('#animation-clip')).toHaveValue('walk');
+  await expect(page.locator('#animation-clip')).toHaveValue('walk_ual');
   await page.waitForTimeout(500);
   const walked = await position(page);
   assert.ok(Math.hypot(walked[0] - spawn[0], walked[1] - spawn[1]) > 0.1, `W moves the character: ${walked} from ${spawn}`);
@@ -448,7 +465,7 @@ test('in the room WASD walks, Shift switches running on and off, releasing stops
   await page.keyboard.press('Shift');
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-run', 'true');
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-locomotion', 'run');
-  await expect(page.locator('#animation-clip')).toHaveValue('run');
+  await expect(page.locator('#animation-clip')).toHaveValue('run_ual_sprint');
   await page.waitForTimeout(300);
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-locomotion', 'run');
   // A second press goes back to walking.
@@ -466,7 +483,7 @@ test('in the room WASD walks, Shift switches running on and off, releasing stops
   await page.keyboard.up('ArrowLeft');
   assert.notDeepEqual(await position(page), rested, 'arrow keys move too');
   await walkTo(page, { x: 2.2, z: 2.2 });
-  await expect(page.locator('#hud-hint')).toHaveText('W A S D o flechas para caminar · Shift: correr desactivado · Espacio para saltar');
+  await expect(page.locator('#hud-hint')).toHaveText('W A S D o flechas para caminar · Shift: correr desactivado · Espacio para saltar · F para lanzar');
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-prompt', 'none');
   await page.getByRole('button', { name: 'Restablecer posición', exact: true }).click();
   assert.deepEqual(await position(page), spawn);

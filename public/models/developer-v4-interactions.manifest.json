@@ -44,7 +44,7 @@
     },
     {
       "name": "sit_down_chair",
-      "duration": 0.9333333333333333,
+      "duration": 0.7333333333333333,
       "loop": false,
       "seat": "chair",
       "events": {
@@ -60,7 +60,7 @@
     },
     {
       "name": "stand_up_chair",
-      "duration": 0.9333333333333333,
+      "duration": 0.7333333333333333,
       "loop": false,
       "seat": "chair",
       "events": {
@@ -76,7 +76,7 @@
     },
     {
       "name": "sit_down_bed",
-      "duration": 0.9333333333333333,
+      "duration": 0.7333333333333333,
       "loop": false,
       "seat": "bed",
       "events": {
@@ -92,7 +92,7 @@
     },
     {
       "name": "stand_up_bed",
-      "duration": 0.9333333333333333,
+      "duration": 0.7333333333333333,
       "loop": false,
       "seat": "bed",
       "events": {
@@ -105,6 +105,45 @@
       "loop": true,
       "seat": "bed",
       "events": {}
+    },
+    {
+      "name": "walk_ual",
+      "duration": 1.3333333333333333,
+      "loop": true,
+      "source": "Quaternius Universal Animation Library \u00b7 Walk_Loop (CC0)",
+      "speed": 0.8273764095805362
+    },
+    {
+      "name": "run_ual_jog",
+      "duration": 0.9333333333333333,
+      "loop": true,
+      "source": "Quaternius Universal Animation Library \u00b7 Jog_Fwd_Loop (CC0)",
+      "speed": 5.2108531055844995
+    },
+    {
+      "name": "run_ual_sprint",
+      "duration": 0.6666666666666666,
+      "loop": true,
+      "source": "Quaternius Universal Animation Library \u00b7 Sprint_Loop (CC0)",
+      "speed": 2.9406575122562426
+    },
+    {
+      "name": "jump_ual",
+      "duration": 1.3333333333333333,
+      "loop": false,
+      "source": "Quaternius Universal Animation Library \u00b7 Jump_Start + Jump_Land (CC0)",
+      "speed": 0,
+      "distance": 0.45,
+      "air": [
+        0.15,
+        0.375
+      ]
+    },
+    {
+      "name": "throw_ual",
+      "duration": 1.8,
+      "loop": false,
+      "source": "Quaternius Universal Animation Library 2 \u00b7 OverhandThrow (CC0)"
     }
   ]
 }

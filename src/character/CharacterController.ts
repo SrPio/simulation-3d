@@ -3,12 +3,29 @@ import { sweep, type Box2, type Floor, type Point2 } from '../world/collisions.t
 /** Ground speeds (m/s) the in-place walk/run clips were authored for (see the rig manifest). */
 export const WALK_CLIP_SPEED = 0.8035714285714285;
 export const RUN_CLIP_SPEED = 2.131578947368421;
+export type Gait = 'walk' | 'run' | 'jump';
+/** An in-place jump clip (rig manifest): its length, the fraction with the feet off the floor and the hop length. */
+export type JumpSpec = { duration: number; air: [number, number]; distance: number };
+/**
+ * Alternative locomotion clips retargeted from Quaternius' Universal Animation Libraries (CC0): walk/run
+ * with their authored ground speeds, jumps with their timing (see the interactions manifest).
+ */
+export const CLIP_ALTERNATIVES: Readonly<Record<string, { gait: Gait; speed?: number; jump?: JumpSpec }>> = {
+  walk_ual: { gait: 'walk', speed: 0.8273764095805362 },
+  run_ual_jog: { gait: 'run', speed: 5.2108531055844995 },
+  run_ual_sprint: { gait: 'run', speed: 2.9406575122562426 },
+  jump_ual: { gait: 'jump', jump: { duration: 1.3333333333333333, air: [0.15, 0.375], distance: 0.45 } },
+};
+/** Clips that play while walking, running and jumping when the model has them (otherwise the procedural ones). */
+export const DEFAULT_GAIT_CLIPS: Readonly<Record<Gait, string>> = { walk: 'walk_ual', run: 'run_ual_sprint', jump: 'jump_ual' };
+/** One-shot clip played in place with F (nothing is thrown yet). */
+export const THROW_CLIP = 'throw_ual';
 /** The character moves this many times faster than the clips were authored for; the clips play faster to keep the feet planted. */
 export const SPEED_SCALE = 2;
 export const WALK_SPEED = WALK_CLIP_SPEED * SPEED_SCALE;
 export const RUN_SPEED = RUN_CLIP_SPEED * SPEED_SCALE;
 /** The in-place jump clip (rig manifest): its length, the fraction with the feet off the floor and the hop length. */
-export const JUMP = { duration: 0.8, air: [0.26, 0.7] as [number, number], distance: 0.45 };
+export const JUMP: JumpSpec = { duration: 0.8, air: [0.26, 0.7], distance: 0.45 };
 /** Peak height of the feet during the jump, for what the character touches in the air (the clip draws the hop itself). */
 export const JUMP_HEIGHT = 0.4;
 export const CHARACTER_RADIUS = 0.3;
@@ -25,6 +42,11 @@ export class CharacterController {
   position: Point2;
   yaw: number;
   speed = 0;
+  /** Authored ground speeds of the clips that play while walking and running (procedural or an alternative). */
+  walkClipSpeed = WALK_CLIP_SPEED;
+  runClipSpeed = RUN_CLIP_SPEED;
+  /** Timing of the jump clip in use (procedural or an alternative); only changes between jumps. */
+  jumpSpec: JumpSpec = JUMP;
   readonly radius: number;
   private readonly spawn: { position: Point2; yaw: number };
   private readonly boxes: readonly Box2[];
@@ -57,9 +79,10 @@ export class CharacterController {
   jump(): boolean {
     if (this.jumping) return false;
     this.jumpTime = 0;
-    // The hop covers JUMP.distance while airborne; a run carries some of its extra speed into it.
-    const air = (JUMP.air[1] - JUMP.air[0]) * JUMP.duration;
-    this.jumpSpeed = Math.max(JUMP.distance / air, this.speed * 0.8);
+    // The hop covers its distance while airborne; a run carries some of its extra speed into it.
+    const jump = this.jumpSpec;
+    const air = (jump.air[1] - jump.air[0]) * jump.duration;
+    this.jumpSpeed = Math.max(jump.distance / air, this.speed * 0.8);
     this.speed = 0;
     return true;
   }
@@ -101,28 +124,31 @@ export class CharacterController {
   /** Crouch and landing stay in place; the forward motion happens while the feet are off the floor. */
   private hop(step: number): Locomotion {
     const start = this.jumpTime!;
-    const end = Math.min(start + step, JUMP.duration);
-    const [takeOff, landing] = JUMP.air.map((fraction) => fraction * JUMP.duration);
+    const { duration, air } = this.jumpSpec;
+    const end = Math.min(start + step, duration);
+    const [takeOff, landing] = air.map((fraction) => fraction * duration);
     const airborne = Math.max(0, Math.min(end, landing) - Math.max(start, takeOff));
     if (airborne > 0) {
       const travel = this.jumpSpeed * airborne;
       this.position = sweep(this.position, { x: Math.sin(this.yaw) * travel, z: Math.cos(this.yaw) * travel }, this.radius, this.boxes, this.floor);
     }
-    this.jumpTime = end >= JUMP.duration ? undefined : end;
+    this.jumpTime = end >= duration ? undefined : end;
     return this.jumping ? 'jump' : 'idle';
   }
 
   /** Whether the feet are off the floor right now (the character cannot enter sign zones mid-air). */
   get airborne(): boolean {
     if (this.jumpTime === undefined) return false;
-    const fraction = this.jumpTime / JUMP.duration;
-    return fraction > JUMP.air[0] && fraction < JUMP.air[1];
+    const { duration, air } = this.jumpSpec;
+    const fraction = this.jumpTime / duration;
+    return fraction > air[0] && fraction < air[1];
   }
 
   /** Height of the feet above the floor right now: an arc while airborne, 0 otherwise. */
   get lift(): number {
     if (!this.airborne) return 0;
-    const fraction = (this.jumpTime! / JUMP.duration - JUMP.air[0]) / (JUMP.air[1] - JUMP.air[0]);
+    const { duration, air } = this.jumpSpec;
+    const fraction = (this.jumpTime! / duration - air[0]) / (air[1] - air[0]);
     return JUMP_HEIGHT * Math.sin(Math.PI * fraction);
   }
 
@@ -134,7 +160,7 @@ export class CharacterController {
 
   /** Playback rate that keeps the clip's feet matched to the actual ground speed. */
   clipRate(): number {
-    const clipSpeed = this.locomotion() === 'run' ? RUN_CLIP_SPEED : WALK_CLIP_SPEED;
+    const clipSpeed = this.locomotion() === 'run' ? this.runClipSpeed : this.walkClipSpeed;
     return this.jumping || this.speed < 0.05 ? 1 : Math.min(Math.max(this.speed / clipSpeed, 0.5), 1.25 * SPEED_SCALE);
   }
 }
