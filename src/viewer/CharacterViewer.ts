@@ -27,6 +27,7 @@ import { InfiniteFloor } from '../scene/InfiniteFloor.ts';
 import { BlobShadows } from '../scene/BlobShadows.ts';
 import { PieceMeshes } from '../scene/PieceMeshes.ts';
 import { signAt } from '../world/signs.ts';
+import { KEY_SINK, onKey, pressStep, type FloorKey } from '../world/keyPress.ts';
 import { LAPTOP, PropPhysics, type StaticBox, type ThrownLaptop } from '../world/PropPhysics.ts';
 
 export type ViewPreset = 'front' | 'left' | 'right' | 'back' | 'three-quarter';
@@ -95,6 +96,13 @@ const THROWN_SHADOWS = 3;
 const SHRINK_TIME = 0.3;
 /** Head height for the seat bubble's tail, above the character's feet. */
 const BUBBLE_HEIGHT = 2.45;
+/** Feet around the character's centre that press a floor key. */
+const FOOT_RADIUS = 0.15;
+/** Rotation about +Y of a turned object (its local +X on the ground). */
+const yawOf = (quaternion: Quaternion) => {
+  const x = new Vector3(1, 0, 0).applyQuaternion(quaternion);
+  return Math.atan2(-x.z, x.x);
+};
 
 export class CharacterViewer {
   private readonly scene = new Scene();
@@ -129,6 +137,9 @@ export class CharacterViewer {
   private shadows?: BlobShadows;
   private pieces?: PieceMeshes;
   private pieceList: Piece[] = [];
+  /** The arrow keys of the intro: fixed on the floor, they sink while the character stands on them. */
+  private floorKeys: { index: number; name: string; piece: Piece; area: FloorKey; depth: number }[] = [];
+  private pressedKeys = '';
   private floorTexts?: FloorTexts;
   private bubble?: SeatBubble;
   /** Link signs and playground reset zones: the floor zones the character can step into. */
@@ -463,7 +474,16 @@ export class CharacterViewer {
     });
     mergeStaticMeshes(outside);
     this.ground = new InfiniteFloor(data.groundY);
-    this.pieceList = [...data.letters, ...data.props];
+    // Loose pieces first (their order matches the physics bodies), then the floor keys, which stay put and only sink.
+    const fixed = data.props.filter((piece) => piece.group === 'keys');
+    this.pieceList = [...data.letters, ...data.props.filter((piece) => piece.group !== 'keys'), ...fixed];
+    this.floorKeys = fixed.map((piece, i) => ({
+      index: this.pieceList.length - fixed.length + i,
+      name: piece.name.replace(/^Key_/, '').toLowerCase(),
+      piece,
+      area: { center: { x: piece.position.x, z: piece.position.z }, yaw: yawOf(piece.quaternion), halfX: piece.half[0], halfZ: piece.half[2] },
+      depth: 0,
+    }));
     const pieceShadows = 1 + data.signs.length;
     this.shadows = new BlobShadows(pieceShadows + this.pieceList.length + THROWN_SHADOWS, data.groundY);
     for (const [index, sign] of data.signs.entries()) {
@@ -501,6 +521,11 @@ export class CharacterViewer {
       half: [(platform.maxX - platform.minX) / 2, 0.17, (platform.maxZ - platform.minZ) / 2],
       yaw: 0,
     }];
+    // The floor keys are fixed: thrown laptops and rolling pieces bounce off their caps.
+    for (const key of this.floorKeys) {
+      const { position, half } = key.piece;
+      statics.push({ center: { x: position.x, y: position.y, z: position.z }, half, yaw: key.area.yaw });
+    }
     for (const sign of data.signs) {
       if (!sign.board) continue;
       const height = sign.board.bottom + sign.board.height;
@@ -515,7 +540,8 @@ export class CharacterViewer {
       statics.push({ center: { x: center.x, y: center.y, z: center.z }, half: [sx / 2, sz / 2, sy / 2], yaw: 0 });
     });
     try {
-      const physics = await PropPhysics.load(this.pieceList, statics, groundY);
+      const loose = this.pieceList.length - this.floorKeys.length;
+      const physics = await PropPhysics.load(this.pieceList.slice(0, loose), statics, groundY);
       if (this.disposed) return;
       this.physics = physics;
       this.host.dataset.physics = 'ready';
@@ -828,6 +854,7 @@ export class CharacterViewer {
     this.host.dataset.locomotion = 'idle';
     this.physics?.reset();
     this.pieces?.reset();
+    for (const key of this.floorKeys) key.depth = 0;
     this.syncThrown(0);
     this.reportLetters();
   }
@@ -946,6 +973,28 @@ export class CharacterViewer {
       this.shadows.hide(CHARACTER_SHADOW);
     }
     this.shadows.flush();
+  }
+
+  /** Floor keys go down under the character's feet and spring back up when it steps off (not while airborne). */
+  private updateKeys(delta: number): void {
+    if (!this.floorKeys.length || !this.model || !this.pieces) return;
+    const feet = { x: this.model.position.x, z: this.model.position.z };
+    const grounded = !this.controller?.airborne;
+    const pressed: string[] = [];
+    for (const key of this.floorKeys) {
+      const down = grounded && onKey(feet, key.area, FOOT_RADIUS);
+      if (down) pressed.push(key.name);
+      const depth = pressStep(key.depth, down, delta, this.reducedMotion);
+      if (depth === key.depth) continue;
+      key.depth = depth;
+      const { position, quaternion } = key.piece;
+      this.pieces.set(key.index, { position: { x: position.x, y: position.y - KEY_SINK * depth, z: position.z }, quaternion });
+    }
+    const value = pressed.join(',') || 'none';
+    if (value !== this.pressedKeys) {
+      this.pressedKeys = value;
+      this.host.dataset.keys = value;
+    }
   }
 
   /** Toppled name letters and bowling pins (data-letters, data-pins). */
@@ -1338,6 +1387,7 @@ export class CharacterViewer {
       this.syncLaptop(delta);
       this.updateElevation(delta);
       this.updateOutside(delta);
+      this.updateKeys(delta);
       this.checkSign();
     }
     if (this.ready && this.mixer && this.playing) {

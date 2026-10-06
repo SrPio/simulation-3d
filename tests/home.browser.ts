@@ -244,6 +244,13 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
   // Out through the open +X side, past the intro keys to the crossroads; the zones lie in front of the row of signs.
   await walkTo(page, { x: 3.6, z: 0.6 });
   await walkTo(page, { x: 7.0, z: 1.8 });
+  // The intro's arrow keys are fixed on the floor: stepping on one sinks it, stepping off lets it spring back.
+  await expect(host(page)).toHaveAttribute('data-keys', 'none');
+  await walkTo(page, { x: 9.0, z: -0.96 }, async () => (await host(page).getAttribute('data-keys')) === 'down');
+  await expect(host(page)).toHaveAttribute('data-keys', 'down');
+  await page.screenshot({ path: shot('home-key.png') });
+  await walkTo(page, { x: 9.0, z: 1.8 });
+  await expect(host(page)).toHaveAttribute('data-keys', 'none');
   await walkTo(page, { x: 19.5, z: 1.2 });
   for (const [id, link, target, open] of [
     ['portfolio', 'https://andres-jaramillo.is-a.dev/', { x: 24.0, z: -1.5 }, 'click'],
