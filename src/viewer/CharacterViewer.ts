@@ -10,7 +10,7 @@ import { QUALITY, defaultQuality, nextPixelRatio, ratioRange, type QualityId } f
 import { mergeSkinnedMeshes, mergeStaticMeshes } from '../scene/mergeStatic.ts';
 import {
   CHARACTER_RADIUS, CLIP_ALTERNATIVES, CharacterController, DEFAULT_GAIT_CLIPS, JUMP, RUN_CLIP_SPEED, THROW_CLIP, THROW_HAND, THROW_RELEASE, THROW_SPEED,
-  WALK_CLIP_SPEED, type Gait, type Locomotion,
+  WALK_CLIP_SPEED, WALK_SPEED, type Gait, type Locomotion,
 } from '../character/CharacterController';
 import { onLanguage, t } from '../core/i18n.ts';
 import { KeyboardInput, type PressAction } from '../input/KeyboardInput';
@@ -657,7 +657,11 @@ export class CharacterViewer {
     const interaction = this.interaction!;
     interaction.update(delta);
     const request = interaction.clip();
-    if (request && request.name !== this.activeClip && this.actions.has(request.name)) this.selectClip(request.name, request.loop);
+    // The scripted walk to and from a seat uses the keyboard's walk clip and pace.
+    const walking = request?.name === 'walk';
+    const name = walking ? this.gaitClip('walk') : request?.name;
+    if (request && name && name !== this.activeClip && this.actions.has(name)) this.selectClip(name, request.loop);
+    if (walking && this.fadeRemaining <= 0) this.actions.get(this.activeClip)?.setEffectiveTimeScale(WALK_SPEED / this.controller!.walkClipSpeed);
     if (interaction.phase === 'free') {
       // Back on the approach point: hand control back to the keyboard there.
       this.controller!.position = { ...interaction.position };
