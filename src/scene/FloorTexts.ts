@@ -51,8 +51,9 @@ function towards(block: FloorBlock, target: Local): Local {
 
 /**
  * Words and drawings painted flat on the outside ground: the intro sentence around the 3D arrow keys, the
- * crossroads arrows, the controls panel, the playground sign and the bowling lane. One canvas atlas and one
- * mesh (a single draw call) in the sign zones' title colour; switching the language repaints the canvas.
+ * crossroads arrows, the controls panel, the playground sign, the bowling lane and the footprints leaving the room.
+ * One canvas atlas and one mesh (a single draw call) in the sign zones' title colour; switching the language
+ * repaints the canvas.
  */
 export class FloorTexts {
   readonly mesh: Mesh<BufferGeometry, MeshBasicMaterial>;
@@ -214,6 +215,37 @@ export class FloorTexts {
         context.fill();
       }
       scaled(() => text('floor.bowling', 0, (d / 2 - 0.38) * 100, 40, 'center', 700));
+    } else if (block.id === 'footprints') {
+      // Shoe prints walking out of the room's front corner (the block's far-left corner) along a gentle S, left and
+      // right in turn, fading as they get further from the room.
+      const from = { x: -w / 2 + 0.35, z: -d / 2 + 0.35 };
+      const to = { x: w / 2 - 0.3, z: d / 2 - 0.3 };
+      const along = { x: to.x - from.x, z: to.z - from.z };
+      const length = Math.hypot(along.x, along.z);
+      const side = { x: -along.z / length, z: along.x / length };
+      const steps = Math.floor(length / 0.42) + 1;
+      for (let i = 0; i < steps; i++) {
+        const f = i / (steps - 1);
+        const sway = Math.sin(f * Math.PI * 2) * 0.16;
+        const foot = i % 2 === 0 ? -1 : 1;
+        const x = from.x + along.x * f + side.x * (sway + foot * 0.13);
+        const z = from.z + along.z * f + side.z * (sway + foot * 0.13);
+        // Heading: the path direction turned by the slope of the sway.
+        const slope = Math.cos(f * Math.PI * 2) * 0.16 * Math.PI * 2 / length;
+        const heading = Math.atan2(along.z, along.x) + Math.atan(slope) + foot * 0.08;
+        context.save();
+        context.globalAlpha = 1 - 0.6 * f;
+        context.translate(x, z);
+        context.rotate(heading);
+        if (foot > 0) context.scale(1, -1);
+        context.beginPath();
+        context.ellipse(0.06, 0.008, 0.11, 0.068, 0.12, 0, Math.PI * 2);
+        context.fill();
+        context.beginPath();
+        context.ellipse(-0.13, 0, 0.06, 0.055, 0, 0, Math.PI * 2);
+        context.fill();
+        context.restore();
+      }
     }
   }
 

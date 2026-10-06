@@ -20,7 +20,7 @@ the room floor, so the room reads as a raised platform) and uses the walkable `b
   collision shape: `box` [width, height, depth] in three.js axes, `radius` for the ball, or `cylinders`
   [radius, height, centre height, ...] about the piece origin for a pin.
 - `Floor_<Id>`: where the viewer paints on the ground (intro sentence, crossroads arrows, controls,
-  playground sign, bowling lane); extras `floor` and `size` [width, depth] in the anchor's own axes, the
+  playground sign, bowling lane, footprints out of the room's front corner); extras `floor` and `size` [width, depth] in the anchor's own axes, the
   `gap` left for the 3D keys, or the `targets` the crossroads arrows point at (three.js x, z pairs).
 - `Zone_<Id>`: floor zones that put a group of pieces back (`zone` 'reset', `target`, `area`).
 Layout positions are written in three.js ground coordinates (x, z); Blender Y is three.js -Z.
@@ -53,8 +53,8 @@ BOUNDS = [-FAR, 44.0, -30.0, FAR]
 PLATFORM = [-HALF - WALL_T, HALF + 0.1, -HALF - 0.1, HALF + WALL_T]
 BOARD_W, BOARD_H, BOARD_BOTTOM, BOARD_T, BORDER, POST = 2.4, 1.5, 0.6, 0.06, 0.07, 0.08
 AREA, AREA_OFFSET = (2.6, 1.8), 1.55
-# Signs: along the line of the back wall (Y just inside its outer face), past the crossroads on the +X side.
-SIGN_Y, SIGN_FIRST_X, SIGN_SPACING = HALF + 0.15, 24.0, 3.2
+# Signs: a row facing the front past the crossroads on the +X side, 5 m nearer the front than the back wall line.
+SIGN_Y, SIGN_FIRST_X, SIGN_SPACING = HALF + 0.15 - 5.0, 19.0, 3.2
 SIGNS = {
     'Portfolio': {'link': 'https://andres-jaramillo.is-a.dev/', 'label': 'Ver portafolio', 'title': 'PORTAFOLIO', 'slot': 0, 'image': 'portfolio.png'},
     'GitHub': {'link': 'https://github.com/SrPio', 'label': 'Ver GitHub', 'title': 'GITHUB', 'slot': 1, 'image': 'github.png'},
@@ -191,10 +191,12 @@ BLOCK_YAW = 0.0
 INTRO = (9.0, -1.3)            # centre of the arrow keys, in the gap of the intro sentence
 INTRO_SIZE, INTRO_GAP = (12.4, 3.6), 2.4
 KEY_SIZE, KEY_HEIGHT, KEY_PITCH = 0.6, 0.3, 0.68
-CROSSROADS = (19.5, 3.0)
-CONTROLS, CONTROLS_SIZE = (14.0, 10.5), (5.6, 4.8)
-PLAY_SIGN, PLAY_SIGN_SIZE = (24.5, 9.5), (6.4, 1.9)
-PLAYGROUND = (31.0, 16.0)
+CROSSROADS = (9.25, 8.3)
+CONTROLS, CONTROLS_SIZE = (3.75, 15.8), (5.6, 4.8)
+PLAY_SIGN, PLAY_SIGN_SIZE = (14.25, 14.8), (6.4, 1.9)
+PLAYGROUND = (20.75, 21.3)
+# Footprints leaving the room's open front corner towards the camera.
+FOOTPRINTS, FOOTPRINTS_SIZE = (4.45, 4.45), (3.3, 3.3)
 # Bowling (playground axes): the ball near the camera, the pins up the lane in a 4-3-2-1 triangle.
 LANE_X, BALL_Z, HEAD_PIN_Z = -3.6, 3.6, -1.2
 PIN_SPACING, PIN_ROW = 0.56, 0.485
@@ -376,6 +378,8 @@ def build_playground(root):
     room.anchor('Floor_Controls', at(CONTROLS), root, BLOCK_YAW, floor='controls', size=list(CONTROLS_SIZE))
     room.anchor('Floor_Playground', at(PLAY_SIGN), root, BLOCK_YAW, floor='playground', size=list(PLAY_SIGN_SIZE),
                 targets=list(PLAYGROUND))
+
+    room.anchor('Floor_Footprints', at(FOOTPRINTS), root, BLOCK_YAW, floor='footprints', size=list(FOOTPRINTS_SIZE))
 
     play = frame(PLAYGROUND)
     room.anchor('Floor_Bowling', at(play(LANE_X, (BALL_Z + HEAD_PIN_Z) / 2 - 0.4)), root, BLOCK_YAW, floor='bowling',

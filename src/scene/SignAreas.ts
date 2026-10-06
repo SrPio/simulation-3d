@@ -41,7 +41,8 @@ varying vec3 vWorld;
 void main() {
   // The fence rises out of the ground: nothing below it is drawn.
   if (vWorld.y < uGround) discard;
-  float stripe = step(fract((vWorld.x + vWorld.y + vWorld.z - uTime * 0.35) * 2.5), 0.5) * 0.28;
+  // u counts stripes around the perimeter, so every side scrolls the same way round the loop.
+  float stripe = step(fract(vUv.x + vWorld.y * 2.5 - uTime * 0.875), 0.5) * 0.28;
   float band = max(step(1.0 - vUv.y, 0.1), step(vUv.y, 0.1)) * 0.6;
   float alpha = max(stripe, band) * uAlpha;
   if (alpha < 0.01) discard;
@@ -63,9 +64,18 @@ function ringGeometry(halfX: number, halfZ: number, width: number): BufferGeomet
   return geometry;
 }
 
-/** Open box (four walls, no top or bottom) with v going 0 at the bottom to 1 at the top. */
+/** Stripes per metre along the fence. */
+const STRIPE_DENSITY = 2.5;
+
+/**
+ * Open box (four walls, no top or bottom) with v going 0 at the bottom to 1 at the top and u counting
+ * stripes along the perimeter (a whole number of them, so the loop closes without a seam).
+ */
 function fenceGeometry(halfX: number, halfZ: number, height: number): BufferGeometry {
   const corners = [[-halfX, -halfZ], [halfX, -halfZ], [halfX, halfZ], [-halfX, halfZ]];
+  const perimeter = 4 * (halfX + halfZ);
+  const scale = Math.max(1, Math.round(perimeter * STRIPE_DENSITY)) / perimeter;
+  let along = 0;
   const position: number[] = [];
   const uv: number[] = [];
   const index: number[] = [];
@@ -74,7 +84,10 @@ function fenceGeometry(halfX: number, halfZ: number, height: number): BufferGeom
     const [bx, bz] = corners[(side + 1) % 4];
     const base = side * 4;
     position.push(ax, 0, az, bx, 0, bz, bx, height, bz, ax, height, az);
-    uv.push(0, 0, 1, 0, 1, 1, 0, 1);
+    const u0 = along * scale;
+    along += Math.hypot(bx - ax, bz - az);
+    const u1 = along * scale;
+    uv.push(u0, 0, u1, 0, u1, 1, u0, 1);
     index.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }
   const geometry = new BufferGeometry();

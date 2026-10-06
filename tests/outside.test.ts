@@ -49,8 +49,8 @@ test('outside GLB: no ground mesh, three standing signs linking to the portfolio
     assert.ok(sign.label.length > 3, sign.id);
     assert.ok(Math.abs(sign.position.y - groundY) < 1e-4, `${sign.id} stands on the outside ground`);
     assert.ok(sign.board.bottom > 0.3 && sign.board.height > 1, `${sign.id}: a standing board`);
-    // In a row along the line of the back (-Z) wall, past the room's open +X side, facing +Z like its window.
-    assert.ok(Math.abs(sign.position.z + 3.05) < 0.05 && sign.position.x - sign.board.width / 2 > 3.2, `${sign.id} at ${sign.position.x},${sign.position.z}`);
+    // In a row 5 m in front of the back (-Z) wall line, past the room's open +X side, facing +Z like its window.
+    assert.ok(Math.abs(sign.position.z - 1.95) < 0.05 && sign.position.x - sign.board.width / 2 > 3.2, `${sign.id} at ${sign.position.x},${sign.position.z}`);
     assert.ok(Math.cos(sign.yaw) > 0.999, `${sign.id} faces +Z`);
   }
   // A large walkable ground that still holds the whole room floor.

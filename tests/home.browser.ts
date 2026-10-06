@@ -251,11 +251,11 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
   await page.screenshot({ path: shot('home-key.png') });
   await walkTo(page, { x: 9.0, z: 1.8 });
   await expect(host(page)).toHaveAttribute('data-keys', 'none');
-  await walkTo(page, { x: 19.5, z: 1.2 });
+  await walkTo(page, { x: 15.5, z: 3.5 });
   for (const [id, link, target, open] of [
-    ['portfolio', 'https://andres-jaramillo.is-a.dev/', { x: 24.0, z: -1.5 }, 'click'],
-    ['github', 'https://github.com/SrPio', { x: 27.2, z: -1.5 }, 'enter'],
-    ['linkedin', 'https://www.linkedin.com/in/andres-fernando-jaramillo-avila/', { x: 30.4, z: -1.5 }, 'enter'],
+    ['portfolio', 'https://andres-jaramillo.is-a.dev/', { x: 19.0, z: 3.5 }, 'click'],
+    ['github', 'https://github.com/SrPio', { x: 22.2, z: 3.5 }, 'enter'],
+    ['linkedin', 'https://www.linkedin.com/in/andres-fernando-jaramillo-avila/', { x: 25.4, z: 3.5 }, 'enter'],
   ] as const) {
     await walkTo(page, target, async () => (await host(page).getAttribute('data-sign')) === id);
     await expect(host(page)).toHaveAttribute('data-sign', id);
@@ -280,7 +280,7 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
     await tab.waitForURL(link);
     await tab.close();
   }
-  await walkTo(page, { x: 28.0, z: 1.6 });
+  await walkTo(page, { x: 23.8, z: 6.5 });
   await expect(host(page)).toHaveAttribute('data-sign', 'none');
   await expect(page.locator('#sign-link')).toBeHidden();
   await expect(host(page)).toHaveAttribute('data-sign-area', 'none');
@@ -291,7 +291,8 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
   await page.waitForTimeout(500);
   assert.equal(opened, false);
   // The bowling reset zone: Enter puts the pins back, no link, no new tab.
-  await walkTo(page, { x: 25.0, z: 19.6 }, async () => (await host(page).getAttribute('data-sign')) === 'reset-bowling');
+  await walkTo(page, { x: 14.75, z: 12.0 });
+  await walkTo(page, { x: 14.75, z: 24.9 }, async () => (await host(page).getAttribute('data-sign')) === 'reset-bowling');
   await expect(host(page)).toHaveAttribute('data-sign', 'reset-bowling');
   await expect(page.locator('#sign-link')).toBeHidden();
   await page.keyboard.press('Enter');
