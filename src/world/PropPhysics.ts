@@ -16,6 +16,8 @@ export type Pusher = { x: number; y: number; z: number };
 export const LAPTOP = { width: 0.48, depth: 0.32, base: 0.022, lid: 0.012, baseMass: 1, lidMass: 0.4 } as const;
 /** The lid opens up to here (radians, a laptop's own stop) and no further back; 0 is closed on the keys. */
 export const LID_LIMIT = Math.PI * 0.75;
+/** The closed stop: a hair below 0 so a lid resting on the keys can settle; its front edge stays above them. */
+export const LID_CLOSED = -0.02;
 export type ThrownLaptop = { base: BodyType; lid: BodyType; hinge: HingeType; born: number };
 /** At most this many thrown laptops at once: the next throw retires the oldest. */
 export const MAX_THROWN = 3;
@@ -212,40 +214,46 @@ export class PropPhysics {
     this.world.removeBody(laptop.lid);
   }
 
-  /** How far the lid is open (radians): 0 closed on the keys, up to LID_LIMIT; read in -π/2 … 3π/2 so an overshoot stays past the stop. */
+  /**
+   * How far the lid is open (radians): 0 closed on the keys, up to LID_LIMIT. Read from the middle of the
+   * forbidden arc (between LID_LIMIT and a full turn) so an overshoot stays past the nearer stop.
+   */
   lidAngle(laptop: ThrownLaptop): number {
     const { base, lid } = laptop;
     const relative = base.quaternion.conjugate().mult(lid.quaternion);
     // Opening turns the lid about +X: its front edge rises from the keys and swings back over the hinge.
     const angle = 2 * Math.atan2(relative.x, relative.w);
     const wrapped = Math.atan2(Math.sin(angle), Math.cos(angle));
-    return wrapped < -Math.PI / 2 ? wrapped + Math.PI * 2 : wrapped;
+    return wrapped < LID_LIMIT / 2 - Math.PI ? wrapped + Math.PI * 2 : wrapped;
   }
 
-  /** The hinge has no stops of its own: past either end, the relative turn that pushes further out is taken away. */
+  /**
+   * The hinge has no stops of its own: past either end, the relative turn that pushes further out is taken away.
+   * LID_CLOSED is a hard stop: the thin lid and base can pass through each other in one step, so a turn below
+   * it is undone at once (the lid would otherwise look shut with the keyboard showing through it).
+   */
   private readonly limitLids = (): void => {
     for (const laptop of this.laptops) {
       const angle = this.lidAngle(laptop);
-      const over = angle < -0.1 ? angle + 0.1 : angle > LID_LIMIT ? angle - LID_LIMIT : 0;
+      const over = angle < LID_CLOSED ? angle - LID_CLOSED : angle > LID_LIMIT ? angle - LID_LIMIT : 0;
       if (!over) continue;
       const { base, lid } = laptop;
       const axis = base.quaternion.vmult(new this.cannon.Vec3(1, 0, 0));
-      // A hard landing can drive the lid well past the stop within one step: turn it back about the hinge.
-      if (Math.abs(over) > 0.05) {
-        const pivot = base.pointToWorldFrame(new this.cannon.Vec3(0, LAPTOP.base / 2, LAPTOP.depth / 2));
-        const turn = new this.cannon.Quaternion().setFromAxisAngle(axis, -over * 0.8);
-        const offset = turn.vmult(lid.position.vsub(pivot));
-        lid.position.copy(pivot.vadd(offset));
-        lid.quaternion.copy(turn.mult(lid.quaternion));
-      }
+      // A hard landing can drive the lid well past a stop within one step: turn it back onto it about the hinge.
+      const pivot = base.pointToWorldFrame(new this.cannon.Vec3(0, LAPTOP.base / 2, LAPTOP.depth / 2));
+      const turn = new this.cannon.Quaternion().setFromAxisAngle(axis, -over);
+      const offset = turn.vmult(lid.position.vsub(pivot));
+      lid.position.copy(pivot.vadd(offset));
+      lid.quaternion.copy(turn.mult(lid.quaternion));
+      // Then take away the relative turn that pushes further out, shared by mass between the awake bodies. No
+      // push back inside: a lid resting against a stop would keep that speed forever and never fall asleep.
       const relative = lid.angularVelocity.vsub(base.angularVelocity).dot(axis);
-      // Moving further past the stop: remove that part (shared by mass), then ease back inside.
-      const wanted = -over * 20;
-      const excess = over > 0 ? Math.max(0, relative - wanted) : Math.min(0, relative - wanted);
+      const excess = over > 0 ? Math.max(0, relative) : Math.min(0, relative);
       if (!excess) continue;
-      const total = LAPTOP.baseMass + LAPTOP.lidMass;
-      lid.angularVelocity.vsub(axis.scale(excess * LAPTOP.baseMass / total), lid.angularVelocity);
-      base.angularVelocity.vadd(axis.scale(excess * LAPTOP.lidMass / total), base.angularVelocity);
+      const asleep = this.cannon.Body.SLEEPING;
+      const lidShare = base.sleepState === asleep ? 1 : lid.sleepState === asleep ? 0 : LAPTOP.baseMass / (LAPTOP.baseMass + LAPTOP.lidMass);
+      lid.angularVelocity.vsub(axis.scale(excess * lidShare), lid.angularVelocity);
+      base.angularVelocity.vadd(axis.scale(excess * (1 - lidShare)), base.angularVelocity);
     }
   };
 

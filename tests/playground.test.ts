@@ -5,7 +5,7 @@ import * as cannon from 'cannon-es';
 import { Texture } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { readOutside, type OutsideData, type Piece } from '../src/scene/outsideData.ts';
-import { LID_LIMIT, PropPhysics } from '../src/world/PropPhysics.ts';
+import { LID_CLOSED, LID_LIMIT, PropPhysics } from '../src/world/PropPhysics.ts';
 
 async function outside(): Promise<OutsideData> {
   const data = await readFile(new URL('../public/models/outside.glb', import.meta.url));
@@ -124,8 +124,9 @@ test('a thrown laptop flies, swings its lid within the hinge and knocks a pin ov
     lowest = Math.min(lowest, angle);
   }
   assert.ok(widest > 0.4, `the lid opened in flight (${widest.toFixed(2)} rad)`);
-  // A hard landing may push it a little past the stop for a moment; it settles back near it.
-  assert.ok(widest < LID_LIMIT + 0.6 && lowest > -0.25, `the hinge held: ${lowest.toFixed(2)} … ${widest.toFixed(2)}`);
+  // A hard landing may push it a little past the open stop for a moment; it settles back near it. It never
+  // closes through the keys.
+  assert.ok(widest < LID_LIMIT + 0.6 && lowest > LID_CLOSED - 0.005, `the hinge held: ${lowest.toFixed(2)} … ${widest.toFixed(2)}`);
   assert.ok(physics.lidAngle(laptop) < LID_LIMIT + 0.3, `resting at ${physics.lidAngle(laptop).toFixed(2)} rad`);
   // The hinge keeps the lid on the base's back edge.
   const gap = laptop.base.pointToWorldFrame(new cannon.Vec3(0, 0.011, 0.16)).distanceTo(laptop.lid.pointToWorldFrame(new cannon.Vec3(0, -0.006, 0.155)));
