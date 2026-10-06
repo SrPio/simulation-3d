@@ -145,9 +145,8 @@ export class CharacterViewer {
   /** Link signs and playground reset zones: the floor zones the character can step into. */
   private zones: Sign[] = [];
   private physics?: PropPhysics;
-  /** The laptop in the hand during the throw, until THROW_RELEASE. */
-  private heldLaptop?: Group;
-  private released = false;
+  /** A throw is under way and its laptop has not appeared yet: it shows up only at THROW_RELEASE, already leaving the hand. */
+  private pendingThrow = false;
   /** A seat is in reach of the character moving freely: the speech bubble shows over its head. */
   private nearSeat = false;
   /** Thrown laptops on screen: base and lid follow their bodies; retired ones shrink away. */
@@ -716,18 +715,13 @@ export class CharacterViewer {
     return copy;
   }
 
-  /** F: a laptop appears in the throwing hand; it leaves it at THROW_RELEASE (releaseLaptop). */
+  /** F: nothing shows in the hand during the wind-up; the laptop appears at THROW_RELEASE, leaving it (updateThrow). */
   private holdLaptop(): void {
-    this.dropHeldLaptop();
-    this.released = false;
-    if (!this.physics || !this.model?.getObjectByName(THROW_HAND)) return;
-    this.heldLaptop = this.laptopCopy();
-    if (this.heldLaptop) this.scene.add(this.heldLaptop);
+    this.pendingThrow = !!this.physics && !!this.model?.getObjectByName(THROW_HAND);
   }
 
   private dropHeldLaptop(): void {
-    this.heldLaptop?.removeFromParent();
-    this.heldLaptop = undefined;
+    this.pendingThrow = false;
   }
 
   /** Base centre and orientation of the laptop in the hand: closed, level, facing where the character faces. */
@@ -741,17 +735,15 @@ export class CharacterViewer {
     return { position, quaternion };
   }
 
-  /** Follow the hand while held; at the release time hand the laptop over to the physics. */
+  /** At the release time the laptop appears at the hand and goes straight to the physics. */
   private updateThrow(): void {
     const action = this.actions.get(THROW_CLIP);
-    if (!this.throwing || !this.heldLaptop || !action || !this.model) return;
+    if (!this.throwing || !this.pendingThrow || !action || !this.model) return;
+    if (action.time < THROW_RELEASE) return;
     this.model.updateMatrixWorld(true);
     const pose = this.heldPose();
     if (!pose) return;
-    this.placeLaptop(this.heldLaptop, pose.position, pose.quaternion);
-    if (this.released || action.time < THROW_RELEASE) return;
-    this.released = true;
-    this.dropHeldLaptop();
+    this.pendingThrow = false;
     this.throwLaptop(pose);
   }
 
