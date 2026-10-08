@@ -129,21 +129,43 @@
     },
     {
       "name": "jump_ual",
-      "duration": 1.3333333333333333,
+      "duration": 1.6666666666666667,
       "loop": false,
-      "source": "Quaternius Universal Animation Library \u00b7 Jump_Start + Jump_Land (CC0)",
+      "source": "Quaternius Universal Animation Library \u00b7 Jump_Start + Jump_Loop + Jump_Land (CC0)",
       "speed": 0,
-      "distance": 0.45,
+      "distance": 0.9,
       "air": [
-        0.15,
-        0.375
+        0.12,
+        0.48
       ]
+    },
+    {
+      "name": "punch_ual",
+      "duration": 1.4,
+      "loop": false,
+      "source": "Quaternius Universal Animation Library \u00b7 Punch_Cross (CC0)",
+      "strike": {
+        "bone": "hand_L",
+        "windup": 0.26666666666666666,
+        "hit": 0.4666666666666667
+      }
     },
     {
       "name": "throw_ual",
       "duration": 1.8,
       "loop": false,
       "source": "Quaternius Universal Animation Library 2 \u00b7 OverhandThrow (CC0)"
+    },
+    {
+      "name": "kick",
+      "duration": 1.2,
+      "loop": false,
+      "source": "procedural",
+      "strike": {
+        "bone": "foot_L",
+        "windup": 0.36,
+        "hit": 0.504
+      }
     }
   ]
 }

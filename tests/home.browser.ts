@@ -151,7 +151,7 @@ test('Space hops forward, F throws a laptop, the character knocks over the name 
   await expect(host(page)).toHaveAttribute('data-locomotion', 'idle', { timeout: 3000 });
   const landed = await position(page);
   const hop = Math.hypot(landed[0] - start[0], landed[1] - start[1]);
-  assert.ok(hop > 0.3 && hop < 0.7, `a short hop forward: ${hop}`);
+  assert.ok(hop > 0.7 && hop < 1.2, `a hop forward: ${hop}`);
   // F plays the throw where the character stands and a laptop leaves the hand; held movement keys wait until it ends.
   await page.keyboard.press('KeyF');
   await expect(host(page)).toHaveAttribute('data-locomotion', 'throw');
@@ -180,6 +180,70 @@ test('Space hops forward, F throws a laptop, the character knocks over the name 
   await expect(host(page)).toHaveAttribute('data-letters', '0');
   await expect(host(page)).toHaveAttribute('data-thrown', '0');
   await expect(host(page)).toHaveAttribute('data-elevation', '0.00');
+  assert.deepEqual(errors, []);
+});
+
+test('a jump while running keeps going and runs on; J and K punch and kick, held to charge, and knock the letters over', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, ...spanish });
+  t.after(() => page.close());
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await ready(page);
+  await expect(host(page)).toHaveAttribute('data-physics', 'ready', { timeout: 10000 });
+  // Outside, running towards the camera (S), then Space without letting go.
+  await walkTo(page, { x: 6, z: 7 });
+  await page.keyboard.press('Shift');
+  await page.keyboard.down('KeyS');
+  await expect(host(page)).toHaveAttribute('data-locomotion', 'run', { timeout: 3000 });
+  await page.waitForTimeout(400);
+  const before = await position(page);
+  await page.keyboard.press('Space');
+  await expect(host(page)).toHaveAttribute('data-locomotion', 'jump');
+  const states: string[] = [];
+  for (let i = 0; i < 12 && (await host(page).getAttribute('data-locomotion')) === 'jump'; i++) {
+    states.push((await host(page).getAttribute('data-locomotion'))!);
+    await page.waitForTimeout(60);
+  }
+  await expect(host(page)).toHaveAttribute('data-locomotion', 'run', { timeout: 1500 });
+  const after = await position(page);
+  await page.keyboard.up('KeyS');
+  await page.keyboard.press('Shift');
+  await expect(host(page)).toHaveAttribute('data-locomotion', 'idle', { timeout: 3000 });
+  assert.ok(Math.hypot(after[0] - before[0], after[1] - before[1]) > 2, `carried on through the jump: ${before} → ${after}`);
+  assert.ok(!states.includes('idle'), 'never stopped');
+  // A tap punches at the lowest power; a held kick charges (the bar shows) and strikes harder on release.
+  await page.keyboard.press('KeyJ');
+  await expect(host(page)).toHaveAttribute('data-strike-power', '0.25');
+  await expect(host(page)).toHaveAttribute('data-locomotion', 'idle', { timeout: 3000 });
+  await page.keyboard.down('KeyK');
+  await expect(host(page)).toHaveAttribute('data-strike', 'charging');
+  const charging = await position(page);
+  await page.keyboard.down('KeyW');
+  await page.waitForTimeout(900);
+  await expect(page.locator('.charge-meter')).not.toHaveAttribute('hidden');
+  assert.ok(Number(await host(page).getAttribute('data-charge')) > 0.2, 'charging');
+  await page.keyboard.up('KeyW');
+  assert.deepEqual(await position(page), charging, 'stands still while charging');
+  await page.keyboard.up('KeyK');
+  await expect(page.locator('.charge-meter')).toHaveAttribute('hidden');
+  await expect(host(page)).toHaveAttribute('data-charge', 'none');
+  await expect(host(page)).toHaveAttribute('data-strike', 'striking');
+  assert.ok(Number(await host(page).getAttribute('data-strike-power')) > 0.5, 'a charged kick');
+  await expect(host(page)).toHaveAttribute('data-strike', 'none', { timeout: 3000 });
+  // Up to the name, facing it (W + D is -Z on screen), and a full-power kick knocks letters over.
+  await walkTo(page, { x: -3.7, z: 6.0 });
+  await page.keyboard.down('KeyW');
+  await page.keyboard.down('KeyD');
+  await page.waitForTimeout(250);
+  await page.keyboard.up('KeyW');
+  await page.keyboard.up('KeyD');
+  await expect(host(page)).toHaveAttribute('data-locomotion', 'idle', { timeout: 3000 });
+  await page.keyboard.down('KeyK');
+  await page.waitForTimeout(1400);
+  await page.keyboard.up('KeyK');
+  await expect.poll(async () => Number(await host(page).getAttribute('data-strike-hits')), { timeout: 3000 }).toBeGreaterThan(0);
+  await expect.poll(async () => Number(await host(page).getAttribute('data-letters')), { timeout: 5000 }).toBeGreaterThan(0);
+  await page.screenshot({ path: shot('home-kick.png') });
   assert.deepEqual(errors, []);
 });
 

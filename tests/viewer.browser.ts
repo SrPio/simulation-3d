@@ -397,13 +397,15 @@ test('in the room, chair and bed clips move V4 to their seat and locomotion retu
   await page.getByRole('button', { name: 'V4 Animada', exact: true }).click();
   await expectModel(page, 'v4rig');
   const clip = page.getByLabel('Clip', { exact: true });
-  await expect(page.locator('#animation-clip option')).toHaveCount(17);
+  await expect(page.locator('#animation-clip option')).toHaveCount(19);
   await expect(page.locator('#animation-clip option').nth(2)).toHaveText('Caminar · UAL (walk_ual)');
   await expect(page.locator('#animation-clip option').nth(4)).toHaveText('Correr · trote UAL (run_ual_jog)');
   await expect(page.locator('#animation-clip option').nth(6)).toHaveText('Saltar (jump)');
   await expect(page.locator('#animation-clip option').nth(7)).toHaveText('Saltar · UAL (jump_ual)');
   await expect(page.locator('#animation-clip option').nth(8)).toHaveText('Lanzar · UAL 2 (throw_ual)');
-  await expect(page.locator('#animation-clip option').nth(9)).toHaveText('Sentarse · silla (sit_down_chair)');
+  await expect(page.locator('#animation-clip option').nth(9)).toHaveText('Puñetazo · UAL (punch_ual)');
+  await expect(page.locator('#animation-clip option').nth(10)).toHaveText('Patada (kick)');
+  await expect(page.locator('#animation-clip option').nth(11)).toHaveText('Sentarse · silla (sit_down_chair)');
   // The UAL walk, sprint and jump are the defaults; each select can switch back to the procedural clip.
   const host = page.locator('#canvas-host');
   for (const [gait, label, count, value] of [['walk', 'Caminata', 2, 'walk_ual'], ['run', 'Carrera', 3, 'run_ual_sprint'], ['jump', 'Salto', 2, 'jump_ual']] as const) {
@@ -483,7 +485,7 @@ test('in the room WASD walks, Shift switches running on and off, releasing stops
   await page.keyboard.up('ArrowLeft');
   assert.notDeepEqual(await position(page), rested, 'arrow keys move too');
   await walkTo(page, { x: 2.2, z: 2.2 });
-  await expect(page.locator('#hud-hint')).toHaveText('W A S D o flechas para caminar · Shift: correr desactivado · Espacio para saltar · F para lanzar');
+  await expect(page.locator('#hud-hint')).toHaveText('W A S D o flechas para caminar · Shift: correr desactivado · Espacio para saltar · F para lanzar · J/K: puño/patada');
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-prompt', 'none');
   await page.getByRole('button', { name: 'Restablecer posición', exact: true }).click();
   assert.deepEqual(await position(page), spawn);

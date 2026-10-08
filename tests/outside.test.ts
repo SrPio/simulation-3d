@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { Texture } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { CHARACTER_RADIUS, CharacterController, JUMP } from '../src/character/CharacterController.ts';
+import { CHARACTER_RADIUS, CLIP_ALTERNATIVES, CharacterController, JUMP } from '../src/character/CharacterController.ts';
 import { groundAt, readOutside } from '../src/scene/outsideData.ts';
 import { readRoom } from '../src/scene/roomData.ts';
 import { MIN_VIEW_ANGLE, arrowYaw } from '../src/scene/Signpost.ts';
@@ -156,6 +156,36 @@ test('jump: a short hop forward while airborne, no double jump, and walls still 
   for (let i = 0; i < 60; i++) blocked.update(1 / 60, { forward: 0, right: 0, run: false }, 0);
   for (let i = 0; i < 2; i++) { blocked.jump(); for (let j = 0; j < 60; j++) blocked.update(1 / 60, { forward: 0, right: 0, run: false }, 0); }
   assert.ok(blocked.position.z <= 0.5 - CHARACTER_RADIUS + 1e-6, `stopped by the wall: ${blocked.position.z}`);
+});
+
+test('jumping while running keeps the speed, skips the crouch and runs on after landing', () => {
+  const run = { forward: 1, right: 0, run: true };
+  const controller = new CharacterController({ position: { x: 0, z: 0 }, yaw: 0 }, [], 50);
+  controller.jumpSpec = CLIP_ALTERNATIVES.jump_ual.jump!;
+  for (let i = 0; i < 120; i++) controller.update(1 / 60, run, Math.PI);
+  const speed = controller.speed;
+  assert.ok(speed > 3, `running at ${speed}`);
+  const start = controller.position.z;
+  assert.ok(controller.jump());
+  const { duration, air } = controller.jumpSpec;
+  assert.ok(controller.jumpStart > 0 && controller.jumpStart < air[0] * duration, 'starts close to take-off');
+  let t = 0;
+  for (; controller.jumping && t < 3; t += 1 / 60) {
+    const before = controller.position.z;
+    controller.update(1 / 60, run, Math.PI);
+    if (controller.jumping) assert.ok(controller.position.z - before > speed / 60 * 0.9, `keeps moving at ${t.toFixed(2)} s`);
+  }
+  // Back to running right after touching down, long before the clip's own end.
+  assert.ok(t < (air[1] - air[0]) * duration + 0.25, `lands into the run after ${t.toFixed(2)} s`);
+  assert.equal(controller.locomotion(), 'run');
+  assert.ok(controller.position.z - start > 2, `a long jump: ${(controller.position.z - start).toFixed(2)} m`);
+  // Without keys after landing it slows down and stops by the end of the clip.
+  const stop = new CharacterController({ position: { x: 0, z: 0 }, yaw: 0 }, [], 50);
+  stop.jumpSpec = CLIP_ALTERNATIVES.jump_ual.jump!;
+  for (let i = 0; i < 120; i++) stop.update(1 / 60, run, Math.PI);
+  stop.jump();
+  for (let i = 0; i < 200 && stop.jumping; i++) stop.update(1 / 60, { forward: 0, right: 0, run: true }, Math.PI);
+  assert.equal(stop.locomotion(), 'idle');
 });
 
 test('the jump in the controller matches the rig manifest', async () => {

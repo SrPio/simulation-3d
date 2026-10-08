@@ -9,11 +9,11 @@ import { createRenderer } from '../core/renderer';
 import { QUALITY, defaultQuality, nextPixelRatio, ratioRange, type QualityId } from '../core/quality.ts';
 import { mergeSkinnedMeshes, mergeStaticMeshes } from '../scene/mergeStatic.ts';
 import {
-  CHARACTER_RADIUS, CLIP_ALTERNATIVES, CharacterController, DEFAULT_GAIT_CLIPS, JUMP, RUN_CLIP_SPEED, THROW_CLIP, THROW_HAND, THROW_RELEASE, THROW_SPEED,
-  WALK_CLIP_SPEED, WALK_SPEED, type Gait, type Locomotion,
+  CHARACTER_RADIUS, CLIP_ALTERNATIVES, CharacterController, DEFAULT_GAIT_CLIPS, JUMP, RUN_CLIP_SPEED, STRIKE_CHARGE, STRIKE_MIN_POWER, STRIKES,
+  THROW_CLIP, THROW_HAND, THROW_RELEASE, THROW_SPEED, WALK_CLIP_SPEED, WALK_SPEED, strikePower, type Gait, type Locomotion, type StrikeKind,
 } from '../character/CharacterController';
 import { onLanguage, t } from '../core/i18n.ts';
-import { KeyboardInput, type PressAction } from '../input/KeyboardInput';
+import { KeyboardInput, type HoldAction, type PressAction } from '../input/KeyboardInput';
 import {
   disposeObjects, laptopFile, loadCharacter, loadLaptop, loadOutside, loadRoom, modelVersions, outsideFile, roomFile, type ModelVersionId, type SceneId,
 } from '../core/loadAssets';
@@ -24,6 +24,7 @@ import { SignAreas, signText } from '../scene/SignAreas.ts';
 import { FloorTexts } from '../scene/FloorTexts.ts';
 import { Signpost } from '../scene/Signpost.ts';
 import { SeatBubble } from '../scene/SeatBubble.ts';
+import { ChargeMeter } from '../scene/ChargeMeter.ts';
 import { InfiniteFloor } from '../scene/InfiniteFloor.ts';
 import { BlobShadows } from '../scene/BlobShadows.ts';
 import { PieceMeshes } from '../scene/PieceMeshes.ts';
@@ -97,6 +98,8 @@ const THROWN_SHADOWS = 3;
 const SHRINK_TIME = 0.3;
 /** Head height for the seat bubble's tail, above the character's feet. */
 const BUBBLE_HEIGHT = 2.45;
+/** A released strike plays its blow up to this much faster at full power: a charged hit is also a snappier one. */
+const STRIKE_SNAP = 0.7;
 /** Feet around the character's centre that press a floor key. */
 const FOOT_RADIUS = 0.15;
 /** Rotation about +Y of a turned object (its local +X on the ground). */
@@ -194,6 +197,12 @@ export class CharacterViewer {
   private readonly gait: Record<Gait, string> = { ...DEFAULT_GAIT_CLIPS };
   /** F plays the throw in place; movement keys wait until it ends. */
   private throwing = false;
+  /**
+   * J (punch) or K (kick) in progress: the clip holds its wind-up while the key is down (charge in seconds), then
+   * strikes on release with strikePower(charge); `hit` is set once the blow has pushed what is in front.
+   */
+  private strike?: { kind: StrikeKind; held: boolean; charge: number; power: number; hit: boolean };
+  private chargeMeter?: ChargeMeter;
   private playing = true;
   private speed = 1;
   private lastFrame?: number;
@@ -322,6 +331,7 @@ export class CharacterViewer {
         this.mixer.addEventListener('finished', (event) => {
           if (event.action !== this.actions.get(this.activeClip)) return;
           if (this.throwing) this.endThrow();
+          else if (this.strike) this.endStrike();
           else this.interaction?.clipFinished();
         });
         for (const [index, clip] of gltf.animations.entries()) {
@@ -424,6 +434,9 @@ export class CharacterViewer {
     this.interaction = new InteractionController(data.seats, boxes, floor, CHARACTER_RADIUS);
     if (this.keyboard) {
       this.keyboard.onPress = this.onPress;
+      this.keyboard.onRelease = this.onRelease;
+      this.chargeMeter ??= new ChargeMeter(this.host);
+      this.host.dataset.strike = 'none';
       this.keyboard.onRunChange = (running) => {
         this.host.dataset.run = String(running);
         this.events.run?.(running);
@@ -623,7 +636,20 @@ export class CharacterViewer {
       return;
     }
     const interaction = this.interaction;
-    if (!interaction || !this.controller || !this.ready || this.controller.jumping || this.throwing) return;
+    if (!interaction || !this.controller || !this.ready || this.controller.jumping || this.throwing || this.strike) return;
+    if (action === 'punch' || action === 'kick') {
+      // Like the throw: only from free keyboard movement, in place; movement keys wait until it ends.
+      const clip = STRIKES[action].clip;
+      if (interaction.phase !== 'free' || !this.isLocomotion(this.activeClip) || !this.actions.has(clip)) return;
+      this.strike = { kind: action, held: true, charge: 0, power: 0, hit: false };
+      this.controller.speed = 0;
+      this.driving = true;
+      if (!this.playing) this.setPlaying(true);
+      this.selectClip(clip, false);
+      this.host.dataset.locomotion = action;
+      this.host.dataset.strike = 'charging';
+      return;
+    }
     if (action === 'throw') {
       // Like the jump: only from free keyboard movement, never from a seat or a clip picked by hand.
       if (interaction.phase !== 'free' || !this.isLocomotion(this.activeClip) || !this.actions.has(THROW_CLIP)) return;
@@ -643,6 +669,12 @@ export class CharacterViewer {
       this.driving = true;
       if (!this.playing) this.setPlaying(true);
       this.selectClip(this.gaitClip('jump'), false);
+      // A jump while walking or running starts just before take-off instead of crouching from a standstill.
+      const start = this.controller.jumpStart;
+      if (start > 0) {
+        this.actions.get(this.activeClip)!.time = start;
+        this.mixer?.update(0);
+      }
       this.host.dataset.locomotion = 'jump';
       return;
     }
@@ -658,6 +690,69 @@ export class CharacterViewer {
     }
     this.notice = accepted ? { text: '', until: 0 } : { text: interaction.message, until: performance.now() + 2500 };
   };
+
+  /** J or K let go: the held wind-up turns into the blow, stronger the longer it charged. */
+  private readonly onRelease = (action: HoldAction): void => {
+    const strike = this.strike;
+    if (!strike || strike.kind !== action || !strike.held) return;
+    strike.held = false;
+    strike.power = strikePower(strike.charge);
+    const snap = (strike.power - STRIKE_MIN_POWER) / (1 - STRIKE_MIN_POWER);
+    this.actions.get(STRIKES[strike.kind].clip)?.setEffectiveTimeScale(1 + STRIKE_SNAP * snap);
+    this.host.dataset.strike = 'striking';
+    this.host.dataset.strikePower = strike.power.toFixed(2);
+  };
+
+  /** Holds the wind-up while the key is down, and at the hit time knocks away what is in front of the fist or foot. */
+  private updateStrike(delta: number): void {
+    const strike = this.strike;
+    if (!strike || !this.model || !this.controller) return;
+    const spec = STRIKES[strike.kind];
+    const action = this.actions.get(spec.clip);
+    if (!action) return;
+    if (strike.held) {
+      if (action.time >= spec.windup) {
+        action.time = spec.windup;
+        action.setEffectiveTimeScale(0);
+        strike.charge += delta * this.speed;
+      }
+      return;
+    }
+    if (strike.hit || action.time < spec.hit) return;
+    strike.hit = true;
+    if (!this.physics) return;
+    this.model.updateMatrixWorld(true);
+    const bone = this.model.getObjectByName(spec.bone);
+    if (!bone) return;
+    const yaw = this.controller.yaw;
+    const forward = { x: Math.sin(yaw), z: Math.cos(yaw) };
+    const point = bone.getWorldPosition(new Vector3()).add(new Vector3(forward.x * spec.reach, 0, forward.z * spec.reach));
+    this.host.dataset.strikeHits = String(this.physics.strike(this.controller.position, point, forward, strike.power));
+  }
+
+  private cancelStrike(): void {
+    this.strike = undefined;
+    if (this.host.dataset.strike) this.host.dataset.strike = 'none';
+  }
+
+  /** The strike clip ended: back to idle, and the keys move the character again. */
+  private endStrike(): void {
+    this.cancelStrike();
+    this.driving = false;
+    if (this.actions.has('idle')) this.selectClip('idle');
+    this.host.dataset.locomotion = 'idle';
+  }
+
+  /** The charge bar over the head while a strike key is held. */
+  private updateChargeMeter(): void {
+    if (!this.chargeMeter || !this.model) return;
+    if (!this.strike?.held) {
+      this.chargeMeter.update(false);
+      return;
+    }
+    const point = this.model.position.clone().setY(this.model.position.y + BUBBLE_HEIGHT).project(this.camera);
+    this.chargeMeter.update(true, this.strike.charge / STRIKE_CHARGE, (point.x + 1) / 2 * this.host.clientWidth, (1 - point.y) / 2 * this.host.clientHeight);
+  }
 
   private hasSeatClips(): boolean {
     return this.actions.has('sit_down_chair') && this.actions.has('sit_down_bed');
@@ -854,6 +949,7 @@ export class CharacterViewer {
   resetPosition(): void {
     if (!this.controller || this.disposed) return;
     this.throwing = false;
+    this.cancelStrike();
     this.clearThrown();
     this.controller.reset();
     this.interaction?.reset();
@@ -878,7 +974,7 @@ export class CharacterViewer {
       this.setMovement('unavailable');
       return;
     }
-    if (this.throwing) return;
+    if (this.throwing || this.strike) return;
     if (!this.isLocomotion(this.activeClip)) {
       this.setMovement('seated');
       return;
@@ -1023,7 +1119,7 @@ export class CharacterViewer {
   /** The speech bubble over the head while a seat is in reach (free movement only), placed on the screen each frame. */
   private updateBubble(): void {
     if (!this.bubble || !this.model || !this.renderer) return;
-    const visible = this.nearSeat && !this.throwing && this.interaction?.phase === 'free' && this.isLocomotion(this.activeClip);
+    const visible = this.nearSeat && !this.throwing && !this.strike && this.interaction?.phase === 'free' && this.isLocomotion(this.activeClip);
     if (!visible) {
       this.bubble.update(false);
       return;
@@ -1272,6 +1368,7 @@ export class CharacterViewer {
   /** A clip picked by hand in the UI: it takes over from any seat interaction in progress. */
   chooseClip(name: string): void {
     this.throwing = false;
+    this.cancelStrike();
     this.dropHeldLaptop();
     if (this.interaction && this.interaction.phase !== 'free') {
       this.interaction.reset();
@@ -1406,6 +1503,7 @@ export class CharacterViewer {
     if (this.ready && this.mixer && this.playing) {
       this.mixer.update(delta);
       this.updateThrow();
+      this.updateStrike(delta);
       if (this.fadeRemaining > 0) {
         this.fadeRemaining -= delta * this.speed;
         if (this.fadeRemaining <= 0) this.finishFade();
@@ -1418,6 +1516,7 @@ export class CharacterViewer {
     this.updateHover();
     this.reportSign();
     this.updateBubble();
+    this.updateChargeMeter();
     if (this.ground && this.model) this.ground.update(this.camera, this.model.position);
     this.renderer.render(this.scene, this.camera);
     this.sampleRender(frame);
@@ -1509,6 +1608,7 @@ export class CharacterViewer {
     this.floorTexts?.dispose();
     this.signpost?.dispose();
     this.bubble?.dispose();
+    this.chargeMeter?.dispose();
     this.clearThrown();
     this.ground?.dispose();
     this.shadows?.dispose();

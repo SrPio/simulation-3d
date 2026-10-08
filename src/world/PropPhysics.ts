@@ -30,6 +30,10 @@ const PUSHER_SPHERES = [0.3, 0.75, 1.2];
 /** The world only steps when a piece is awake or the character is this close to one. */
 const WAKE_DISTANCE = 1.6;
 const STRAY_DISTANCE = 30;
+/** Strikes: what lies within this distance of the fist or foot (to its bounds) is hit, leaving at these speeds (m/s, by power) and partly upwards. */
+export const STRIKE_RADIUS = 0.45;
+export const STRIKE_SPEED = { min: 1.5, max: 9 };
+const STRIKE_LIFT = 0.35;
 
 type Settings = { material: string; sleepSpeed: number; angularDamping: number; linearDamping: number };
 const SETTINGS: Record<PieceGroup | 'laptop', Settings> = {
@@ -198,6 +202,37 @@ export class PropPhysics {
     const laptop = { base, lid, hinge, born: this.clock };
     this.laptops.push(laptop);
     return laptop;
+  }
+
+  /**
+   * A punch or kick from a character standing at `from`, landing at `point` (the fist or foot) towards `direction` on
+   * the floor: every piece and thrown laptop in front of the character within STRIKE_RADIUS of the blow gets knocked away, faster the stronger the blow (`power` 0…1) and the closer
+   * it is. The push acts at the struck point, so pieces also spin. Returns how many bodies were hit.
+   */
+  strike(from: { x: number; z: number }, point: Vec, direction: { x: number; z: number }, power: number): number {
+    const { Vec3 } = this.cannon;
+    const length = Math.hypot(direction.x, direction.z) || 1;
+    const along = { x: direction.x / length, z: direction.z / length };
+    const speed = STRIKE_SPEED.min + (STRIKE_SPEED.max - STRIKE_SPEED.min) * Math.min(Math.max(power, 0), 1);
+    let hits = 0;
+    for (const body of [...this.bodies, ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid])]) {
+      // Only what is in front of the character: a fist or foot can reach past a piece it is pressed against.
+      if ((body.position.x - from.x) * along.x + (body.position.z - from.z) * along.z <= 0) continue;
+      // Distance to the body's bounds, not its centre: a kick at hip height reaches the top of a short letter.
+      body.updateAABB();
+      const { lowerBound: low, upperBound: high } = body.aabb;
+      const touch = new Vec3(
+        Math.min(Math.max(point.x, low.x), high.x), Math.min(Math.max(point.y, low.y), high.y), Math.min(Math.max(point.z, low.z), high.z));
+      const distance = Math.hypot(touch.x - point.x, touch.y - point.y, touch.z - point.z);
+      if (distance > STRIKE_RADIUS) continue;
+      const change = speed * (1 - 0.5 * distance / STRIKE_RADIUS);
+      body.wakeUp();
+      // Pushed where the blow touches it, so it also spins.
+      body.applyImpulse(new Vec3(along.x * change * body.mass, change * STRIKE_LIFT * body.mass, along.z * change * body.mass), touch.vsub(body.position));
+      hits++;
+    }
+    if (hits) this.idle = false;
+    return hits;
   }
 
   private retire(laptop: ThrownLaptop): void {

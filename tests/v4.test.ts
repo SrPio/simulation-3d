@@ -267,8 +267,8 @@ test('UAL clips are seamless, in place and grounded; walks and runs keep the arm
   const manifest = JSON.parse(await readFile(new URL('public/models/developer-v4-interactions.manifest.json', root), 'utf8'));
   const { CLIP_ALTERNATIVES, DEFAULT_GAIT_CLIPS } = await import('../src/character/CharacterController.ts');
   const clips = animations.filter((clip) => clip.name.includes('_ual'));
-  // The throw is not locomotion: it is only listed in the study, so it has no CLIP_ALTERNATIVES entry.
-  assert.deepEqual(clips.map((clip) => clip.name).sort(), [...Object.keys(CLIP_ALTERNATIVES), 'throw_ual'].sort());
+  // The throw and the punch are not locomotion, so they have no CLIP_ALTERNATIVES entry.
+  assert.deepEqual(clips.map((clip) => clip.name).sort(), [...Object.keys(CLIP_ALTERNATIVES), 'throw_ual', 'punch_ual'].sort());
   for (const gait of ['walk', 'run', 'jump'] as const) {
     const name = DEFAULT_GAIT_CLIPS[gait];
     assert.ok(name === gait || CLIP_ALTERNATIVES[name]?.gait === gait, `default ${gait}: ${name}`);
@@ -285,13 +285,15 @@ test('UAL clips are seamless, in place and grounded; walks and runs keep the arm
   for (const clip of clips) {
     const entry = manifest.clips.find((item: { name: string }) => item.name === clip.name);
     const alternative = CLIP_ALTERNATIVES[clip.name];
-    const gait = alternative?.gait ?? 'throw';
+    const gait = alternative?.gait ?? clip.name.replace('_ual', '');
     const cycle = gait === 'walk' || gait === 'run';
     assert.ok(clip.name.startsWith(gait) && entry.source.includes('CC0') && entry.loop === cycle, clip.name);
     if (cycle) assert.ok(Math.abs(entry.speed - alternative.speed!) < 1e-9, `${clip.name}: speed`);
     if (gait === 'jump') {
       assert.deepEqual({ duration: entry.duration, air: entry.air, distance: entry.distance }, alternative.jump, `${clip.name}: jump timing`);
       assert.ok(entry.air[0] > 0.05 && entry.air[1] < 0.6 && entry.air[1] - entry.air[0] > 0.15, `${clip.name}: air ${entry.air}`);
+      // Long and high enough: over half a second off the floor.
+      assert.ok((entry.air[1] - entry.air[0]) * entry.duration > 0.5 && entry.distance >= 0.9, `${clip.name}: air time and distance`);
     }
     assert.ok(Math.abs(entry.duration - clip.duration) < 1e-3, `${clip.name}: duration`);
     mixer.stopAllAction();
@@ -308,7 +310,8 @@ test('UAL clips are seamless, in place and grounded; walks and runs keep the arm
       const bounds = new Box3().setFromObject(scene, true);
       const size = bounds.getSize(new Vector3());
       assert.ok(bounds.min.y > -0.025, `${clip.name} frame ${i}: floor ${bounds.min.y}`);
-      assert.ok(size.x < (cycle ? 1.6 : 1.9) && size.y > (cycle ? 2.3 : 1.9) && size.y < (cycle ? 2.8 : 3.1), `${clip.name} frame ${i}: arms lowered, intact ${size.toArray()}`);
+      // Jump_Loop opens the arms in the air (about 2.05 m); a T-pose spans over 2.3 m.
+      assert.ok(size.x < (cycle ? 1.6 : 2.1) && size.y > (cycle ? 2.3 : 1.9) && size.y < (cycle ? 2.8 : 3.1), `${clip.name} frame ${i}: arms lowered, intact ${size.toArray()}`);
       for (const side of cycle ? ['L', 'R'] : []) {
         const hand = scene.getObjectByName(`hand_${side}`)!.getWorldPosition(new Vector3()).y;
         // The forward swing of the jog brings the wrist about 1 cm higher than the procedural clips allow.

@@ -123,7 +123,7 @@ app.innerHTML = `
           <button type="button" id="hud-help" aria-expanded="false" aria-controls="hud-help-text">Ayuda</button>
           <button type="button" id="hud-reset">Restablecer posición</button>
         </div>
-        <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Mantén Shift: correr. Espacio: saltar. F: lanzar. Cerca de la silla (por cualquiera de sus lados) o la cama, E: sentarse y levantarse. Sentado, L: abrir o cerrar el portátil. Sal por los lados abiertos: en la zona marcada frente a cada cartel, Enter (o un clic en el cartel) abre el portafolio, GitHub o LinkedIn. Empuja las letras del nombre para tirarlas. Arrastra para girar la cámara: el movimiento sigue la vista. Las teclas no actúan mientras usas un desplegable o un control deslizante.</p>
+        <p id="hud-help-text" class="hud-help" hidden>W A S D o flechas: caminar. Mantén Shift: correr. Espacio: saltar (también en marcha). F: lanzar. J: puñetazo, K: patada (mantén para cargar, suelta para golpear). Cerca de la silla (por cualquiera de sus lados) o la cama, E: sentarse y levantarse. Sentado, L: abrir o cerrar el portátil. Sal por los lados abiertos: en la zona marcada frente a cada cartel, Enter (o un clic en el cartel) abre el portafolio, GitHub o LinkedIn. Empuja las letras del nombre para tirarlas. Arrastra para girar la cámara: el movimiento sigue la vista. Las teclas no actúan mientras usas un desplegable o un control deslizante.</p>
       </section>
       <div class="view-caption"><span class="caption-line" aria-hidden="true"></span><span id="view-label">Vista tres cuartos</span><span class="orbit-label">ÓRBITA 360°</span></div>
       <footer class="viewport-footer"><p><span class="interaction-icon" aria-hidden="true">↔</span> Arrastrar para girar <span class="hint-divider">/</span> Scroll para zoom</p><p id="model-stats" aria-label="Estadísticas del modelo">— mallas <span aria-hidden="true">·</span> — triángulos</p></footer>
@@ -166,7 +166,7 @@ let running = false;
 let movementState: MovementState | null = null;
 let movementText: string | undefined;
 const movementHints: Record<MovementState, string> = {
-  get ready() { return `W A S D o flechas para caminar · Shift: correr ${running ? 'activado' : 'desactivado'} · Espacio para saltar · F para lanzar`; },
+  get ready() { return `W A S D o flechas para caminar · Shift: correr ${running ? 'activado' : 'desactivado'} · Espacio para saltar · F para lanzar · J/K: puño/patada`; },
   unavailable: 'Elige V1 Animada o V4 Animada para moverte por la habitación.',
   seated: 'Está sentado: elige Reposo en Animación para volver a caminar.',
   interacting: 'E: sentarse o levantarse · L: portátil',
@@ -227,7 +227,7 @@ let selectedLight: LightPreset = 'neutral';
 let animationState: AnimationState | null = null;
 const selectedGait: Record<Gait, string> = { ...DEFAULT_GAIT_CLIPS };
 const clipLabels: Record<string, string> = {
-  idle: 'Reposo', walk: 'Caminar', walk_ual: 'Caminar · UAL', run: 'Correr', run_ual_jog: 'Correr · trote UAL', run_ual_sprint: 'Correr · sprint UAL', jump: 'Saltar', jump_ual: 'Saltar · UAL', throw_ual: 'Lanzar · UAL 2',
+  idle: 'Reposo', walk: 'Caminar', walk_ual: 'Caminar · UAL', run: 'Correr', run_ual_jog: 'Correr · trote UAL', run_ual_sprint: 'Correr · sprint UAL', jump: 'Saltar', jump_ual: 'Saltar · UAL', throw_ual: 'Lanzar · UAL 2', punch_ual: 'Puñetazo · UAL', kick: 'Patada',
   sit_down_chair: 'Sentarse · silla', seated_chair: 'Sentado · silla', stand_up_chair: 'Levantarse · silla', typing_chair: 'Escribir · silla',
   sit_down_bed: 'Sentarse · cama', seated_bed: 'Sentado · cama', stand_up_bed: 'Levantarse · cama', typing_bed: 'Escribir · cama',
 };
@@ -250,7 +250,7 @@ function updateAnimation(state: AnimationState | null): void {
     animationTimeline.setAttribute('aria-valuetext', animationTime.value);
     return;
   }
-  const order = ['idle', 'walk', 'walk_ual', 'run', 'run_ual_jog', 'run_ual_sprint', 'jump', 'jump_ual', 'throw_ual', ...['chair', 'bed'].flatMap((seat) => ['sit_down', 'seated', 'typing', 'stand_up'].map((action) => `${action}_${seat}`))];
+  const order = ['idle', 'walk', 'walk_ual', 'run', 'run_ual_jog', 'run_ual_sprint', 'jump', 'jump_ual', 'throw_ual', 'punch_ual', 'kick', ...['chair', 'bed'].flatMap((seat) => ['sit_down', 'seated', 'typing', 'stand_up'].map((action) => `${action}_${seat}`))];
   const rank = (clip: string) => (order.includes(clip) ? order.indexOf(clip) : order.length);
   const clips = [...state.clips].sort((a, b) => rank(a) - rank(b));
   if (clips.length !== animationClip.options.length || clips.some((clip, index) => animationClip.options[index]?.value !== clip)) {

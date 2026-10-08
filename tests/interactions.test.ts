@@ -67,7 +67,7 @@ test('V4 interaction GLB sits on the room seats and types on the desk laptop', a
   const { scene, animations } = await load('developer-v4-interactions');
   const room = (await load('room')).scene;
   room.updateMatrixWorld(true);
-  assert.equal(animations.length, 17, '12 seat and locomotion clips plus the UAL walk, two runs, jump and throw');
+  assert.equal(animations.length, 19, '12 seat and locomotion clips plus the UAL walk, two runs, jump, throw and punch, and the kick');
   assert.equal(animations.find((clip) => clip.name.startsWith('laptop_')), undefined, 'no laptop draw/stow clips: the laptop just appears');
   const manifest = JSON.parse(await readFile(new URL('../public/models/developer-v4-interactions.manifest.json', import.meta.url), 'utf8'));
   const mixer = new AnimationMixer(scene);

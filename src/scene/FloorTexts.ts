@@ -185,15 +185,16 @@ export class FloorTexts {
       y += 0.62;
       const rows: [string[], MessageKey][] = [
         [['W', 'A', 'S', 'D'], 'controls.move'], [['SHIFT'], 'controls.run'], [[t('key.space')], 'controls.jump'],
-        [['E'], 'controls.sit'], [['L'], 'controls.laptop'], [['F'], 'controls.throw'], [['ENTER'], 'controls.open'],
+        [['E'], 'controls.sit'], [['L'], 'controls.laptop'], [['F'], 'controls.throw'], [['J', 'K'], 'controls.strike'],
+        [['ENTER'], 'controls.open'],
       ];
       for (const [keys, label] of rows) {
         let x = left;
         scaled(() => {
           for (const key of keys) x += (drawKey(context, key, x * 100, (y - 0.2) * 100, 40) + 8) / 100;
         });
-        scaled(() => text(label, (left + 1.9) * 100, y * 100, 30, 'left', 500));
-        y += 0.56;
+        scaled(() => text(label, (left + 1.9) * 100, y * 100, 30, 'left', 500, (w / 2 - left - 2.1) * 100));
+        y += 0.5;
       }
     } else if (block.id === 'playground') {
       // The zone's name, and under it an arrow towards the playground.

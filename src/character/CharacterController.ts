@@ -14,7 +14,7 @@ export const CLIP_ALTERNATIVES: Readonly<Record<string, { gait: Gait; speed?: nu
   walk_ual: { gait: 'walk', speed: 0.8273764095805362 },
   run_ual_jog: { gait: 'run', speed: 5.2108531055844995 },
   run_ual_sprint: { gait: 'run', speed: 2.9406575122562426 },
-  jump_ual: { gait: 'jump', jump: { duration: 1.3333333333333333, air: [0.15, 0.375], distance: 0.45 } },
+  jump_ual: { gait: 'jump', jump: { duration: 1.6666666666666667, air: [0.12, 0.48], distance: 0.9 } },
 };
 /** Clips that play while walking, running and jumping when the model has them (otherwise the procedural ones). */
 export const DEFAULT_GAIT_CLIPS: Readonly<Record<Gait, string>> = { walk: 'walk_ual', run: 'run_ual_sprint', jump: 'jump_ual' };
@@ -28,6 +28,25 @@ export const THROW_HAND = 'hand_L';
 export const THROW_RELEASE = 0.53;
 /** Launch speed of the thrown laptop (m/s) along the character's facing and upwards. */
 export const THROW_SPEED = { forward: 5.5, up: 1.8 };
+/**
+ * Charged strikes (J punches, K kicks; manifest `strike`): the clip plays to `windup` and holds there while the key
+ * stays down, then strikes on release; at `hit` seconds the striking bone pushes what is in front of it.
+ * punch_ual is UAL's Punch_Cross; neither library has a kick, so `kick` is procedural. As with the throw,
+ * the rig's side names are mirrored: hand_L and foot_L are the character's right hand and foot.
+ */
+export type StrikeKind = 'punch' | 'kick';
+export const STRIKES: Readonly<Record<StrikeKind, { clip: string; bone: string; windup: number; hit: number; reach: number }>> = {
+  punch: { clip: 'punch_ual', bone: 'hand_L', windup: 0.26666666666666666, hit: 0.4666666666666667, reach: 0.15 },
+  kick: { clip: 'kick', bone: 'foot_L', windup: 0.36, hit: 0.504, reach: 0.2 },
+};
+/** Seconds of holding that charge a strike fully; a tap strikes at power STRIKE_MIN_POWER. */
+export const STRIKE_CHARGE = 1.2;
+export const STRIKE_MIN_POWER = 0.25;
+/** Power of a strike (STRIKE_MIN_POWER … 1) after charging for `held` seconds. */
+export function strikePower(held: number): number {
+  const charge = Math.min(Math.max(held / STRIKE_CHARGE, 0), 1);
+  return STRIKE_MIN_POWER + (1 - STRIKE_MIN_POWER) * charge;
+}
 /** The character moves this many times faster than the clips were authored for; the clips play faster to keep the feet planted. */
 export const SPEED_SCALE = 2;
 export const WALK_SPEED = WALK_CLIP_SPEED * SPEED_SCALE;
@@ -35,7 +54,11 @@ export const RUN_SPEED = RUN_CLIP_SPEED * SPEED_SCALE;
 /** The in-place jump clip (rig manifest): its length, the fraction with the feet off the floor and the hop length. */
 export const JUMP: JumpSpec = { duration: 0.8, air: [0.26, 0.7], distance: 0.45 };
 /** Peak height of the feet during the jump, for what the character touches in the air (the clip draws the hop itself). */
-export const JUMP_HEIGHT = 0.4;
+export const JUMP_HEIGHT = 0.55;
+/** A jump started while moving keeps the ground speed and skips most of the crouch: the clip starts this long before take-off. */
+export const MOVING_JUMP_LEAD = 0.06;
+/** Seconds a moving jump stays in its landing before the walk or run takes over again (keys still held). */
+export const LANDING_HOLD = 0.06;
 export const CHARACTER_RADIUS = 0.3;
 export const MAX_STEP = 0.05;
 
@@ -62,6 +85,8 @@ export class CharacterController {
   /** Seconds into the current jump, or undefined on the ground. */
   private jumpTime?: number;
   private jumpSpeed = 0;
+  /** The jump was started while walking or running: it keeps going and ends at landing if keys are still held. */
+  private movingJump = false;
 
   constructor(spawn: { position: Point2; yaw: number }, boxes: readonly Box2[], floor: Floor, radius = CHARACTER_RADIUS) {
     this.spawn = { position: { ...spawn.position }, yaw: spawn.yaw };
@@ -77,22 +102,32 @@ export class CharacterController {
     this.yaw = this.spawn.yaw;
     this.speed = 0;
     this.jumpTime = undefined;
+    this.movingJump = false;
   }
 
   get jumping(): boolean {
     return this.jumpTime !== undefined;
   }
 
-  /** Start a short forward hop along the current facing; refused while already in the air. */
+  /**
+   * Jump along the current facing; refused while already in the air. Standing, it is a hop that covers its
+   * distance while airborne. Moving, it keeps the walk or run speed throughout, starts just before take-off
+   * (see `jumpStart`) and hands back to the walk or run on landing while keys are held.
+   */
   jump(): boolean {
     if (this.jumping) return false;
-    this.jumpTime = 0;
-    // The hop covers its distance while airborne; a run carries some of its extra speed into it.
     const jump = this.jumpSpec;
     const air = (jump.air[1] - jump.air[0]) * jump.duration;
-    this.jumpSpeed = Math.max(jump.distance / air, this.speed * 0.8);
-    this.speed = 0;
+    this.movingJump = this.speed > 0.3;
+    this.jumpTime = this.movingJump ? Math.max(0, jump.air[0] * jump.duration - MOVING_JUMP_LEAD) : 0;
+    this.jumpSpeed = Math.max(jump.distance / air, this.speed);
+    if (!this.movingJump) this.speed = 0;
     return true;
+  }
+
+  /** Seconds into the jump clip where the current jump started (the viewer starts the clip there). */
+  get jumpStart(): number {
+    return this.movingJump ? Math.max(0, this.jumpSpec.air[0] * this.jumpSpec.duration - MOVING_JUMP_LEAD) : 0;
   }
 
   /** Direction on the floor for an intent, given the camera azimuth (radians around +Y, 0 = looking from +Z). */
@@ -108,7 +143,7 @@ export class CharacterController {
 
   update(dt: number, intent: MoveIntent, cameraAzimuth: number): Locomotion {
     const step = Math.min(Math.max(dt, 0), MAX_STEP);
-    if (this.jumpTime !== undefined) return this.hop(step);
+    if (this.jumpTime !== undefined) return this.hop(step, intent, cameraAzimuth);
     const direction = CharacterController.direction(intent, cameraAzimuth);
     const moving = direction.x !== 0 || direction.z !== 0;
     const target = moving ? (intent.run ? RUN_SPEED : WALK_SPEED) : 0;
@@ -129,19 +164,42 @@ export class CharacterController {
     return this.locomotion();
   }
 
-  /** Crouch and landing stay in place; the forward motion happens while the feet are off the floor. */
-  private hop(step: number): Locomotion {
+  /**
+   * A standing jump's crouch and landing stay in place; the forward motion happens while the feet are off the
+   * floor. A moving jump also keeps its ground speed before take-off and, after landing, either hands back to
+   * the walk or run (keys held) or slows to a stop.
+   */
+  private hop(step: number, intent: MoveIntent, cameraAzimuth: number): Locomotion {
     const start = this.jumpTime!;
     const { duration, air } = this.jumpSpec;
     const end = Math.min(start + step, duration);
     const [takeOff, landing] = air.map((fraction) => fraction * duration);
     const airborne = Math.max(0, Math.min(end, landing) - Math.max(start, takeOff));
-    if (airborne > 0) {
-      const travel = this.jumpSpeed * airborne;
+    let travel = this.jumpSpeed * airborne;
+    if (this.movingJump) {
+      const grounded = end - start - airborne;
+      if (end > landing) {
+        const direction = CharacterController.direction(intent, cameraAzimuth);
+        const moving = direction.x !== 0 || direction.z !== 0;
+        if (moving && end >= landing + LANDING_HOLD) {
+          // Keys still held: back to the walk or run at the speed the jump carried (update() adjusts it from there).
+          this.jumpTime = undefined;
+          this.movingJump = false;
+          return this.locomotion();
+        }
+        if (!moving) this.speed *= Math.exp(-grounded * 8);
+      }
+      travel += this.speed * grounded;
+    }
+    if (travel > 0) {
       this.position = sweep(this.position, { x: Math.sin(this.yaw) * travel, z: Math.cos(this.yaw) * travel }, this.radius, this.boxes, this.floor);
     }
     this.jumpTime = end >= duration ? undefined : end;
-    return this.jumping ? 'jump' : 'idle';
+    if (!this.jumping) {
+      this.movingJump = false;
+      if (this.speed < 0.05) this.speed = 0;
+    }
+    return this.jumping ? 'jump' : this.locomotion();
   }
 
   /** Whether the feet are off the floor right now (the character cannot enter sign zones mid-air). */

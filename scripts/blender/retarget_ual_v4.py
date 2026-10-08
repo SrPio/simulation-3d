@@ -2,7 +2,7 @@
 
 Sources (CC0 1.0, models and animations by Quaternius), unzipped under assets/external/:
 - UAL 1: https://opengameart.org/content/universal-animation-library (universal_animation_librarystandard.zip)
-  into quaternius-ual/ual/: Walk_Loop, Jog_Fwd_Loop, Sprint_Loop, Jump_Start + Jump_Land.
+  into quaternius-ual/ual/: Walk_Loop, Jog_Fwd_Loop, Sprint_Loop, Jump_Start + Jump_Loop + Jump_Land, Punch_Cross.
 - UAL 2: https://opengameart.org/content/universal-animation-library-2 (universal_animation_library_2standard.zip)
   into quaternius-ual2/ual/: OverhandThrow.
 Both share the same mannequin (T-pose, facing -Y) with different bone names. Loops are in place and keep
@@ -15,7 +15,11 @@ the source offsets scaled to V4's leg length, the knees use the same analytic IK
 the upper arm keeps off the hoodie (ARM_MIN_SPREAD), the shoes stay above the floor and the toe never tips
 up. The trunk keeps part of the source lean and the fingers keep a procedural hand pose.
 
-Adds every ALTERNATIVES clip to developer-v4-interactions.blend and its manifest; export it afterwards with
+Neither library has a kick, so `kick` is procedural (KICK): the right knee chambers, the leg snaps forward at
+hip height and comes back, with the fists up in guard. Strike clips (punch_ual, kick) record in the manifest
+`strike` the striking bone, the wind-up time the viewer holds while the key charges the blow, and the hit time.
+
+Adds every ALTERNATIVES clip (and the kick) to developer-v4-interactions.blend and its manifest; export it afterwards with
 export_assets.py --variant v4-interactions --replace-generated. --render writes side and three-quarter
 sheets per kind (the procedural clip first when there is one) to assets/renders/character-v4-ual/.
 """
@@ -65,9 +69,13 @@ ALTERNATIVES = {
     'walk_ual': {'source': 'ual1', 'kind': 'walk', 'action': 'Walk_Loop'},
     'run_ual_jog': {'source': 'ual1', 'kind': 'run', 'action': 'Jog_Fwd_Loop'},
     'run_ual_sprint': {'source': 'ual1', 'kind': 'run', 'action': 'Sprint_Loop'},
-    'jump_ual': {'source': 'ual1', 'kind': 'jump', 'segments': [('Jump_Start', 0.0, 0.40), ('Jump_Land', 0.0, 0.80)],
-                 'fade': 0.12, 'pad': (0.12, 0.15), 'hop': 0.25, 'crouch': 0.55,
+    # Jump_Loop (the in-air pose) between take-off and landing keeps the feet off the floor longer for a higher hop.
+    'jump_ual': {'source': 'ual1', 'kind': 'jump',
+                 'segments': [('Jump_Start', 0.0, 0.40), ('Jump_Loop', 0.0, 0.42), ('Jump_Land', 0.0, 0.80)],
+                 'fade': 0.12, 'pad': (0.12, 0.15), 'hop': 0.55, 'crouch': 0.55, 'distance': 0.9,
                  'air': (('Jump_Start', 0.07), ('Jump_Land', 0.09))},
+    'punch_ual': {'source': 'ual1', 'kind': 'punch', 'segments': [('Punch_Cross', 0.0, 1.0)],
+                  'fade': 0.0, 'pad': (0.15, 0.25), 'crouch': 0.7, 'free_arms': True},
     'throw_ual': {'source': 'ual2', 'kind': 'throw', 'segments': [('OverhandThrow', 0.0, 32 / 24)],
                   'fade': 0.0, 'pad': (0.20, 0.25), 'trunk': 1.25, 'crouch': 0.55, 'free_arms': True},
 }
@@ -80,10 +88,23 @@ TRUNK_FOLLOW = {'pelvis': 0.7, 'spine': 0.55, 'chest': 0.55, 'neck': 0.5, 'head'
 ARM_MIN_SPREAD = math.pi / 2 - rig.ARM_LOWER - 0.03
 TOE_LIFT = 0.015
 # Finger curl of the procedural clips: a loose hand walking, a fist running.
-CURL = {'walk': 0.35, 'run': 0.55, 'jump': 0.35, 'throw': 0.45}
+CURL = {'walk': 0.35, 'run': 0.55, 'jump': 0.35, 'throw': 0.45, 'punch': 0.95, 'kick': 0.9}
 # The planted foot pivots fast; interpolating between the 30 fps keys sinks the sole ~1-2 cm, so keys keep this clearance.
 SOLE_CLEARANCE = 0.012
 JUMP_DISTANCE = rig.JUMP_DISTANCE
+# Procedural kick with the character's right leg (rig side L, -X). Phase keys, smoothstepped between: chamber
+# raises the knee with the foot tucked, extend snaps the foot forward, guard raises the fists, lean tips the
+# trunk (negative is backwards) and shift moves the hips over the standing foot.
+KICK = {'frames': 36, 'leg': 'L', 'windup': 0.30, 'hit': 0.42,
+        'keys': [(0.00, dict(chamber=0, extend=0, guard=0, lean=0, shift=0)),
+                 (0.30, dict(chamber=1, extend=0, guard=1, lean=-0.10, shift=1)),
+                 (0.42, dict(chamber=1, extend=1, guard=1, lean=-0.24, shift=1)),
+                 (0.56, dict(chamber=1, extend=0, guard=1, lean=-0.10, shift=1)),
+                 (0.80, dict(chamber=0, extend=0, guard=0.5, lean=0, shift=0.3)),
+                 (1.00, dict(chamber=0, extend=0, guard=0, lean=0, shift=0))]}
+# Ankle (y, z) chambered under the raised knee and at full reach; x stays near the rest stance.
+KICK_CHAMBER = (0.04, 0.62)
+KICK_REACH = (-0.70, 0.86)
 
 
 def bone(source, name, side=None):
@@ -297,12 +318,79 @@ def make_pose(defs, src_rest, clip, scale, shoes):
     return pose
 
 
+def kick_keys(phase):
+    keys = KICK['keys']
+    for (a, start), (b, end) in zip(keys, keys[1:]):
+        if a <= phase <= b:
+            t = smooth((phase - a) / (b - a))
+            return {name: start[name] + (end[name] - start[name]) * t for name in start}
+    return dict(keys[-1][1])
+
+
+def make_kick(defs):
+    """Front kick from idle frame 0 and back to it: chamber, snap at hip height, re-chamber, foot down."""
+    rest = {name: rig.matrix_between(h, t, rig.bone_hinge(name)) for name, (h, t, _) in defs.items()}
+    head_of = {name: h for name, (h, _, _) in defs.items()}
+    support = 1 if KICK['leg'] == 'L' else -1  # the other foot (+X for rig side L) carries the weight
+
+    def pose(defs_, name_, phase):
+        k = kick_keys(phase)
+        out = {'root': rest['root']}
+        body = Matrix.Translation((support * 0.05 * k['shift'], 0, -0.04 * k['chamber'])) @ rig.rot_about(head_of['pelvis'], rig.rx(k['lean']))
+        chest = body @ rig.rot_about(head_of['spine'], rig.rx(-0.45 * k['lean']))
+        head = chest @ rig.rot_about(head_of['neck'], rig.rx(-0.35 * k['lean']))
+        out.update({'pelvis': body @ rest['pelvis'], 'spine': body @ rest['spine'], 'chest': chest @ rest['chest'],
+                    'neck': chest @ rest['neck'], 'head': head @ rest['head']})
+        g = k['guard']
+        for side, label in ((-1, 'L'), (1, 'R')):
+            # Fists up in front of the chest; the kicking side's arm swings back as the leg snaps forward.
+            counter = (0.45 if label == KICK['leg'] else -0.25) * k['extend']
+            rig.arm_pose(out, chest, rest, head_of, side, label,
+                         rig.ARM_LOWER - 0.20 * g, 0.03 * math.sin(side) * (1 - g) - 0.55 * g + counter,
+                         0.16 + 1.75 * g, rig.ARM_HANG * (1 - 0.8 * g), 0.30 + 0.65 * g)
+            hip_rest, knee_rest, _ = defs[f'thigh_{label}']
+            _, ankle_rest, _ = defs[f'shin_{label}']
+            foot_head, foot_tail, _ = defs[f'foot_{label}']
+            hip = body @ hip_rest
+            ankle = ankle_rest.copy()
+            turn = Matrix.Identity(4)
+            if label == KICK['leg']:
+                chamber = Vector((ankle_rest.x, *KICK_CHAMBER))
+                reach = Vector((ankle_rest.x * 0.85, *KICK_REACH))
+                ankle = ankle_rest.lerp(chamber, k['chamber']).lerp(reach, k['extend'])
+                # Toes pointed down while chambered, along the leg at full reach.
+                along = (foot_tail - foot_head).normalized()
+                pointed = along.lerp(Vector((0, -0.45, -0.89)), k['chamber']).lerp(Vector((0, -0.97, 0.10)), k['extend'])
+                turn = along.rotation_difference(pointed.normalized()).to_matrix().to_4x4()
+            knee = rig.knee_position(hip, ankle, (knee_rest - hip_rest).length, (ankle_rest - knee_rest).length)
+            out[f'thigh_{label}'] = rig.matrix_between(hip, knee, (1, 0, 0))
+            out[f'shin_{label}'] = rig.matrix_between(knee, ankle, (1, 0, 0))
+            out[f'foot_{label}'] = Matrix.Translation(ankle) @ turn @ Matrix.Translation(-ankle_rest) @ rest[f'foot_{label}']
+        return out
+
+    return pose
+
+
+def strike_timing(defs, pose, frames, pad_frames):
+    """Punch: the hit is the frame a fist is furthest forward (-Y); the wind-up is where it is furthest back before that."""
+    best = None
+    for label in ('L', 'R'):
+        ys = [pose(defs, None, i / frames)[f'hand_{label}'].translation.y for i in range(frames + 1)]
+        hit = min(range(frames + 1), key=lambda i: ys[i])
+        if best is None or ys[hit] < best[0]:
+            windup = max(range(pad_frames, hit), key=lambda i: ys[i])
+            best = (ys[hit], label, windup, hit)
+    _, label, windup, hit = best
+    return {'bone': f'hand_{label}', 'windup': windup / rig.FPS, 'hit': hit / rig.FPS}
+
+
 def remove_previous(armature):
     animation = armature.animation_data
+    names = [*ALTERNATIVES, 'kick']
     for track in list(animation.nla_tracks):
-        if track.name in ALTERNATIVES:
+        if track.name in names:
             animation.nla_tracks.remove(track)
-    for clip in ALTERNATIVES:
+    for clip in names:
         if clip in bpy.data.actions:
             bpy.data.actions.remove(bpy.data.actions[clip])
 
@@ -318,8 +406,8 @@ def render_sheets(armature):
     RENDERS.mkdir(parents=True, exist_ok=True)
     for kind in CURL:
         names = [name for name, spec in ALTERNATIVES.items() if spec['kind'] == kind]
-        clips = ([kind] if kind in bpy.data.actions else []) + names
-        count = 6 if kind in ('walk', 'run') else 8
+        clips = ([kind] if kind in bpy.data.actions and kind not in names else []) + names
+        count = 6 if kind in ('walk', 'run') else 10 if kind in ('punch', 'kick') else 8
         for view in ('left', 'three-quarter'):
             rows = []
             for clip in clips:
@@ -371,14 +459,24 @@ def main():
             entry['speed'] = ground_speed(data, scale)
         if data['kind'] == 'jump':
             first, last = data['air']
-            entry.update({'speed': 0, 'distance': JUMP_DISTANCE, 'air': [first / data['frames'], last / data['frames']]})
+            entry.update({'speed': 0, 'distance': data.get('distance', JUMP_DISTANCE), 'air': [first / data['frames'], last / data['frames']]})
+        if data['kind'] == 'punch':
+            entry['strike'] = strike_timing(defs, rig.pose_matrices, data['frames'], round(data['pad'][0] * rig.FPS))
         entries.append(entry)
-        print(f'{clip}: {data["frames"]} frames, {json.dumps({k: v for k, v in entry.items() if k in ("speed", "air")})}')
-    clip_names = [name for name in armature.get('clips', '').split(',') if name and name not in ALTERNATIVES]
-    armature['clips'] = ','.join([*clip_names, *ALTERNATIVES])
+        print(f'{clip}: {data["frames"]} frames, {json.dumps({k: v for k, v in entry.items() if k in ("speed", "air", "strike")})}')
+    rig.CLIPS = {'kick': KICK['frames']}
+    rig.pose_matrices = make_kick(defs)
+    rig.create_actions(armature, defs)
+    seconds = KICK['frames'] / rig.FPS
+    entries.append({'name': 'kick', 'duration': seconds, 'loop': False, 'source': 'procedural',
+                    'strike': {'bone': f'foot_{KICK["leg"]}', 'windup': KICK['windup'] * seconds, 'hit': KICK['hit'] * seconds}})
+    print(f'kick: {KICK["frames"]} frames, {json.dumps(entries[-1]["strike"])}')
+    names = [*ALTERNATIVES, 'kick']
+    clip_names = [name for name in armature.get('clips', '').split(',') if name and name not in names]
+    armature['clips'] = ','.join([*clip_names, *names])
     bpy.ops.wm.save_as_mainfile(filepath=str(TARGET), compress=True)
     manifest = json.loads(MANIFEST.read_text(encoding='utf-8'))
-    manifest['clips'] = [clip for clip in manifest['clips'] if clip['name'] not in ALTERNATIVES] + entries
+    manifest['clips'] = [clip for clip in manifest['clips'] if clip['name'] not in names] + entries
     MANIFEST.write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
     print(f'V4 UAL clips: {TARGET}')
     if args.render:
