@@ -223,6 +223,43 @@ export class FloorTexts {
         context.fill();
       }
       scaled(() => text('floor.bowling', 0, (d / 2 - 0.38) * 100, 40, 'center', 700));
+    } else if (block.id === 'about') {
+      // The plaza around the signs: a faint floor of its own, a dashed border and its name at the front left.
+      context.save();
+      context.globalAlpha = 0.1;
+      context.beginPath();
+      context.roundRect(-w / 2 + 0.1, -d / 2 + 0.1, w - 0.2, d - 0.2, 0.5);
+      context.fill();
+      context.restore();
+      context.lineWidth = 0.06;
+      context.setLineDash([0.32, 0.2]);
+      context.beginPath();
+      context.roundRect(-w / 2 + 0.1, -d / 2 + 0.1, w - 0.2, d - 0.2, 0.5);
+      context.stroke();
+      context.setLineDash([]);
+      scaled(() => text('floor.about', (-w / 2 + 0.45) * 100, (d / 2 - 0.5) * 100, 64, 'left', 700, (w / 2) * 100));
+    } else if (block.id === 'targets') {
+      // The lane's sides up to the throw line, the line itself, and the names in front of it.
+      const line = block.line;
+      context.lineWidth = 0.05;
+      context.setLineDash([0.3, 0.18]);
+      for (const side of [-1, 1]) {
+        context.beginPath();
+        context.moveTo(side * (w / 2 - 0.08), -d / 2 + 0.1);
+        context.lineTo(side * (w / 2 - 0.08), line);
+        context.stroke();
+      }
+      context.setLineDash([]);
+      context.fillRect(-w / 2 + 0.08, line - 0.05, w - 0.16, 0.1);
+      scaled(() => text('floor.targetsLine', 0, (line + 0.3) * 100, 26, 'center', 600, (w - 0.3) * 100));
+      scaled(() => text('floor.targets', 0, (d / 2 - 0.35) * 100, 46, 'center', 700, (w - 0.3) * 100));
+    } else if (block.id === 'tech') {
+      // A frame around the tower's footprint and its name in front.
+      context.lineWidth = 0.05;
+      context.setLineDash([0.25, 0.15]);
+      context.strokeRect(-1.45, -d / 2 + 0.05, 2.9, 0.8);
+      context.setLineDash([]);
+      scaled(() => text('floor.tech', 0, (d / 2 - 0.5) * 100, 52, 'center', 700, (w - 0.3) * 100));
     } else if (block.id === 'footprints') {
       // Shoe prints walking out of the room's front corner (the block's far-left corner) along a gentle S, left and
       // right in turn, fading as they get further from the room.

@@ -99,7 +99,10 @@ function fenceGeometry(halfX: number, halfZ: number, height: number): BufferGeom
 
 /** Title on the ground and label of a zone in the current language (the GLB's words when there is no translation). */
 export function signText(sign: Sign): { title: string; label: string } {
-  if (sign.kind === 'reset') return { title: t('zone.title'), label: t(sign.target === 'bricks' ? 'zone.bricks' : 'zone.bowling') };
+  if (sign.kind === 'reset') {
+    const key = `zone.${sign.target}` as MessageKey;
+    return { title: t('zone.title'), label: key in MESSAGES.es ? t(key) : t('zone.title') };
+  }
   const key = (part: string) => `sign.${sign.id}.${part}` as MessageKey;
   const known = key('title') in MESSAGES.es;
   return { title: known ? t(key('title')) : sign.title || sign.id.toUpperCase(), label: known ? t(key('label')) : sign.label };

@@ -9,6 +9,10 @@ type Quat = Vec & { w: number };
 export type PieceBody = { position: Vec; quaternion: Quat; half: [number, number, number]; shape?: PieceShape; mass?: number; group?: PieceGroup };
 /** Something pieces bounce off: a box turned about +Y (sign boards, the room platform, furniture, walls). */
 export type StaticBox = { center: Vec; half: [number, number, number]; yaw: number };
+/** A standing target's disc: its centre, radius and the yaw of its face (local +Z). Thrown laptops that hit it are reported. */
+export type TargetDisc = { center: Vec; radius: number; yaw: number };
+/** A thrown laptop hitting a target disc: which target, how far from its centre (in the disc's plane) and the laptop. */
+export type TargetHit = { target: number; distance: number; laptop: ThrownLaptop };
 /** Character feet; a kinematic capsule of spheres above them pushes the pieces. */
 export type Pusher = { x: number; y: number; z: number };
 
@@ -43,6 +47,8 @@ const SETTINGS: Record<PieceGroup | 'laptop', Settings> = {
   keys: { material: 'letter', sleepSpeed: 0.2, angularDamping: 0.5, linearDamping: 0.1 },
   bricks: { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.4, linearDamping: 0.1 },
   bowling: { material: 'pin', sleepSpeed: 0.15, angularDamping: 0.4, linearDamping: 0.1 },
+  decor: { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.4, linearDamping: 0.1 },
+  tech: { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.4, linearDamping: 0.1 },
   laptop: { material: 'laptop', sleepSpeed: 0.15, angularDamping: 0.3, linearDamping: 0.05 },
 };
 /** The ball rolls: it keeps less damping than the pins but still comes to rest on the flat ground. */
@@ -77,12 +83,16 @@ export class PropPhysics {
   private readonly materials = new Map<string, MaterialType>();
   private idle = true;
   private clock = 0;
+  /** Called when a thrown laptop first touches a target disc (once per laptop and target). */
+  onTargetHit?: (hit: TargetHit) => void;
+  private readonly targetBodies: BodyType[] = [];
+  private readonly scored = new WeakMap<ThrownLaptop, Set<number>>();
 
-  static async load(pieces: readonly PieceBody[], statics: readonly StaticBox[], groundY: number): Promise<PropPhysics> {
-    return new PropPhysics(await import('cannon-es'), pieces, statics, groundY);
+  static async load(pieces: readonly PieceBody[], statics: readonly StaticBox[], groundY: number, targets: readonly TargetDisc[] = []): Promise<PropPhysics> {
+    return new PropPhysics(await import('cannon-es'), pieces, statics, groundY, targets);
   }
 
-  constructor(cannon: Cannon, pieces: readonly PieceBody[], statics: readonly StaticBox[], groundY: number) {
+  constructor(cannon: Cannon, pieces: readonly PieceBody[], statics: readonly StaticBox[], groundY: number, targets: readonly TargetDisc[] = []) {
     const { Body, Box, ContactMaterial, Cylinder, Material, Plane, SAPBroadphase, Sphere, Vec3, World } = cannon;
     this.cannon = cannon;
     // Copied field by field: three.js vectors and quaternions keep their values in accessors.
@@ -112,6 +122,29 @@ export class PropPhysics {
       body.position.set(box.center.x, box.center.y, box.center.z);
       body.quaternion.setFromEuler(0, box.yaw, 0);
       this.world.addBody(body);
+    }
+    // Target discs: thin static boxes facing their local +Z; a laptop touching one reports where it hit.
+    for (const [index, disc] of targets.entries()) {
+      const body = new Body({ type: Body.STATIC, shape: new Box(new Vec3(disc.radius, disc.radius, 0.03)), material: groundMaterial });
+      body.position.set(disc.center.x, disc.center.y, disc.center.z);
+      body.quaternion.setFromEuler(0, disc.yaw, 0);
+      body.addEventListener('collide', (event: { body: BodyType }) => {
+        const laptop = this.laptops.find((entry) => entry.base === event.body || entry.lid === event.body);
+        if (!laptop) return;
+        const seen = this.scored.get(laptop) ?? new Set<number>();
+        if (seen.has(index)) return;
+        seen.add(index);
+        this.scored.set(laptop, seen);
+        // Where the laptop's middle crosses the disc's plane along its flight, in the disc's own axes: its distance from
+        // the centre across the face (the first contact is often a corner of the wide laptop, ahead of its middle).
+        const inverse = body.quaternion.conjugate();
+        const local = inverse.vmult(laptop.base.position.vsub(body.position));
+        const speed = inverse.vmult(laptop.base.velocity);
+        const along = Math.abs(speed.z) > 0.5 ? Math.max(0, -local.z / speed.z) : 0;
+        this.onTargetHit?.({ target: index, distance: Math.hypot(local.x + speed.x * along, local.y + speed.y * along), laptop });
+      });
+      this.world.addBody(body);
+      this.targetBodies.push(body);
     }
     for (const piece of this.rest) {
       const shape = piece.shape ?? { kind: 'box' };
@@ -233,6 +266,11 @@ export class PropPhysics {
     }
     if (hits) this.idle = false;
     return hits;
+  }
+
+  /** Take every thrown laptop away (they shrink out in the viewer like retired ones); the pieces stay as they are. */
+  clearThrown(): void {
+    for (const laptop of [...this.laptops]) this.retire(laptop);
   }
 
   private retire(laptop: ThrownLaptop): void {
@@ -367,13 +405,19 @@ export class PropPhysics {
   /** How many pieces lie toppled (tilted more than 45 degrees), of the given groups or all of them; balls never count. */
   fallen(groups?: readonly PieceGroup[]): number {
     let count = 0;
-    for (const [index, body] of this.bodies.entries()) {
+    for (const index of this.bodies.keys()) {
       if (this.round[index] || (groups && !groups.includes(this.groups[index]))) continue;
-      const q = body.quaternion;
-      // Y component of the piece's up axis.
-      const upY = 1 - 2 * (q.x * q.x + q.z * q.z);
-      if (upY < Math.SQRT1_2) count++;
+      if (this.toppled(index)) count++;
     }
     return count;
+  }
+
+  /** Whether piece `index` is tilted more than 45 degrees or lies more than half its height below where it stood. */
+  toppled(index: number): boolean {
+    const body = this.bodies[index];
+    const q = body.quaternion;
+    // Y component of the piece's up axis.
+    const upY = 1 - 2 * (q.x * q.x + q.z * q.z);
+    return upY < Math.SQRT1_2 || body.position.y < this.rest[index].position.y - this.rest[index].half[1];
   }
 }

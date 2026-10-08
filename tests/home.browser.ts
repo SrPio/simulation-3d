@@ -344,7 +344,10 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
     await tab.waitForURL(link);
     await tab.close();
   }
-  await walkTo(page, { x: 23.8, z: 6.5 });
+  // Out of the zones, round the plaza's bench and glass case to the front of the bust.
+  await walkTo(page, { x: 24.8, z: 5.2 });
+  await walkTo(page, { x: 24.8, z: 8.2 });
+  await walkTo(page, { x: 22.2, z: 8.4 });
   await expect(host(page)).toHaveAttribute('data-sign', 'none');
   await expect(page.locator('#sign-link')).toBeHidden();
   await expect(host(page)).toHaveAttribute('data-sign-area', 'none');
@@ -364,6 +367,60 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
   await page.waitForTimeout(500);
   assert.equal(opened, false);
   await page.screenshot({ path: shot('home-playground.png') });
+  assert.deepEqual(errors, []);
+});
+
+test('playground: laptops thrown from the line score on the targets, the tech tower falls with labels, and both reset', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, ...spanish });
+  t.after(() => page.close());
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await ready(page);
+  await expect(host(page)).toHaveAttribute('data-physics', 'ready', { timeout: 10000 });
+  await expect(host(page)).toHaveAttribute('data-score', '0');
+  // Round the scoreboard to the middle of the lane, then towards the targets (-Z) up to the throw line.
+  await page.keyboard.press('Shift');
+  for (const point of [{ x: 7, z: 4 }, { x: 7, z: 12 }, { x: 7.2, z: 20 }, { x: 7.2, z: 28.8 }, { x: 11.4, z: 28.8 }]) await walkTo(page, point);
+  await page.keyboard.press('Shift');
+  await walkTo(page, { x: 11.4, z: 27.75 });
+  // Turn to face the targets (W + D is -Z on screen) with a short step towards the line.
+  await page.keyboard.down('KeyW');
+  await page.keyboard.down('KeyD');
+  await page.waitForTimeout(250);
+  await page.keyboard.up('KeyW');
+  await page.keyboard.up('KeyD');
+  await expect(host(page)).toHaveAttribute('data-locomotion', 'idle', { timeout: 3000 });
+  assert.ok((await position(page))[1] > 27, 'still behind the line');
+  for (let i = 1; i <= 3; i++) {
+    await page.keyboard.press('KeyF');
+    await expect(host(page)).toHaveAttribute('data-throws', String(i), { timeout: 3000 });
+    await expect(host(page)).toHaveAttribute('data-locomotion', 'idle', { timeout: 4000 });
+  }
+  // Facing straight down the lane, the laptops reach the far target.
+  await expect.poll(async () => Number(await host(page).getAttribute('data-score')), { timeout: 4000 }).toBeGreaterThan(0);
+  assert.ok(Number(await host(page).getAttribute('data-targets-hit')) > 0);
+  await page.screenshot({ path: shot('home-targets.png') });
+  await walkTo(page, { x: 8.4, z: 27.0 }, async () => (await host(page).getAttribute('data-sign')) === 'reset-targets');
+  await expect(host(page)).toHaveAttribute('data-sign', 'reset-targets');
+  await page.keyboard.press('Enter');
+  await expect(host(page)).toHaveAttribute('data-score', '0');
+  await expect(host(page)).toHaveAttribute('data-throws', '0');
+  await expect(host(page)).toHaveAttribute('data-thrown', '0');
+  // The tech tower: a charged punch from in front brings cubes down and their labels show; its zone stacks it again.
+  await page.keyboard.press('Shift');
+  for (const point of [{ x: 7.2, z: 29.2 }, { x: 31, z: 29.2 }, { x: 33, z: 21.6 }]) await walkTo(page, point);
+  await page.keyboard.press('Shift');
+  await walkTo(page, { x: 33, z: 21.0 });
+  await page.keyboard.down('KeyJ');
+  await page.waitForTimeout(1300);
+  await page.keyboard.up('KeyJ');
+  await expect.poll(async () => Number(await host(page).getAttribute('data-tech')), { timeout: 6000 }).toBeGreaterThan(0);
+  await expect(host(page)).not.toHaveAttribute('data-tech-labels', 'none');
+  await expect(page.locator('.tech-label-body').first()).toBeVisible();
+  await page.screenshot({ path: shot('home-tech.png') });
+  await walkTo(page, { x: 33, z: 24.2 }, async () => (await host(page).getAttribute('data-sign')) === 'reset-tech');
+  await page.keyboard.press('Enter');
+  await expect(host(page)).toHaveAttribute('data-tech', '0');
   assert.deepEqual(errors, []);
 });
 

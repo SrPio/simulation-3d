@@ -29,6 +29,18 @@ export const THROW_RELEASE = 0.53;
 /** Launch speed of the thrown laptop (m/s) along the character's facing and upwards. */
 export const THROW_SPEED = { forward: 5.5, up: 1.8 };
 /**
+ * The laptop leaves the right hand, off to the side of the body: it flies towards the point this far ahead on the line
+ * the character faces, so what stands straight ahead (a target) is what it hits.
+ */
+export const THROW_AIM = 4.0;
+
+/** Horizontal launch direction from the release point to the aim point THROW_AIM ahead of `from` along `yaw`. */
+export function throwDirection(from: { x: number; z: number }, yaw: number, release: { x: number; z: number }): { x: number; z: number } {
+  const aim = { x: from.x + Math.sin(yaw) * THROW_AIM - release.x, z: from.z + Math.cos(yaw) * THROW_AIM - release.z };
+  const length = Math.hypot(aim.x, aim.z);
+  return length > 0.5 ? { x: aim.x / length, z: aim.z / length } : { x: Math.sin(yaw), z: Math.cos(yaw) };
+}
+/**
  * Charged strikes (J punches, K kicks; manifest `strike`, seconds into the clip): the clip plays to `ready`; while
  * the key stays down the charge moves it from `ready` towards `windup` (the fist or leg drawing back, see
  * strikeAmount); on release it jumps to the same pose in the swing (`strikeLaunch`, between `windup` and `release`)

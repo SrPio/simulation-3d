@@ -25,7 +25,21 @@ the room floor, so the room reads as a raised platform) and uses the walkable `b
   comma-separated zone `labels` they are named after.
 - `Lamppost`: the street lamp in the middle of the crossroads circle; extras `height`, `pole_radius` and where the
   viewer hangs one arrow board per crossroads arrow (`arrows_top`, `arrow_step`), plus `Collider_Lamppost`.
-- `Zone_<Id>`: floor zones that put a group of pieces back (`zone` 'reset', `target`, `area`).
+- `Zone_<Id>`: floor zones that put a group of pieces back (`zone` 'reset', `target`, `area`); `target` 'targets'
+  clears the thrown laptops and the score of the targets lane instead.
+- `About`: the plaza around the signs (`Floor_About`): `Bust` (the web V4 head and shoulders in marble on a pedestal,
+  the cap keeping its own materials), `Globe` (stand only, with `radius` and `centre`; the viewer draws the sphere and
+  the pin on Colombia), `Vitrine` (a glass case with two framed diplomas) and `Plaque_<text>` anchors where the viewer
+  paints plaques (`plaque` [width, height], `text`) facing the front.
+- `Decor`: fixed trees, rocks, benches and server racks sharing one mesh per kind; extras `decor`, `shadow` [width, depth]
+  for the blob shadow and `solid` [width, height, depth] for the box pieces bounce off, plus a `Collider_*` each.
+- `Clutter`: crates and cones the character can knock about (group 'decor').
+- `Targets`: `Target_<i>` anchors at the foot of each standing target (`radius`, disc `centre` height, `rings` radii and
+  their `points`), facing the throw line painted by `Floor_Targets` (`line`: its distance ahead of the block centre);
+  `Scoreboard` (`board` [width, height, bottom]) where the viewer paints the score.
+- `Tech`: `Tech_<i>_<name>` cubes in a 4-3-2-1 pyramid (group 'tech', `tech` name) with the tools' logos from
+  assets/textures/outside/tech-atlas.png (scripts/tech_atlas.ts) on their +Z and +X faces.
+Everything keeps the block perspective: axis aligned, fronts facing three.js +Z, rows along +X (see BLOCK_YAW).
 Layout positions are written in three.js ground coordinates (x, z); Blender Y is three.js -Z.
 The room itself (room.glb) is not modified.
 """
@@ -194,12 +208,12 @@ BLOCK_YAW = 0.0
 INTRO = (9.0, -1.3)            # centre of the arrow keys, in the gap of the intro sentence
 INTRO_SIZE, INTRO_GAP = (12.4, 3.6), 2.4
 KEY_SIZE, KEY_HEIGHT, KEY_PITCH = 0.6, 0.3, 0.68
-CROSSROADS = (15.75, 10.0)
+CROSSROADS = (14.25, 10.0)
 # Lamppost in the crossroads circle: pole top, pole radius, and the arrow boards from ARROWS_TOP down by ARROW_STEP.
 LAMP_HEIGHT, LAMP_POLE = 3.4, 0.065
 LAMP_ARROWS_TOP, LAMP_ARROW_STEP = 2.85, 0.48
 CONTROLS, CONTROLS_SIZE = (3.75, 15.8), (5.6, 4.8)
-PLAY_SIGN, PLAY_SIGN_SIZE = (14.25, 14.8), (6.4, 1.9)
+PLAY_SIGN, PLAY_SIGN_SIZE = (12.75, 14.8), (6.4, 1.9)
 PLAYGROUND = (20.75, 21.3)
 # Footprints leaving the room's open front corner towards the camera.
 FOOTPRINTS, FOOTPRINTS_SIZE = (4.45, 4.45), (3.3, 3.3)
@@ -379,7 +393,7 @@ def build_playground(root):
 
     # Crossroads: a painted arrow and a 3D arrow on the lamppost towards each zone. Another zone is one more
     # entry here (its name is `floor.<id>` in src/core/i18n.ts); the controls panel gets no arrow.
-    arrows = [('links', (SIGN_FIRST_X + SIGN_SPACING, -(SIGN_Y - AREA_OFFSET))), ('playground', PLAY_SIGN)]
+    arrows = [('about', (SIGN_FIRST_X + SIGN_SPACING, -(SIGN_Y - AREA_OFFSET))), ('playground', PLAY_SIGN)]
     room.anchor('Floor_Crossroads', at(CROSSROADS), root, BLOCK_YAW, floor='crossroads', size=[10.6, 7.0],
                 targets=[value for _, point in arrows for value in point], labels=','.join(label for label, _ in arrows))
     room.anchor('Floor_Controls', at(CONTROLS), root, BLOCK_YAW, floor='controls', size=list(CONTROLS_SIZE))
@@ -422,6 +436,409 @@ def build_playground(root):
     room.anchor('Zone_Bricks', at(play(7.6, 3.4)), root, BLOCK_YAW, zone='reset', target='bricks', area=RESET_AREA)
 
 
+# ------------------------------------------------------------------ about me plaza, decor, targets and tech tower
+
+# Everything here keeps the block perspective: rectangles and fronts are axis aligned (yaw 0 or a quarter turn),
+# fronts face three.js +Z (Blender -Y) like the signs, and rows run along +X, so the default corner camera sees
+# each front and its +X side. Only round things (tree crowns, rocks) turn freely.
+V4_GLB = ROOT / 'public' / 'models' / 'developer-v4.glb'
+MARBLE = TEXTURES / 'marble.png'
+TECH_ATLAS = TEXTURES / 'tech-atlas.png'
+ABOUT, ABOUT_SIZE = (22.1, 3.8), (11.0, 8.4)     # plaza floor around the three signs
+ABOUT_ROW = 6.6                                  # the row of objects in front of the sign titles
+GLOBE_X, BUST_X, VITRINE_X = 18.4, 22.2, 25.9
+BENCHES_X = (20.6, 23.8)
+PEDESTAL = (0.8, 1.0)                            # width/depth, height
+BUST_CUT_Z, BUST_CUT_X, BUST_SCALE = 1.62, 0.46, 0.85
+BUST_FACES = {'marble': 2600, 'cap': 800}   # outside.glb stays under its size budget (tests/outside.test.ts)
+GLOBE_RADIUS, GLOBE_HEIGHT = 0.42, 1.25          # globe centre above the ground
+# Targets lane: the laptop flies towards -Z from the throw line; the far target sits lower so the arc reaches it.
+TARGET_LANE_X, THROW_LINE_Z = 11.4, 27.0
+TARGETS = [(10.3, 3.0, 1.72), (12.5, 3.6, 1.3), (11.4, 4.2, 0.8)]   # x, distance from the line, disc centre height (on the laptop's arc)
+TARGET_RINGS = [(0.4, 10), (0.26, 25), (0.12, 50)]                 # ring radius, points (outer to inner)
+SCOREBOARD = (8.6, 24.8)      # left of the lane, where no target hides it from the corner camera
+SCOREBOARD_SIZE = (1.5, 0.9, 1.0)                                  # board width, height, bottom
+# Tech tower: a 4-3-2-1 pyramid of cubes along +X, logos on the +Z and +X faces.
+TECH = (33.0, 20.0)
+TECH_CUBE, TECH_GAP = 0.6, 0.02
+TECH_ROWS = [['typescript', 'node', 'pnpm', 'vite'], ['three', 'github', 'playwright'], ['blender', 'gltf'], ['openvdb']]
+TECH_ATLAS_COLUMNS = 5
+MASS.update({'crate': 2.0, 'cone': 0.5, 'tech': 0.9})
+TREES = [(-9.6, 10.4, 0), (-7.4, 11.8, 1), (-9.8, 13.6, 0), (-8.4, 22.9, 1), (-6.2, 24.0, 0),
+         (29.6, 6.8, 1), (30.8, 9.0, 0), (29.2, 11.2, 1), (30.9, 13.4, 0), (12.5, 5.5, 1)]
+ROCKS = [(-8.1, 15.1, 0.9), (28.3, 14.1, 0.75)]
+BENCHES = [((BENCHES_X[0], ABOUT_ROW), math.pi / 2), ((BENCHES_X[1], ABOUT_ROW), math.pi / 2), ((-5.4, 7.5), 0.0),
+           ((20.2, 12.4), math.pi / 2)]   # the last one beside the crossroads, off the paths through it
+RACKS = [(29.2, 1.0), (30.0, 1.0), (30.8, 1.0)]
+CRATES = [(-6.0, 17.8, 0.0), (-5.0, 18.4, 0.0), (4.2, 21.0, 0.0), (4.72, 21.0, 0.0), (4.46, 21.0, 1.0), (6.0, 22.4, 0.0)]
+CONES = [(3.4, 23.6), (4.6, 24.0), (5.8, 23.6), (7.0, 24.0), (14.3, 4.5), (15.5, 5.1)]
+CONE_ORIGIN = 0.15
+CONE_CYLINDERS = [(0.18, 0.04, 0.02), (0.13, 0.2, 0.14), (0.085, 0.2, 0.34), (0.045, 0.1, 0.49)]
+
+
+def bm_box(bm, lo, hi, material=0):
+    """Add an axis-aligned box to a bmesh."""
+    geom = bmesh.ops.create_cube(bm, size=1.0)
+    for v in geom['verts']:
+        v.co = Vector(((v.co.x + 0.5) * (hi[0] - lo[0]) + lo[0], (v.co.y + 0.5) * (hi[1] - lo[1]) + lo[1],
+                       (v.co.z + 0.5) * (hi[2] - lo[2]) + lo[2]))
+    for face in {f for v in geom['verts'] for f in v.link_faces}:
+        face.material_index = material
+    return geom
+
+
+def tree_mesh(name, variant, trunk_mat, leaf_mat):
+    """Low-poly tree: a six-sided trunk and two or three faceted crown blobs (about 200 triangles)."""
+    bm = bmesh.new()
+    trunk = bmesh.ops.create_cone(bm, cap_ends=True, segments=6, radius1=0.13, radius2=0.09, depth=1.2)
+    for v in trunk['verts']:
+        v.co.z += 0.6
+    rng = random.Random(10 + variant)
+    blobs = [(0.0, 0.0, 1.75, 0.85), (0.25, -0.1, 2.35, 0.6)] if variant == 0 else \
+            [(0.0, 0.0, 1.6, 0.7), (-0.3, 0.15, 2.05, 0.6), (0.2, 0.0, 2.5, 0.45)]
+    for x, y, z, r in blobs:
+        crown = bmesh.ops.create_icosphere(bm, subdivisions=1, radius=r)
+        for v in crown['verts']:
+            v.co = Vector((v.co.x * rng.uniform(0.9, 1.1) + x, v.co.y * rng.uniform(0.9, 1.1) + y, v.co.z * 0.85 + z))
+        for face in {f for v in crown['verts'] for f in v.link_faces}:
+            face.material_index = 1
+    return proto_mesh(name, bm, [trunk_mat, leaf_mat])
+
+
+def rock_mesh(name, seed, mat):
+    bm = bmesh.new()
+    bmesh.ops.create_icosphere(bm, subdivisions=1, radius=0.5)
+    rng = random.Random(seed)
+    for v in bm.verts:
+        v.co = Vector((v.co.x * rng.uniform(0.85, 1.15) * 1.2, v.co.y * rng.uniform(0.85, 1.15), max(v.co.z, -0.1) * 0.7 + 0.07))
+    return proto_mesh(name, bm, [mat])
+
+
+def bench_mesh(wood, iron):
+    """Backless park bench, its length along Blender X (three.js X)."""
+    bm = bmesh.new()
+    bm_box(bm, (-0.7, -0.2, 0.42), (0.7, 0.2, 0.48), 0)
+    for x in (-0.55, 0.55):
+        bm_box(bm, (x - 0.04, -0.18, 0.0), (x + 0.04, 0.18, 0.42), 1)
+    return proto_mesh('Decor_Bench', bm, [wood, iron])
+
+
+def rack_mesh(body, led, vent):
+    """Server rack: a dark cabinet with LED strips and vents on its front (Blender -Y, three.js +Z)."""
+    bm = bmesh.new()
+    bm_box(bm, (-0.3, -0.4, 0.0), (0.3, 0.4, 1.9), 0)
+    for i in range(5):
+        z = 0.3 + i * 0.3
+        bm_box(bm, (-0.22, -0.415, z), (0.12, -0.4, z + 0.12), 2)
+        bm_box(bm, (0.16, -0.415, z + 0.03), (0.22, -0.4, z + 0.06), 1)
+    return proto_mesh('Decor_Rack', bm, [body, led, vent])
+
+
+def crate_mesh(mat):
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=0.5)
+    bmesh.ops.bevel(bm, geom=list(bm.edges), offset=0.025, segments=1, affect='EDGES')
+    return proto_mesh('Prop_Crate', bm, [mat])
+
+
+def cone_mesh(orange, white):
+    bm = bmesh.new()
+    bm_box(bm, (-0.18, -0.18, -CONE_ORIGIN), (0.18, 0.18, 0.04 - CONE_ORIGIN), 0)
+    radius = lambda z: 0.14 - 0.11 * (z - 0.04) / 0.5
+    # Orange body with a white reflective band: three stacked frustums.
+    for lo, hi, mat in ((0.04, 0.24, 0), (0.24, 0.34, 1), (0.34, 0.54, 0)):
+        part = bmesh.ops.create_cone(bm, cap_ends=True, segments=12, radius1=radius(lo), radius2=radius(hi), depth=hi - lo)
+        for v in part['verts']:
+            v.co.z += (lo + hi) / 2 - CONE_ORIGIN
+        for face in {f for v in part['verts'] for f in v.link_faces}:
+            face.material_index = mat
+    return proto_mesh('Prop_Cone', bm, [orange, white], smooth_angle=50)
+
+
+def decor(name, mesh, point, yaw, parent, kind, shadow, solid=None, height=0.0):
+    """A fixed decor object: its blob shadow [width, depth] and, for solid ones, the box [w, h, d] pieces bounce off."""
+    extras = {'decor': kind, 'shadow': list(shadow)}
+    if solid:
+        extras['solid'] = list(solid)
+    obj = piece(name, mesh, point, height, yaw, parent, **extras)
+    if solid:
+        x, y, _ = at(point)
+        w, d = (solid[0], solid[2]) if abs(math.sin(yaw)) < 0.5 else (solid[2], solid[0])
+        room.collider(name, (x - w / 2, y - d / 2, GROUND_Z), (x + w / 2, y + d / 2, GROUND_Z + solid[1]), parent)
+    return obj
+
+
+def marble_image():
+    """Generated white marble with grey veins (assets/textures/outside/marble.png)."""
+    if MARBLE.exists():
+        return MARBLE
+    size = 256
+    image = bpy.data.images.new('MarbleTexture', size, size)
+    rng = random.Random(7)
+    waves = [(rng.uniform(1, 4), rng.uniform(1, 4), rng.uniform(0, 6.3), rng.uniform(0.3, 1.0)) for _ in range(6)]
+    pixels = []
+    for j in range(size):
+        for i in range(size):
+            u, v = i / size, j / size
+            turbulence = sum(a * math.sin(2 * math.pi * (fx * u + fy * v) + p) for fx, fy, p, a in waves) / 3
+            vein = abs(math.sin(2 * math.pi * (u * 2 + v) + turbulence * 2.2)) ** 0.18
+            shade = 0.93 - 0.22 * (1 - vein) - 0.03 * turbulence
+            pixels.extend((shade, shade, min(1.0, shade + 0.015), 1.0))
+    image.pixels = pixels
+    image.filepath_raw = str(MARBLE)
+    image.file_format = 'PNG'
+    image.save()
+    return MARBLE
+
+
+def decimate(obj, faces):
+    if len(obj.data.polygons) <= faces:
+        return
+    mod = obj.modifiers.new('Reduce', 'DECIMATE')
+    mod.ratio = faces / len(obj.data.polygons)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.modifier_apply(modifier=mod.name)
+
+
+def join(objects, name):
+    bpy.ops.object.select_all(action='DESELECT')
+    for obj in objects:
+        obj.select_set(True)
+    bpy.context.view_layer.objects.active = objects[0]
+    if len(objects) > 1:
+        bpy.ops.object.join()
+    obj = bpy.context.view_layer.objects.active
+    obj.name = obj.data.name = name
+    return obj
+
+
+def build_bust(holder, marble):
+    """Head and shoulders of the web V4 model in marble on a pedestal; the cap keeps its own materials."""
+    before = set(bpy.data.objects)
+    bpy.ops.import_scene.gltf(filepath=str(V4_GLB))
+    imported = [obj for obj in bpy.data.objects if obj not in before]
+    stone_parts = {'Head', 'Neck', 'Hair', 'HairTuft', 'Beard', 'Moustache', 'Eyebrows', 'Eye_L', 'Eye_R', 'Hoodie'}
+    cap_parts = {'CapCrown', 'CapBrim', 'CapButton', 'CapStrap'}
+    keep = []
+    for obj in imported:
+        if obj.type == 'MESH' and obj.name.split('.')[0] in stone_parts | cap_parts:
+            obj.data = obj.data.copy()
+            obj.data.transform(obj.matrix_world)
+            obj.parent = None
+            obj.matrix_world = Matrix.Identity(4)
+            keep.append(obj)
+    for obj in imported:
+        if obj not in keep:
+            bpy.data.objects.remove(obj, do_unlink=True)
+    stone = [obj for obj in keep if obj.name.split('.')[0] in stone_parts]
+    cap = [obj for obj in keep if obj.name.split('.')[0] in cap_parts]
+    total = sum(len(obj.data.polygons) for obj in stone)
+    for obj in stone:
+        obj.data.materials.clear()
+        obj.data.materials.append(marble)
+        if obj.name.startswith('Hoodie'):
+            bm = bmesh.new()
+            bm.from_mesh(obj.data)
+            for co, no in (((0, 0, BUST_CUT_Z), (0, 0, -1)), ((BUST_CUT_X, 0, 0), (1, 0, 0)), ((-BUST_CUT_X, 0, 0), (-1, 0, 0))):
+                cut = bmesh.ops.bisect_plane(bm, geom=list(bm.verts) + list(bm.edges) + list(bm.faces), plane_co=co, plane_no=no, clear_outer=True)
+                edges = [e for e in cut['geom_cut'] if isinstance(e, bmesh.types.BMEdge)]
+                bmesh.ops.holes_fill(bm, edges=edges, sides=0)
+            bm.to_mesh(obj.data)
+            bm.free()
+        decimate(obj, max(60, int(len(obj.data.polygons) * BUST_FACES['marble'] / total)))
+    cap_total = sum(len(obj.data.polygons) for obj in cap)
+    for obj in cap:
+        decimate(obj, max(40, int(len(obj.data.polygons) * BUST_FACES['cap'] / cap_total)))
+    bust = join(stone, 'BustMarble')
+    # One projection from the front: every vertex keeps a single UV, so the export splits no vertices at seams.
+    layer = bust.data.uv_layers[0] if bust.data.uv_layers else bust.data.uv_layers.new()
+    for loop in bust.data.loops:
+        co = bust.data.vertices[loop.vertex_index].co
+        layer.data[loop.index].uv = (co.x / 0.6, co.z / 0.6 + co.y * 0.4)
+    while len(bust.data.uv_layers) > 1:
+        bust.data.uv_layers.remove(bust.data.uv_layers[1])
+    caps = join(cap, 'BustCap')
+    # The cap's materials are plain colours: without UVs the export splits no vertices.
+    while caps.data.uv_layers:
+        caps.data.uv_layers.remove(caps.data.uv_layers[0])
+    for obj in (bust, caps):
+        obj.data.transform(Matrix.Translation((0, 0, -BUST_CUT_Z)))
+        obj.data.transform(Matrix.Scale(BUST_SCALE, 4))
+        obj.data.shade_smooth()   # no sharp edges: split normals would duplicate vertices
+        obj.parent = holder
+        obj.location = (0, 0, PEDESTAL[1])
+    return bust, caps
+
+
+def build_about(root, frame_mat, glow):
+    """The plaza around the signs: a bust on a pedestal, a globe, a glass case with two diplomas and two benches."""
+    room.anchor('Floor_About', at(ABOUT), root, BLOCK_YAW, floor='about', size=list(ABOUT_SIZE))
+    stone = room.material('Pedestal', (0.72, 0.71, 0.76), 0.6)
+    marble = room.material('Marble', (1, 1, 1), 0.35, image=marble_image())
+    group = room.anchor('About', (0, 0, 0), root)
+    # Bust on its pedestal; the plaque on the pedestal front is painted by the viewer (Plaque_bust).
+    holder = room.anchor('Bust', at((BUST_X, ABOUT_ROW)), group, BLOCK_YAW, decor='bust', shadow=[1.1, 1.1],
+                         solid=[PEDESTAL[0], PEDESTAL[1] + 1.0, PEDESTAL[0]])
+    w = PEDESTAL[0] / 2
+    room.box('BustPedestal', (-w, -w, 0), (w, w, PEDESTAL[1]), stone, holder)
+    room.box('BustPedestalTop', (-w - 0.05, -w - 0.05, PEDESTAL[1] - 0.06), (w + 0.05, w + 0.05, PEDESTAL[1]), stone, holder)
+    room.box('BustPedestalFoot', (-w - 0.06, -w - 0.06, 0), (w + 0.06, w + 0.06, 0.08), stone, holder)
+    build_bust(holder, marble)
+    x, y, _ = at((BUST_X, ABOUT_ROW))
+    room.collider('Bust', (x - w - 0.06, y - w - 0.06, GROUND_Z), (x + w + 0.06, y + w + 0.06, GROUND_Z + PEDESTAL[1] + 1.0), group)
+    room.anchor('Plaque_bust', at((BUST_X, ABOUT_ROW + w + 0.002), 0.5), group, BLOCK_YAW, plaque=[0.66, 0.34], text='bust')
+    # Globe: the stand here, the sphere and the pin on Colombia drawn by the viewer (it paints the continents).
+    globe = room.anchor('Globe', at((GLOBE_X, ABOUT_ROW)), group, BLOCK_YAW, radius=GLOBE_RADIUS, centre=GLOBE_HEIGHT,
+                        decor='globe', shadow=[1.0, 1.0], solid=[0.6, GLOBE_HEIGHT + GLOBE_RADIUS, 0.6])
+    room.cylinder('GlobeFoot', (0, 0, 0.04), 0.3, 0.08, frame_mat, globe, segments=20)
+    room.cylinder('GlobeStem', (0, 0, (GLOBE_HEIGHT - GLOBE_RADIUS) / 2 + 0.04), 0.035, GLOBE_HEIGHT - GLOBE_RADIUS, frame_mat, globe, segments=10)
+    room.cylinder('GlobeMeridian', (0, 0, GLOBE_HEIGHT), GLOBE_RADIUS + 0.05, 0.03, glow, globe, segments=32, axis='Y')
+    room.anchor('Plaque_globe', at((GLOBE_X, ABOUT_ROW + 0.302), 0.12), group, BLOCK_YAW, plaque=[0.56, 0.16], text='globe')
+    x, y, _ = at((GLOBE_X, ABOUT_ROW))
+    room.collider('Globe', (x - 0.3, y - 0.3, GROUND_Z), (x + 0.3, y + 0.3, GROUND_Z + GLOBE_HEIGHT + GLOBE_RADIUS), group)
+    # Glass case with two framed diplomas standing inside, facing the front.
+    case = room.anchor('Vitrine', at((VITRINE_X, ABOUT_ROW)), group, BLOCK_YAW, decor='vitrine', shadow=[1.6, 0.9],
+                       solid=[1.3, 1.5, 0.6])
+    glass = room.material('VitrineGlass', (0.75, 0.85, 1.0), 0.05, alpha=0.18)
+    wood = room.material('DiplomaFrame', (0.2, 0.14, 0.1), 0.6)
+    room.box('VitrineBase', (-0.65, -0.3, 0), (0.65, 0.3, 0.8), frame_mat, case)
+    room.box('VitrineGlass', (-0.63, -0.28, 0.8), (0.63, 0.28, 1.5), glass, case)
+    room.box('VitrineTop', (-0.65, -0.3, 1.5), (0.65, 0.3, 1.54), frame_mat, case)
+    for index, (dx, text) in enumerate(((-0.3, 'degree'), (0.3, 'react'))):
+        room.box(f'Diploma_{index}', (dx - 0.25, -0.02, 0.86), (dx + 0.25, 0.02, 1.24), wood, case)
+        room.anchor(f'Plaque_{text}', at((VITRINE_X + dx, ABOUT_ROW + 0.022), 1.05), group, BLOCK_YAW, plaque=[0.44, 0.32], text=text)
+    x, y, _ = at((VITRINE_X, ABOUT_ROW))
+    room.collider('Vitrine', (x - 0.65, y - 0.3, GROUND_Z), (x + 0.65, y + 0.3, GROUND_Z + 1.54), group)
+
+
+def build_decor(root, frame_mat):
+    """Park, forest, server racks and benches (fixed), and crates and cones the character can knock about."""
+    group = room.anchor('Decor', (0, 0, 0), root)
+    trunk = room.material('Trunk', (0.33, 0.22, 0.16), 0.85)
+    leaves = room.material('Leaves', (0.2, 0.46, 0.34), 0.8)
+    trees = [tree_mesh(f'Decor_Tree{variant}', variant, trunk, leaves) for variant in (0, 1)]
+    rng = random.Random(21)
+    for index, (x, z, variant) in enumerate(TREES):
+        decor(f'Tree_{index:02d}', trees[variant], (x, z), rng.uniform(0, math.tau), group, 'tree', (1.9, 1.9), (0.36, 1.2, 0.36))
+    rock = room.material('Rock', (0.42, 0.41, 0.47), 0.9)
+    for index, (x, z, size) in enumerate(ROCKS):
+        obj = decor(f'Rock_{index}', rock_mesh(f'Decor_Rock{index}', index, rock), (x, z), rng.uniform(0, math.tau), group, 'rock',
+                    (1.3 * size, 1.1 * size), (1.0 * size, 0.5 * size, 0.85 * size))
+        obj.scale = (size, size, size)
+    wood = room.material('BenchWood', (0.55, 0.37, 0.24), 0.75)
+    bench = bench_mesh(wood, frame_mat)
+    for index, (point, yaw) in enumerate(BENCHES):
+        decor(f'Bench_{index}', bench, point, yaw, group, 'bench', (1.6, 0.6), (1.4, 0.5, 0.4))
+    led = room.material('RackLed', (0.3, 1.0, 0.6), 0.4, emission=(0.3, 1.0, 0.6), strength=3.0)
+    vent = room.material('RackVent', (0.16, 0.14, 0.22), 0.6)
+    body = room.material('RackBody', (0.07, 0.065, 0.1), 0.45, 0.4)
+    rack = rack_mesh(body, led, vent)
+    for index, point in enumerate(RACKS):
+        decor(f'Rack_{index}', rack, point, BLOCK_YAW, group, 'rack', (0.85, 1.0), (0.6, 1.9, 0.8))
+    # Loose: crates and cones, pushed, punched and kicked like the bricks.
+    loose = room.anchor('Clutter', (0, 0, 0), root)
+    crate = crate_mesh(room.material('Crate', (0.62, 0.44, 0.24), 0.8))
+    for index, (x, z, layer) in enumerate(CRATES):
+        piece(f'Crate_{index}', crate, (x, z), 0.25 + layer * 0.501, BLOCK_YAW, loose, prop='crate', group='decor',
+              mass=MASS['crate'], box=[0.5, 0.5, 0.5])
+    cone = cone_mesh(room.material('Cone', (0.95, 0.42, 0.12), 0.6), room.material('ConeBand', (0.95, 0.95, 0.95), 0.5))
+    cylinders = [round(value, 4) for radius, height, centre in CONE_CYLINDERS for value in (radius, height, centre - CONE_ORIGIN)]
+    for index, (x, z) in enumerate(CONES):
+        piece(f'Cone_{index}', cone, (x, z), CONE_ORIGIN, BLOCK_YAW, loose, prop='cone', group='decor', mass=MASS['cone'],
+              cylinders=cylinders, box=[0.36, 0.54, 0.36])
+
+
+def ring_meshes(mats):
+    """One disc per target ring facing Blender -Y (three.js +Z), shared by the three targets."""
+    meshes = []
+    for index, ((radius, _), mat) in enumerate(zip(TARGET_RINGS, mats)):
+        bm = bmesh.new()
+        disc = bmesh.ops.create_cone(bm, cap_ends=True, segments=28, radius1=radius, radius2=radius, depth=0.05)
+        for v in disc['verts']:
+            v.co = Matrix.Rotation(math.pi / 2, 3, 'X') @ v.co + Vector((0, -0.025 - index * 0.006, 0))
+        meshes.append(proto_mesh(f'Target_Ring{index}', bm, [mat], smooth_angle=40))
+    return meshes
+
+
+def target_disc(name, rings, parent, centre):
+    """Concentric rings, the inner ones standing a little proud of the outer."""
+    for index, mesh in enumerate(rings):
+        obj = bpy.data.objects.new(f'{name}_Ring{index}', mesh)
+        bpy.context.collection.objects.link(obj)
+        obj.parent = parent
+        obj.location = (0, 0, centre)
+
+
+def build_targets(root, frame_mat):
+    """Three standing targets past a throw line, a scoreboard and the lane painted on the ground."""
+    lane_z = THROW_LINE_Z - 1.6
+    room.anchor('Floor_Targets', at((TARGET_LANE_X, lane_z)), root, BLOCK_YAW, floor='targets', size=[3.6, 6.4],
+                line=THROW_LINE_Z - lane_z)
+    group = room.anchor('Targets', (0, 0, 0), root)
+    wood = room.material('TargetPost', (0.45, 0.32, 0.22), 0.8)
+    colors = [room.material('TargetWhite', (0.94, 0.93, 0.96), 0.5), room.material('TargetRed', (0.82, 0.16, 0.22), 0.45),
+              room.material('TargetGold', (1.0, 0.74, 0.22), 0.35, emission=(1.0, 0.6, 0.15), strength=0.4)]
+    rings = ring_meshes(colors)
+    for index, (x, distance, centre) in enumerate(TARGETS):
+        radius = TARGET_RINGS[0][0]
+        holder = room.anchor(f'Target_{index}', at((x, THROW_LINE_Z - distance)), group, BLOCK_YAW, target=index,
+                             radius=radius, centre=centre, rings=[r for r, _ in TARGET_RINGS], points=[p for _, p in TARGET_RINGS])
+        room.box(f'Target_{index}_Post', (-0.05, 0.0, 0.0), (0.05, 0.1, centre), wood, holder)
+        room.box(f'Target_{index}_Foot', (-0.35, -0.05, 0.0), (0.35, 0.2, 0.06), wood, holder)
+        target_disc(f'Target_{index}', rings, holder, centre)
+        px, py, _ = at((x, THROW_LINE_Z - distance))
+        room.collider(f'Target_{index}', (px - radius, py - 0.06, GROUND_Z), (px + radius, py + 0.22, GROUND_Z + centre + radius), root)
+    w, h, bottom = SCOREBOARD_SIZE
+    board = room.anchor('Scoreboard', at(SCOREBOARD), root, BLOCK_YAW, board=[w, h, bottom], decor='scoreboard', shadow=[1.8, 0.5],
+                        solid=[w + 0.16, bottom + h, 0.12])
+    for side in (-1, 1):
+        room.box(f'ScorePost_{side}', (side * w / 2 - 0.04, -0.04, 0), (side * w / 2 + 0.04, 0.04, bottom + h + 0.05), frame_mat, board)
+    room.box('ScoreBoard', (-w / 2, -0.03, bottom), (w / 2, 0.03, bottom + h), frame_mat, board)
+    x, y, _ = at(SCOREBOARD)
+    room.collider('Scoreboard', (x - w / 2 - 0.08, y - 0.06, GROUND_Z), (x + w / 2 + 0.08, y + 0.06, GROUND_Z + bottom + h), root)
+    room.anchor('Zone_Targets', at((TARGET_LANE_X - 3.0, THROW_LINE_Z)), root, BLOCK_YAW, zone='reset', target='targets', area=RESET_AREA)
+
+
+def tech_cube_mesh(name, cell, atlas_mat):
+    """One tower cube with its logo cell of the atlas on the +Z and +X faces (three.js), plain brand colour elsewhere."""
+    bm = bmesh.new()
+    uv = bm.loops.layers.uv.new('UVMap')
+    bmesh.ops.create_cube(bm, size=TECH_CUBE)
+    bmesh.ops.bevel(bm, geom=list(bm.edges), offset=0.02, segments=1, affect='EDGES')
+    rows = math.ceil(sum(len(row) for row in TECH_ROWS) / TECH_ATLAS_COLUMNS)
+    cu, cv = 1 / TECH_ATLAS_COLUMNS, 1 / rows
+    u0, v0 = (cell % TECH_ATLAS_COLUMNS) * cu, 1 - (cell // TECH_ATLAS_COLUMNS + 1) * cv
+    h = TECH_CUBE / 2
+    for face in bm.faces:
+        n = face.normal
+        for loop in face.loops:
+            co = loop.vert.co
+            if n.y < -0.9:      # three.js +Z: the front
+                loop[uv].uv = (u0 + cu * (co.x + h) / TECH_CUBE, v0 + cv * (co.z + h) / TECH_CUBE)
+            elif n.x > 0.9:     # three.js +X: the right side
+                loop[uv].uv = (u0 + cu * (co.y + h) / TECH_CUBE, v0 + cv * (co.z + h) / TECH_CUBE)
+            else:               # a corner of the cell: only its background colour
+                loop[uv].uv = (u0 + cu * 0.03, v0 + cv * 0.03)
+    return proto_mesh(name, bm, [atlas_mat], smooth_angle=40)
+
+
+def build_tech(root):
+    """Tower of cubes with the logos of the tools this project is made with, knocked down like the bricks."""
+    room.anchor('Floor_Tech', at((TECH[0], TECH[1] + 1.4)), root, BLOCK_YAW, floor='tech', size=[4.2, 3.6])
+    atlas = room.material('TechAtlas', (1, 1, 1), 0.55, image=TECH_ATLAS)
+    group = room.anchor('Tech', (0, 0, 0), root)
+    pitch = TECH_CUBE + TECH_GAP
+    cell = 0
+    for layer, row in enumerate(TECH_ROWS):
+        for i, name in enumerate(row):
+            x = TECH[0] + (i - (len(row) - 1) / 2) * pitch
+            piece(f'Tech_{cell:02d}_{name}', tech_cube_mesh(f'Prop_Tech_{name}', cell, atlas), (x, TECH[1]),
+                  TECH_CUBE / 2 + layer * (TECH_CUBE + 0.001), BLOCK_YAW, group, prop='tech', group='tech', mass=MASS['tech'],
+                  box=[TECH_CUBE] * 3, tech=name)
+            cell += 1
+    room.anchor('Zone_Tech', at((TECH[0], TECH[1] + 4.2)), root, BLOCK_YAW, zone='reset', target='tech', area=RESET_AREA)
+
+
 def build_lamppost(root, iron, glow):
     """Street lamp: a stepped base, a thin pole with collars and a lantern with a glowing glass."""
     lamp = room.anchor('Lamppost', at(CROSSROADS), root, BLOCK_YAW, height=LAMP_HEIGHT, pole_radius=LAMP_POLE,
@@ -454,6 +871,10 @@ def build(root):
     room.collider('BehindBack', (-FAR, HALF + WALL_T, GROUND_Z), (HALF + WALL_T, FAR, 1), root)
     build_letters(root)
     build_playground(root)
+    build_about(root, frame, glow)
+    build_decor(root, frame)
+    build_targets(root, frame)
+    build_tech(root)
     root['bounds'] = BOUNDS
     root['ground_y'] = GROUND_Z
     root['platform'] = PLATFORM
@@ -478,6 +899,10 @@ def main():
         raise RuntimeError('Outside outputs exist. Review them before using --replace-generated.')
     if not GLYPHS.exists():
         raise RuntimeError(f'Missing {GLYPHS}: run node scripts/name_glyphs.ts first.')
+    if not TECH_ATLAS.exists():
+        raise RuntimeError(f'Missing {TECH_ATLAS}: run node scripts/tech_atlas.ts first.')
+    if not V4_GLB.exists():
+        raise RuntimeError(f'Missing {V4_GLB}: export the V4 model first (export_assets.py --variant v4).')
     for sign in SIGNS.values():
         if not (TEXTURES / sign['image']).exists():
             raise RuntimeError(f'Missing {TEXTURES / sign["image"]}: run node scripts/capture_sites.ts first.')
@@ -485,7 +910,7 @@ def main():
     bpy.context.scene.unit_settings.system = 'METRIC'
     root = bpy.data.objects.new('Outside', None)
     bpy.context.collection.objects.link(root)
-    root['stage'] = '11-crossroads-lamppost'
+    root['stage'] = '12-about-playground-decor'
     build(root)
     BLEND.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(BLEND), compress=True)

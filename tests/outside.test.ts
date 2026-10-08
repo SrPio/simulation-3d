@@ -204,8 +204,8 @@ test('the crossroads lamppost carries one arrow per zone, none for the controls,
   const controls = data.floors.find((floor) => floor.id === 'controls')!;
   assert.ok(Math.hypot(lamp.position.x - crossroads.position.x, lamp.position.z - crossroads.position.z) < 1e-3, 'in the circle');
   assert.ok(lamp.height > 2.5 && lamp.arrowsTop < lamp.height && lamp.arrowsTop - (lamp.arrows.length - 1) * lamp.arrowStep > 1.2);
-  assert.deepEqual(lamp.arrows.map((arrow) => arrow.id), ['links', 'playground']);
-  assert.deepEqual(crossroads.labels, ['links', 'playground']);
+  assert.deepEqual(lamp.arrows.map((arrow) => arrow.id), ['about', 'playground']);
+  assert.deepEqual(crossroads.labels, ['about', 'playground']);
   for (const arrow of lamp.arrows) {
     for (const language of ['es', 'en'] as const) assert.ok(MESSAGES[language][`floor.${arrow.id}` as MessageKey], `${language} name for ${arrow.id}`);
     assert.ok(Math.hypot(arrow.target.x - controls.position.x, arrow.target.z - controls.position.z) > 3, `${arrow.id} is not the controls`);

@@ -10,7 +10,7 @@ import { QUALITY, defaultQuality, nextPixelRatio, ratioRange, type QualityId } f
 import { mergeSkinnedMeshes, mergeStaticMeshes } from '../scene/mergeStatic.ts';
 import {
   CHARACTER_RADIUS, CLIP_ALTERNATIVES, CharacterController, DEFAULT_GAIT_CLIPS, JUMP, RUN_CLIP_SPEED, STRIKE_CHARGE, STRIKE_MIN_POWER, STRIKES,
-  THROW_CLIP, THROW_HAND, THROW_RELEASE, THROW_SPEED, WALK_CLIP_SPEED, WALK_SPEED, strikeCharge, strikeLaunch, strikePower, type Gait, type Locomotion, type StrikeKind,
+  THROW_CLIP, THROW_HAND, THROW_RELEASE, THROW_SPEED, WALK_CLIP_SPEED, throwDirection, WALK_SPEED, strikeCharge, strikeLaunch, strikePower, type Gait, type Locomotion, type StrikeKind,
 } from '../character/CharacterController';
 import { onLanguage, t } from '../core/i18n.ts';
 import { KeyboardInput, type HoldAction, type PressAction } from '../input/KeyboardInput';
@@ -28,9 +28,13 @@ import { ChargeMeter } from '../scene/ChargeMeter.ts';
 import { InfiniteFloor } from '../scene/InfiniteFloor.ts';
 import { BlobShadows } from '../scene/BlobShadows.ts';
 import { PieceMeshes } from '../scene/PieceMeshes.ts';
+import { AboutPlaza } from '../scene/AboutPlaza.ts';
+import { TargetsView } from '../scene/TargetsView.ts';
+import { TechLabels } from '../scene/TechLabels.ts';
+import { TargetGame, type Lane } from '../world/targets.ts';
 import { signAt } from '../world/signs.ts';
 import { KEY_SINK, onKey, pressStep, type FloorKey } from '../world/keyPress.ts';
-import { LAPTOP, PropPhysics, type StaticBox, type ThrownLaptop } from '../world/PropPhysics.ts';
+import { LAPTOP, PropPhysics, type StaticBox, type TargetDisc, type TargetHit, type ThrownLaptop } from '../world/PropPhysics.ts';
 
 export type ViewPreset = 'front' | 'left' | 'right' | 'back' | 'three-quarter';
 export type LightPreset = 'neutral' | 'violet';
@@ -149,6 +153,17 @@ export class CharacterViewer {
   /** Blob shadows of things that never move (the character's, the signs', the lamppost's), before the pieces' ones. */
   private staticShadows = 0;
   private bubble?: SeatBubble;
+  /** The about-me plaza's plaques and globe. */
+  private about?: AboutPlaza;
+  /** The standing targets and their scoreboard, and the round being played on their lane. */
+  private targetsView?: TargetsView;
+  private readonly targetGame = new TargetGame();
+  private targetLane?: Lane;
+  /** Thrown laptops whose throw counts for the targets round (thrown from behind the line). */
+  private countedThrows = new WeakSet<ThrownLaptop>();
+  /** Labels over the tech tower's cubes as they fall; the cubes (piece indices) already labelled since the last reset. */
+  private techLabels?: TechLabels;
+  private readonly techDown = new Set<number>();
   /** Link signs and playground reset zones: the floor zones the character can step into. */
   private zones: Sign[] = [];
   private physics?: PropPhysics;
@@ -374,7 +389,7 @@ export class CharacterViewer {
       this.scene.add(this.model);
       if (this.room) this.scene.add(this.room);
       if (this.outside) this.scene.add(this.outside);
-      for (const object of [this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.mesh]) if (object) this.scene.add(object);
+      for (const object of [this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.targetsView?.root]) if (object) this.scene.add(object);
       if (!this.ground) this.createFloor(this.mixer ? 0 : box.min.y);
       this.frameLights();
       this.cameraDistance = Math.max(this.bounds.length() * 2.5, 1);
@@ -483,7 +498,10 @@ export class CharacterViewer {
     const data = readOutside(outside);
     this.outsideData = data;
     // The loose pieces move on their own: they leave the static GLB before it is merged.
-    for (const group of ['Letters', 'Tagline', 'Keys', 'Bowling', 'Bricks']) outside.getObjectByName(group)?.removeFromParent();
+    for (const group of ['Letters', 'Tagline', 'Keys', 'Bowling', 'Bricks', 'Clutter', 'Tech']) outside.getObjectByName(group)?.removeFromParent();
+    // The targets rock when hit: they leave the static scene too, drawn by their own view.
+    const targets = outside.getObjectByName('Targets');
+    targets?.removeFromParent();
     outside.traverse((object) => {
       if (!(object instanceof Mesh)) return;
       object.receiveShadow = false;
@@ -501,11 +519,14 @@ export class CharacterViewer {
       area: { center: { x: piece.position.x, z: piece.position.z }, yaw: yawOf(piece.quaternion), halfX: piece.half[0], halfZ: piece.half[2] },
       depth: 0,
     }));
-    const pieceShadows = 1 + data.signs.length + (data.lamppost ? 1 : 0);
+    const pieceShadows = 1 + data.signs.length + data.decor.length + (data.lamppost ? 1 : 0);
     this.staticShadows = pieceShadows;
     this.shadows = new BlobShadows(pieceShadows + this.pieceList.length + THROWN_SHADOWS, data.groundY);
     for (const [index, sign] of data.signs.entries()) {
       this.shadows.set(1 + index, sign.position.x, sign.position.z, sign.yaw, (sign.board?.width ?? 2) + 0.5, 0.55, 0.45);
+    }
+    for (const [index, item] of data.decor.entries()) {
+      this.shadows.set(1 + data.signs.length + index, item.position.x, item.position.z, item.yaw, item.shadow[0], item.shadow[1], 0.45);
     }
     if (data.lamppost) {
       const { position } = data.lamppost;
@@ -524,12 +545,25 @@ export class CharacterViewer {
     this.areas = new SignAreas(this.zones, data.groundY);
     this.areas.setReducedMotion(this.reducedMotion);
     this.floorTexts = new FloorTexts(data.floors, data.groundY);
+    this.about = new AboutPlaza(data.plaques, data.globe, { x: ROOM_VIEW.x, z: ROOM_VIEW.z });
+    if (data.targets.length) {
+      this.targetsView = new TargetsView(data.targets, data.scoreboard);
+      if (targets) this.targetsView.root.add(targets);
+      const lane = data.floors.find((floor) => floor.id === 'targets');
+      // Throws count from behind the painted line, between the lane's sides (the lane keeps the block yaw, 0).
+      if (lane) this.targetLane = { minX: lane.position.x - lane.size[0] / 2, maxX: lane.position.x + lane.size[0] / 2, lineZ: lane.position.z + lane.line, depth: 3 };
+    }
+    this.techLabels = new TechLabels(this.host);
     this.bubble = new SeatBubble(this.host);
     this.host.dataset.sign = 'none';
     this.host.dataset.signArea = 'none';
     this.host.dataset.letters = '0';
     this.host.dataset.pins = '0';
     this.host.dataset.thrown = '0';
+    this.host.dataset.score = '0';
+    this.host.dataset.throws = '0';
+    this.host.dataset.targetsHit = '0';
+    this.host.dataset.tech = '0';
   }
 
   /**
@@ -560,6 +594,19 @@ export class CharacterViewer {
       const { position, height } = data.lamppost;
       statics.push({ center: { x: position.x, y: position.y + height / 2, z: position.z }, half: [0.12, height / 2, 0.12], yaw: 0 });
     }
+    // Trees, rocks, benches, racks, the bust, globe, glass case and scoreboard.
+    for (const item of data.decor) {
+      if (!item.solid) continue;
+      const [w, h, d] = item.solid;
+      statics.push({ center: { x: item.position.x, y: item.position.y + h / 2, z: item.position.z }, half: [w / 2, h / 2, d / 2], yaw: item.yaw });
+    }
+    // The targets' posts; their discs are reported when a thrown laptop hits them.
+    const discs: TargetDisc[] = [];
+    for (const target of data.targets) {
+      const { position, yaw, centre, radius } = target;
+      statics.push({ center: { x: position.x, y: position.y + (centre - radius) / 2, z: position.z - 0.05 }, half: [0.05, (centre - radius) / 2, 0.05], yaw });
+      discs.push({ center: { x: position.x + Math.sin(yaw) * 0.025, y: position.y + centre, z: position.z + Math.cos(yaw) * 0.025 }, radius, yaw });
+    }
     this.room?.traverse((object) => {
       const extras = object.userData as { collider?: string; size?: number[] };
       if (extras.collider !== 'box' || extras.size?.length !== 3) return;
@@ -570,8 +617,9 @@ export class CharacterViewer {
     });
     try {
       const loose = this.pieceList.length - this.floorKeys.length;
-      const physics = await PropPhysics.load(this.pieceList.slice(0, loose), statics, groundY);
+      const physics = await PropPhysics.load(this.pieceList.slice(0, loose), statics, groundY, discs);
       if (this.disposed) return;
+      physics.onTargetHit = this.onTargetHit;
       this.physics = physics;
       this.host.dataset.physics = 'ready';
     } catch {
@@ -882,7 +930,7 @@ export class CharacterViewer {
   private throwLaptop(pose: { position: Vector3; quaternion: Quaternion }): void {
     if (!this.physics || !this.controller) return;
     const yaw = this.controller.yaw;
-    const forward = { x: Math.sin(yaw), z: Math.cos(yaw) };
+    const forward = throwDirection(this.controller.position, yaw, pose.position);
     const jitter = () => (Math.random() - 0.5) * 2;
     const laptop = this.physics.throwLaptop(
       { position: pose.position, quaternion: pose.quaternion },
@@ -890,6 +938,11 @@ export class CharacterViewer {
       { x: jitter() * 0.6, y: jitter() * 1.5, z: jitter() * 0.6 },
       4 + Math.random() * 4,
     );
+    // A throw from behind the targets' line counts for the round (the first one after a full round starts a new one).
+    if (this.targetLane && this.targetGame.throwFrom(this.controller.position, this.targetLane)) {
+      this.countedThrows.add(laptop);
+      this.reportTargets();
+    }
     const base = this.laptopCopy();
     const lid = base?.getObjectByName('LaptopHinge');
     if (!base || !lid) return;
@@ -947,6 +1000,54 @@ export class CharacterViewer {
     if (this.host.dataset.thrownLid !== lid) this.host.dataset.thrownLid = lid;
   }
 
+  /** A thrown laptop touched a target: it rocks, and a counted throw scores by the ring it hit. */
+  private readonly onTargetHit = (hit: TargetHit): void => {
+    const target = this.outsideData?.targets[hit.target];
+    if (!target) return;
+    let ring = -1;
+    for (const [index, radius] of target.rings.entries()) if (hit.distance <= radius) ring = index;
+    if (this.countedThrows.has(hit.laptop)) this.targetGame.hit(hit.distance, target.rings, target.points);
+    this.targetsView?.hit(hit.target, ring);
+    this.reportTargets();
+  };
+
+  /** Score, throws and hits of the targets round (data-score, data-throws, data-targets-hit) and the scoreboard. */
+  private reportTargets(): void {
+    const { score, throws, hits } = this.targetGame;
+    this.targetsView?.setScore(score, throws);
+    if (!this.outside) return;
+    this.host.dataset.score = String(score);
+    this.host.dataset.throws = String(throws);
+    this.host.dataset.targetsHit = String(hits);
+  }
+
+  /** Cubes of the tech tower that fell since the last reset: each shows what its tool does here (data-tech counts them). */
+  private checkTech(): void {
+    const physics = this.physics;
+    if (!physics || !this.techLabels) return;
+    const now = performance.now();
+    for (const [index, piece] of this.pieceList.entries()) {
+      if (piece.group !== 'tech' || !piece.tech || this.techDown.has(index) || index >= physics.bodies.length || !physics.toppled(index)) continue;
+      this.techDown.add(index);
+      const body = physics.bodies[index];
+      this.techLabels.show(piece.tech, () => body.position, now);
+    }
+    const value = String(physics.fallen(['tech']));
+    if (this.host.dataset.tech !== value) this.host.dataset.tech = value;
+  }
+
+  private resetTargets(): void {
+    this.physics?.clearThrown();
+    this.targetGame.reset();
+    this.targetsView?.reset();
+    this.reportTargets();
+  }
+
+  private resetTech(): void {
+    this.techDown.clear();
+    this.techLabels?.clear();
+  }
+
   private clearThrown(): void {
     for (const entry of this.thrown) {
       entry.base.removeFromParent();
@@ -973,6 +1074,11 @@ export class CharacterViewer {
     this.host.dataset.locomotion = 'idle';
     this.physics?.reset();
     this.pieces?.reset();
+    this.targetGame.reset();
+    this.targetsView?.reset();
+    this.reportTargets();
+    this.resetTech();
+    this.checkTech();
     for (const key of this.floorKeys) key.depth = 0;
     this.syncThrown(0);
     this.reportLetters();
@@ -1035,7 +1141,12 @@ export class CharacterViewer {
     if (!sign) return;
     this.areas?.pulse(sign.id);
     if (sign.kind === 'reset') {
-      if (sign.target) this.physics?.reset(sign.target);
+      if (sign.target === 'targets') this.resetTargets();
+      else if (sign.target) this.physics?.reset(sign.target);
+      if (sign.target === 'tech') {
+        this.resetTech();
+        this.checkTech();
+      }
       if (this.physics) this.pieces?.sync(this.physics.bodies, true);
       this.reportLetters();
       return;
@@ -1048,6 +1159,9 @@ export class CharacterViewer {
     this.areas?.setLanguage();
     this.floorTexts?.paint();
     this.signpost?.paint();
+    this.about?.paint();
+    this.targetsView?.paint();
+    this.techLabels?.setLanguage();
     this.bubble?.setLanguage();
     this.notice = { text: '', until: 0 };
     if (this.sign) this.emitSign();
@@ -1084,7 +1198,10 @@ export class CharacterViewer {
     if (this.physics && this.physics.step(delta, { x, y: this.elevation + lift, z })) {
       this.pieces?.sync(this.physics.bodies);
       this.reportLetters();
+      this.checkTech();
     }
+    this.targetsView?.update(delta, this.reducedMotion);
+    if (this.techLabels) this.techLabels.update(this.camera, this.host.clientWidth, this.host.clientHeight, performance.now());
     if (this.thrown.length || this.physics?.retired.length) this.syncThrown(delta);
     if (this.elevation < -1e-3 || groundAt({ x, z }, this.outsideData) < 0) {
       const fade = 1 - lift / 0.8;
@@ -1618,6 +1735,9 @@ export class CharacterViewer {
     this.areas?.dispose();
     this.floorTexts?.dispose();
     this.signpost?.dispose();
+    this.about?.dispose();
+    this.targetsView?.dispose();
+    this.techLabels?.dispose();
     this.bubble?.dispose();
     this.chargeMeter?.dispose();
     this.clearThrown();

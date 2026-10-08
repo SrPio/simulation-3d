@@ -1,10 +1,12 @@
-import { Color, Mesh, Quaternion, Vector3, type BufferGeometry, type Material, type MeshStandardMaterial, type Object3D } from 'three';
+import { Color, Mesh, Quaternion, Vector3, type BufferGeometry, type Material, type MeshStandardMaterial, type Object3D, type Texture } from 'three';
 import type { Bounds, Box2, Point2 } from '../world/collisions.ts';
 
 /** Floor zone in front of a sign: an oriented rectangle on the ground. */
 export type SignArea = { center: Point2; axisX: Point2; axisZ: Point2; halfX: number; halfZ: number };
 
-export type PieceGroup = 'name' | 'tag' | 'keys' | 'bowling' | 'bricks';
+export type PieceGroup = 'name' | 'tag' | 'keys' | 'bowling' | 'bricks' | 'decor' | 'tech';
+/** What a reset zone puts back: a group of pieces, or the targets lane (its thrown laptops and score). */
+export type ResetTarget = PieceGroup | 'targets';
 
 /**
  * A floor zone outside the room. 'link' zones lie in front of a standing sign with a screenshot of a site
@@ -17,8 +19,8 @@ export type Sign = {
   label: string;
   /** Word written on the ground in front of the zone (the viewer shows the current language's). */
   title: string;
-  /** Piece group a reset zone puts back. */
-  target?: PieceGroup;
+  /** What a reset zone puts back. */
+  target?: ResetTarget;
   /** Foot of the sign, between its posts, on the outside ground (the zone centre for reset zones). */
   position: Vector3;
   /** Rotation about +Y; the board faces its local +Z (towards the corner camera). */
@@ -33,8 +35,8 @@ export type PieceShape =
   | { kind: 'box' }
   | { kind: 'sphere'; radius: number }
   | { kind: 'cylinders'; cylinders: { radius: number; height: number; y: number }[] };
-/** One material of a piece's mesh: its geometry and colour. */
-export type PiecePart = { geometry: BufferGeometry; color: Color };
+/** One material of a piece's mesh: its geometry and colour, and its texture when it has one (the tech cubes' logos). */
+export type PiecePart = { geometry: BufferGeometry; color: Color; map?: Texture };
 
 /** A loose piece moved by the physics: the name letters, the tagline, the arrow keys, the pins and ball, the bricks. */
 export type Piece = {
@@ -47,6 +49,8 @@ export type Piece = {
   half: [number, number, number];
   shape: PieceShape;
   mass: number;
+  /** The tool a tech cube shows ('typescript', 'node', …). */
+  tech?: string;
 };
 
 /** One loose letter (the standing name or the flat tagline): its mesh, centred on the letter, and the box its physics body uses. */
@@ -59,7 +63,7 @@ export type Letter = Piece & {
 
 /** Where the viewer paints on the ground: a block in its own axes (local +X along the text, +Z towards the camera). */
 export type FloorBlock = {
-  id: 'intro' | 'crossroads' | 'controls' | 'playground' | 'bowling' | 'footprints';
+  id: 'intro' | 'crossroads' | 'controls' | 'playground' | 'bowling' | 'footprints' | 'about' | 'targets' | 'tech';
   position: Vector3;
   yaw: number;
   size: [number, number];
@@ -67,8 +71,10 @@ export type FloorBlock = {
   gap: number;
   /** Ground points the painted arrows point at. */
   targets: Point2[];
-  /** Zone each crossroads arrow is named after, one per target ('links', 'playground'; the text is `floor.<id>`). */
+  /** Zone each crossroads arrow is named after, one per target ('about', 'playground'; the text is `floor.<id>`). */
   labels: string[];
+  /** Throw line of the targets lane, this far ahead (local +Z) of the block centre. */
+  line: number;
 };
 
 /** Street lamp in the crossroads circle; it carries one arrow board per crossroads arrow. */
@@ -83,6 +89,29 @@ export type Lamppost = {
   /** The zones the arrows point at, in order from the top: the crossroads' labels and targets. */
   arrows: { id: string; target: Point2 }[];
 };
+
+/** A fixed decor object (tree, rock, bench, rack, the bust, globe, glass case, scoreboard): its blob shadow and the box pieces bounce off. */
+export type Decor = {
+  name: string;
+  kind: string;
+  position: Vector3;
+  yaw: number;
+  shadow: [number, number];
+  /** Width, height, depth from the ground; none for things too small to stop a piece. */
+  solid?: [number, number, number];
+};
+
+/** Where the viewer paints a plaque (the bust's, the globe's, the diplomas): a rectangle facing local +Z. */
+export type Plaque = { id: string; position: Vector3; yaw: number; size: [number, number] };
+
+/** A standing target: its foot, the centre height of its disc, the ring radii (outer to inner) and their points. */
+export type Target = { index: number; object: Object3D; position: Vector3; yaw: number; radius: number; centre: number; rings: number[]; points: number[] };
+
+/** Board next to the targets where the viewer paints the score. */
+export type Scoreboard = { position: Vector3; yaw: number; width: number; height: number; bottom: number };
+
+/** Stand of the globe: the viewer draws the sphere (radius, centre height above the foot) with its pin on Colombia. */
+export type Globe = { position: Vector3; radius: number; centre: number };
 
 export type OutsideData = {
   bounds: Bounds;
@@ -99,6 +128,11 @@ export type OutsideData = {
   props: Piece[];
   floors: FloorBlock[];
   lamppost?: Lamppost;
+  decor: Decor[];
+  plaques: Plaque[];
+  targets: Target[];
+  scoreboard?: Scoreboard;
+  globe?: Globe;
 };
 
 export const LETTER_MASS = 1.5;
@@ -125,7 +159,8 @@ function areaOf(position: Vector3, quaternion: Quaternion, size: number[], offse
   };
 }
 
-const PROP_GROUPS = new Set<string>(['keys', 'bowling', 'bricks']);
+const PROP_GROUPS = new Set<string>(['keys', 'bowling', 'bricks', 'decor', 'tech']);
+const RESET_TARGETS = new Set<string>([...PROP_GROUPS, 'targets']);
 
 function shapeOf(data: { radius?: number; cylinders?: number[] }): PieceShape {
   if (typeof data.radius === 'number') return { kind: 'sphere', radius: data.radius };
@@ -140,13 +175,17 @@ function shapeOf(data: { radius?: number; cylinders?: number[] }): PieceShape {
 /** The meshes of a node: itself, or the one-material children the loader makes of a multi-material mesh. */
 function partsOf(object: Object3D): PiecePart[] {
   const meshes = object instanceof Mesh ? [object] : object.children.filter((child): child is Mesh => child instanceof Mesh);
-  return meshes.map((mesh) => ({ geometry: mesh.geometry, color: ((mesh.material as MeshStandardMaterial).color ?? new Color(1, 1, 1)).clone() }));
+  return meshes.map((mesh) => {
+    const material = mesh.material as MeshStandardMaterial;
+    return { geometry: mesh.geometry, color: (material.color ?? new Color(1, 1, 1)).clone(), ...(material.map ? { map: material.map } : {}) };
+  });
 }
 
 type Extras = {
   bounds?: number[]; platform?: number[]; ground_y?: number; link?: string; label?: string;
   board?: number[]; area?: number[]; area_offset?: number; collider?: string; size?: number[]; box?: number[]; title?: string;
-  zone?: string; target?: string; floor?: string; gap?: number; targets?: number[]; labels?: string;
+  zone?: string; target?: string | number; floor?: string; line?: number; decor?: string; shadow?: number[]; solid?: number[];
+  plaque?: number[]; text?: string; centre?: number; rings?: number[]; points?: number[]; tech?: string; gap?: number; targets?: number[]; labels?: string;
   height?: number; pole_radius?: number; arrows_top?: number; arrow_step?: number;
   prop?: string; group?: string; mass?: number; radius?: number; cylinders?: number[];
 };
@@ -164,6 +203,11 @@ export function readOutside(root: Object3D): OutsideData {
   let platform: Bounds = { minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
   let groundY = 0;
   let lamppost: Lamppost | undefined;
+  const decor: Decor[] = [];
+  const plaques: Plaque[] = [];
+  const targets: Target[] = [];
+  let scoreboard: Scoreboard | undefined;
+  let globe: Globe | undefined;
   root.traverse((object) => {
     const data = object.userData as Extras;
     if (data.bounds?.length === 4) {
@@ -178,6 +222,19 @@ export function readOutside(root: Object3D): OutsideData {
       // Sizes in Blender axes: X stays X, Blender Y becomes three.js Z. Turned boxes keep their yaw.
       const [sx, sy] = data.size;
       boxes.push({ name: object.name, minX: position.x - sx / 2, maxX: position.x + sx / 2, minZ: position.z - sy / 2, maxZ: position.z + sy / 2, ...(Math.abs(yaw) > 1e-4 ? { yaw } : {}) });
+    } else if (data.decor && data.shadow?.length === 2) {
+      decor.push({
+        name: object.name, kind: data.decor, position, yaw, shadow: [data.shadow[0], data.shadow[1]],
+        ...(data.solid?.length === 3 ? { solid: [data.solid[0], data.solid[1], data.solid[2]] as [number, number, number] } : {}),
+      });
+      if (object.name === 'Globe' && data.radius && data.centre) globe = { position, radius: data.radius, centre: data.centre };
+      if (object.name === 'Scoreboard' && data.board?.length === 3) {
+        scoreboard = { position, yaw, width: data.board[0], height: data.board[1], bottom: data.board[2] };
+      }
+    } else if (object.name.startsWith('Plaque_') && data.plaque?.length === 2 && data.text) {
+      plaques.push({ id: data.text, position, yaw, size: [data.plaque[0], data.plaque[1]] });
+    } else if (/^Target_\d+$/.test(object.name) && typeof data.target === 'number' && data.radius && data.centre && data.rings && data.points) {
+      targets.push({ index: data.target, object, position, yaw, radius: data.radius, centre: data.centre, rings: data.rings, points: data.points });
     } else if (object.name === 'Lamppost' && data.height && data.arrows_top) {
       lamppost = { position, height: data.height, poleRadius: data.pole_radius ?? 0.06, arrowsTop: data.arrows_top, arrowStep: data.arrow_step ?? 0.5, arrows: [] };
     } else if (object.name.startsWith('Sign_') && data.link && data.board && data.area) {
@@ -192,15 +249,15 @@ export function readOutside(root: Object3D): OutsideData {
         board: { width: data.board[0], height: data.board[1], bottom: data.board[2] },
         area: areaOf(position, quaternion, data.area, data.area_offset ?? 0),
       });
-    } else if (object.name.startsWith('Zone_') && data.zone === 'reset' && data.area && PROP_GROUPS.has(data.target ?? '')) {
-      const target = data.target as PieceGroup;
+    } else if (object.name.startsWith('Zone_') && data.zone === 'reset' && data.area && RESET_TARGETS.has(String(data.target ?? ''))) {
+      const target = data.target as ResetTarget;
       zones.push({ id: `reset-${target}`, kind: 'reset', link: '', label: target, title: 'RESET', target, position, yaw, area: areaOf(position, quaternion, data.area, 0) });
     } else if (object.name.startsWith('Floor_') && data.floor && data.size?.length === 2) {
       const targets: Point2[] = [];
       const flat = data.targets ?? [];
       for (let i = 0; i + 1 < flat.length; i += 2) targets.push({ x: flat[i], z: flat[i + 1] });
       const labels = (data.labels ?? '').split(',').filter(Boolean);
-      floors.push({ id: data.floor as FloorBlock['id'], position, yaw, size: [data.size[0], data.size[1]], gap: data.gap ?? 0, targets, labels });
+      floors.push({ id: data.floor as FloorBlock['id'], position, yaw, size: [data.size[0], data.size[1]], gap: data.gap ?? 0, targets, labels, line: data.line ?? 0 });
     } else if (data.prop && PROP_GROUPS.has(data.group ?? '') && data.box?.length === 3) {
       props.push({
         name: object.name,
@@ -211,6 +268,7 @@ export function readOutside(root: Object3D): OutsideData {
         half: [data.box[0] / 2, data.box[1] / 2, data.box[2] / 2],
         shape: shapeOf(data),
         mass: data.mass ?? 1,
+        ...(data.tech ? { tech: data.tech } : {}),
       });
     } else if (object instanceof Mesh && /^(Letter|Tag)_/.test(object.name) && data.box?.length === 3) {
       const word = object.name.startsWith('Tag_') ? 'tag' : 'name';
@@ -235,7 +293,8 @@ export function readOutside(root: Object3D): OutsideData {
   props.sort((a, b) => a.group.localeCompare(b.group) || a.name.localeCompare(b.name));
   const crossroads = floors.find((floor) => floor.id === 'crossroads');
   if (lamppost && crossroads) lamppost.arrows = crossroads.targets.map((target, i) => ({ id: crossroads.labels[i] ?? '', target }));
-  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost };
+  targets.sort((a, b) => a.index - b.index);
+  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost, decor, plaques, targets, scoreboard, globe };
 }
 
 /** Floor height under a point: the room floor on its platform, the outside ground elsewhere. */

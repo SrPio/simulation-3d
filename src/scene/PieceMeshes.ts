@@ -1,4 +1,4 @@
-import { BatchedMesh, BufferAttribute, BufferGeometry, Matrix4, MeshStandardMaterial, Quaternion, Vector3 } from 'three';
+import { BatchedMesh, BufferAttribute, BufferGeometry, Group, Matrix4, MeshStandardMaterial, Quaternion, Vector3, type Texture } from 'three';
 import type { Piece } from './outsideData.ts';
 import type { BlobShadows } from './BlobShadows.ts';
 
@@ -7,10 +7,11 @@ type Pose = { position: { x: number; y: number; z: number }; quaternion: { x: nu
 type Moving = Pose & { sleepState?: number };
 const SLEEPING = 2;
 
-/** Only what the shared material draws: positions and normals, indexed (BatchedMesh needs the same attributes everywhere). */
-function plain(geometry: BufferGeometry): BufferGeometry {
+/** Only what the shared material draws: positions, normals and, for textured pieces, UVs, indexed (BatchedMesh needs the same attributes everywhere). */
+function plain(geometry: BufferGeometry, textured = false): BufferGeometry {
   const copy = new BufferGeometry();
   copy.setAttribute('position', geometry.getAttribute('position'));
+  if (textured) copy.setAttribute('uv', geometry.getAttribute('uv'));
   const normal = geometry.getAttribute('normal');
   if (normal) copy.setAttribute('normal', normal);
   else copy.computeVertexNormals();
@@ -19,15 +20,21 @@ function plain(geometry: BufferGeometry): BufferGeometry {
   return copy;
 }
 
+type Batch = { mesh: BatchedMesh; geometries: Map<BufferGeometry, BufferGeometry>; ids: Map<BufferGeometry, number>; instances: number };
+
 /**
- * Every loose piece outside (name letters, tagline, arrow keys, pins, ball, bricks) drawn as one BatchedMesh:
- * a single draw call. A piece of several materials is several instances sharing its matrix, each with its
- * colour. Matrices follow the physics bodies while they move; each piece also owns a blob shadow.
+ * Every loose piece outside (name letters, tagline, arrow keys, pins, ball, bricks, crates and cones) drawn as one
+ * BatchedMesh: a single draw call. A piece of several materials is several instances sharing its matrix, each with its
+ * colour. Textured parts (the tech cubes' logos, one shared atlas) go in a second batch: one more draw call.
+ * Matrices follow the physics bodies while they move; each piece also owns a blob shadow.
  */
 export class PieceMeshes {
+  /** Both batches. */
+  readonly root = new Group();
   readonly mesh: BatchedMesh;
+  readonly textured?: BatchedMesh;
   private readonly pieces: readonly Piece[];
-  private readonly instances: number[][] = [];
+  private readonly instances: { mesh: BatchedMesh; id: number }[][] = [];
   private readonly shadows: BlobShadows;
   private readonly shadowOffset: number;
   private readonly groundY: number;
@@ -42,36 +49,45 @@ export class PieceMeshes {
     this.shadows = shadows;
     this.shadowOffset = shadowOffset;
     this.groundY = groundY;
-    // Pieces of one kind share their geometry: it is stored once.
-    const unique = new Map<BufferGeometry, BufferGeometry>();
-    let instances = 0;
+    // Pieces of one kind share their geometry: it is stored once per batch.
+    const plainParts: Batch = { mesh: undefined!, geometries: new Map(), ids: new Map(), instances: 0 };
+    const texturedParts: Batch = { mesh: undefined!, geometries: new Map(), ids: new Map(), instances: 0 };
+    let map: Texture | undefined;
     for (const piece of pieces) {
       for (const part of piece.parts) {
-        if (!unique.has(part.geometry)) unique.set(part.geometry, plain(part.geometry));
-        instances++;
+        const batch = part.map && part.geometry.getAttribute('uv') ? texturedParts : plainParts;
+        if (batch === texturedParts) map ??= part.map;
+        if (!batch.geometries.has(part.geometry)) batch.geometries.set(part.geometry, plain(part.geometry, batch === texturedParts));
+        batch.instances++;
       }
     }
-    let vertices = 0;
-    let indices = 0;
-    for (const geometry of unique.values()) {
-      vertices += geometry.getAttribute('position').count;
-      indices += geometry.index!.count;
-    }
-    this.mesh = new BatchedMesh(instances, vertices, indices, new MeshStandardMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0 }));
-    this.mesh.name = 'Pieces';
-    // Pieces wander after a push; each one is culled on its own bounds instead.
-    this.mesh.frustumCulled = false;
-    const ids = new Map<BufferGeometry, number>();
-    for (const [source, geometry] of unique) ids.set(source, this.mesh.addGeometry(geometry));
+    const build = (batch: Batch, name: string, material: MeshStandardMaterial) => {
+      let vertices = 0;
+      let indices = 0;
+      for (const geometry of batch.geometries.values()) {
+        vertices += geometry.getAttribute('position').count;
+        indices += geometry.index!.count;
+      }
+      batch.mesh = new BatchedMesh(Math.max(1, batch.instances), Math.max(1, vertices), Math.max(1, indices), material);
+      batch.mesh.name = name;
+      // Pieces wander after a push; each one is culled on its own bounds instead.
+      batch.mesh.frustumCulled = false;
+      for (const [source, geometry] of batch.geometries) batch.ids.set(source, batch.mesh.addGeometry(geometry));
+      this.root.add(batch.mesh);
+      return batch.mesh;
+    };
+    this.mesh = build(plainParts, 'Pieces', new MeshStandardMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0 }));
+    if (texturedParts.instances) this.textured = build(texturedParts, 'TexturedPieces', new MeshStandardMaterial({ map, roughness: 0.55, metalness: 0 }));
     for (const [index, piece] of pieces.entries()) {
       this.instances.push(piece.parts.map((part) => {
-        const id = this.mesh.addInstance(ids.get(part.geometry)!);
-        this.mesh.setColorAt(id, part.color);
-        return id;
+        const batch = part.map && texturedParts.geometries.has(part.geometry) ? texturedParts : plainParts;
+        const id = batch.mesh.addInstance(batch.ids.get(part.geometry)!);
+        batch.mesh.setColorAt(id, part.color);
+        return { mesh: batch.mesh, id };
       }));
       this.set(index, piece);
     }
-    for (const geometry of unique.values()) geometry.dispose();
+    for (const batch of [plainParts, texturedParts]) for (const geometry of batch.geometries.values()) geometry.dispose();
   }
 
   /** Move piece `index` (and its shadow) to a pose. */
@@ -80,7 +96,7 @@ export class PieceMeshes {
     this.position.set(p.x, p.y, p.z);
     this.quaternion.set(q.x, q.y, q.z, q.w);
     this.matrix.compose(this.position, this.quaternion, this.one);
-    for (const id of this.instances[index]) this.mesh.setMatrixAt(id, this.matrix);
+    for (const { mesh, id } of this.instances[index]) mesh.setMatrixAt(id, this.matrix);
     // Footprint of the turned box on the ground: its extent along the piece's projected width axis and across it.
     const half = this.pieces[index].half;
     const [ax, ay, az] = this.axes;
@@ -115,8 +131,13 @@ export class PieceMeshes {
   }
 
   dispose(): void {
-    this.mesh.dispose();
-    (this.mesh.material as MeshStandardMaterial).dispose();
-    this.mesh.removeFromParent();
+    for (const mesh of [this.mesh, this.textured]) {
+      if (!mesh) continue;
+      mesh.dispose();
+      const material = mesh.material as MeshStandardMaterial;
+      material.map?.dispose();
+      material.dispose();
+    }
+    this.root.removeFromParent();
   }
 }
