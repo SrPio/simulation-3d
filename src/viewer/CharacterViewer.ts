@@ -10,7 +10,7 @@ import { QUALITY, defaultQuality, nextPixelRatio, ratioRange, type QualityId } f
 import { mergeSkinnedMeshes, mergeStaticMeshes } from '../scene/mergeStatic.ts';
 import {
   CHARACTER_RADIUS, CLIP_ALTERNATIVES, CharacterController, DEFAULT_GAIT_CLIPS, JUMP, RUN_CLIP_SPEED, STRIKE_CHARGE, STRIKE_MIN_POWER, STRIKES,
-  THROW_CLIP, THROW_HAND, THROW_RELEASE, THROW_SPEED, WALK_CLIP_SPEED, WALK_SPEED, strikePower, type Gait, type Locomotion, type StrikeKind,
+  THROW_CLIP, THROW_HAND, THROW_RELEASE, THROW_SPEED, WALK_CLIP_SPEED, WALK_SPEED, strikeCharge, strikeLaunch, strikePower, type Gait, type Locomotion, type StrikeKind,
 } from '../character/CharacterController';
 import { onLanguage, t } from '../core/i18n.ts';
 import { KeyboardInput, type HoldAction, type PressAction } from '../input/KeyboardInput';
@@ -198,10 +198,11 @@ export class CharacterViewer {
   /** F plays the throw in place; movement keys wait until it ends. */
   private throwing = false;
   /**
-   * J (punch) or K (kick) in progress: the clip holds its wind-up while the key is down (charge in seconds), then
-   * strikes on release with strikePower(charge); `hit` is set once the blow has pushed what is in front.
+   * J (punch) or K (kick) in progress: the limb draws back while the key is down (charge in seconds), then strikes
+   * on release with strikePower(charge); `launched` once the clip jumped into the swing, `hit` once the blow pushed
+   * what is in front.
    */
-  private strike?: { kind: StrikeKind; held: boolean; charge: number; power: number; hit: boolean };
+  private strike?: { kind: StrikeKind; held: boolean; charge: number; power: number; launched: boolean; hit: boolean };
   private chargeMeter?: ChargeMeter;
   private playing = true;
   private speed = 1;
@@ -641,7 +642,7 @@ export class CharacterViewer {
       // Like the throw: only from free keyboard movement, in place; movement keys wait until it ends.
       const clip = STRIKES[action].clip;
       if (interaction.phase !== 'free' || !this.isLocomotion(this.activeClip) || !this.actions.has(clip)) return;
-      this.strike = { kind: action, held: true, charge: 0, power: 0, hit: false };
+      this.strike = { kind: action, held: true, charge: 0, power: 0, launched: false, hit: false };
       this.controller.speed = 0;
       this.driving = true;
       if (!this.playing) this.setPlaying(true);
@@ -697,13 +698,14 @@ export class CharacterViewer {
     if (!strike || strike.kind !== action || !strike.held) return;
     strike.held = false;
     strike.power = strikePower(strike.charge);
-    const snap = (strike.power - STRIKE_MIN_POWER) / (1 - STRIKE_MIN_POWER);
-    this.actions.get(STRIKES[strike.kind].clip)?.setEffectiveTimeScale(1 + STRIKE_SNAP * snap);
     this.host.dataset.strike = 'striking';
     this.host.dataset.strikePower = strike.power.toFixed(2);
   };
 
-  /** Holds the wind-up while the key is down, and at the hit time knocks away what is in front of the fist or foot. */
+  /**
+   * While the key is down the fist or leg draws back with the charge; once let go (and ready) the blow continues
+   * from the matching pose in the swing, and at the hit time it knocks away what is in front of the fist or foot.
+   */
   private updateStrike(delta: number): void {
     const strike = this.strike;
     if (!strike || !this.model || !this.controller) return;
@@ -711,11 +713,20 @@ export class CharacterViewer {
     const action = this.actions.get(spec.clip);
     if (!action) return;
     if (strike.held) {
-      if (action.time >= spec.windup) {
-        action.time = spec.windup;
-        action.setEffectiveTimeScale(0);
+      if (action.time >= spec.ready) {
         strike.charge += delta * this.speed;
+        action.time = strikeCharge(spec, strike.charge);
+        action.setEffectiveTimeScale(0);
       }
+      return;
+    }
+    if (!strike.launched) {
+      // A tap before the stance is ready lets the clip get there first.
+      if (action.time < spec.ready) return;
+      strike.launched = true;
+      action.time = strikeLaunch(spec, strike.charge);
+      const snap = (strike.power - STRIKE_MIN_POWER) / (1 - STRIKE_MIN_POWER);
+      action.setEffectiveTimeScale(1 + STRIKE_SNAP * snap);
       return;
     }
     if (strike.hit || action.time < spec.hit) return;

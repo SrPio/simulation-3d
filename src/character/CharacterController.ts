@@ -29,16 +29,32 @@ export const THROW_RELEASE = 0.53;
 /** Launch speed of the thrown laptop (m/s) along the character's facing and upwards. */
 export const THROW_SPEED = { forward: 5.5, up: 1.8 };
 /**
- * Charged strikes (J punches, K kicks; manifest `strike`): the clip plays to `windup` and holds there while the key
- * stays down, then strikes on release; at `hit` seconds the striking bone pushes what is in front of it.
- * punch_ual is UAL's Punch_Cross; neither library has a kick, so `kick` is procedural. As with the throw,
- * the rig's side names are mirrored: hand_L and foot_L are the character's right hand and foot.
+ * Charged strikes (J punches, K kicks; manifest `strike`, seconds into the clip): the clip plays to `ready`; while
+ * the key stays down the charge moves it from `ready` towards `windup` (the fist or leg drawing back, see
+ * strikeAmount); on release it jumps to the same pose in the swing (`strikeLaunch`, between `windup` and `release`)
+ * and plays on, and at `hit` the striking bone pushes what is in front of it. punch_ual is UAL's Punch_Cross with
+ * an added pull-back; neither library has a kick, so `kick` is a procedural ball kick. As with the throw, the rig's
+ * side names are mirrored: hand_L and foot_L are the character's right hand and foot.
  */
 export type StrikeKind = 'punch' | 'kick';
-export const STRIKES: Readonly<Record<StrikeKind, { clip: string; bone: string; windup: number; hit: number; reach: number }>> = {
-  punch: { clip: 'punch_ual', bone: 'hand_L', windup: 0.26666666666666666, hit: 0.4666666666666667, reach: 0.15 },
-  kick: { clip: 'kick', bone: 'foot_L', windup: 0.36, hit: 0.504, reach: 0.2 },
+export type StrikeSpec = { clip: string; bone: string; ready: number; windup: number; release: number; hit: number; reach: number };
+export const STRIKES: Readonly<Record<StrikeKind, StrikeSpec>> = {
+  punch: { clip: 'punch_ual', bone: 'hand_L', ready: 0.26666666666666666, windup: 0.7333333333333333, release: 0.8333333333333334, hit: 1.0333333333333334, reach: 0.15 },
+  kick: { clip: 'kick', bone: 'foot_L', ready: 0.22, windup: 0.67, release: 0.78, hit: 0.8350000000000001, reach: 0.25 },
 };
+/** How far the limb has drawn back (0…1) after charging for `held` seconds: quick at first, straining towards the end. */
+export function strikeAmount(held: number): number {
+  const charge = Math.min(Math.max(held / STRIKE_CHARGE, 0), 1);
+  return 1 - (1 - charge) ** 2;
+}
+/** Clip time of the charge pose for `held` seconds of holding. */
+export function strikeCharge(spec: StrikeSpec, held: number): number {
+  return spec.ready + strikeAmount(held) * (spec.windup - spec.ready);
+}
+/** Clip time in the swing with the same pose as strikeCharge(spec, held): where the blow continues on release. */
+export function strikeLaunch(spec: StrikeSpec, held: number): number {
+  return spec.release - strikeAmount(held) * (spec.release - spec.windup);
+}
 /** Seconds of holding that charge a strike fully; a tap strikes at power STRIKE_MIN_POWER. */
 export const STRIKE_CHARGE = 1.2;
 export const STRIKE_MIN_POWER = 0.25;

@@ -4,12 +4,12 @@ import { test } from 'node:test';
 import * as cannon from 'cannon-es';
 import { AnimationMixer, LoopOnce, Texture, Vector3 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { STRIKE_CHARGE, STRIKE_MIN_POWER, STRIKES, strikePower } from '../src/character/CharacterController.ts';
+import { STRIKE_CHARGE, STRIKE_MIN_POWER, STRIKES, strikeCharge, strikeLaunch, strikePower } from '../src/character/CharacterController.ts';
 import { PropPhysics, STRIKE_RADIUS } from '../src/world/PropPhysics.ts';
 
 const root = new URL('../', import.meta.url);
 
-test('punch and kick: the controller timing matches the manifest, the blow lands in front at the hit time', async () => {
+test('punch and kick: timing matches the manifest, the limb draws back while charging and the blow lands in front', async () => {
   const bytes = await readFile(new URL('public/models/developer-v4-interactions.glb', root));
   const manifest = JSON.parse(await readFile(new URL('public/models/developer-v4-interactions.manifest.json', root), 'utf8'));
   const loader = new GLTFLoader();
@@ -19,10 +19,11 @@ test('punch and kick: the controller timing matches the manifest, the blow lands
   for (const [kind, spec] of Object.entries(STRIKES)) {
     const entry = manifest.clips.find((clip: { name: string }) => clip.name === spec.clip);
     assert.ok(entry?.strike, `${spec.clip} in the manifest`);
-    assert.deepEqual({ bone: spec.bone, windup: spec.windup, hit: spec.hit }, entry.strike, `${kind}: timing`);
+    const { clip: _clip, reach: _reach, ...timing } = spec;
+    assert.deepEqual(timing, entry.strike, `${kind}: timing`);
     const clip = gltf.animations.find((animation) => animation.name === spec.clip);
     assert.ok(clip, spec.clip);
-    assert.ok(spec.windup > 0 && spec.windup < spec.hit && spec.hit < clip.duration, `${kind}: wind-up before the hit`);
+    assert.ok(0 < spec.ready && spec.ready < spec.windup && spec.windup < spec.release && spec.release < spec.hit && spec.hit < clip.duration, `${kind}: stretches in order`);
     mixer.stopAllAction();
     const action = mixer.clipAction(clip).reset().setLoop(LoopOnce, 1).play();
     action.clampWhenFinished = true;
@@ -33,13 +34,22 @@ test('punch and kick: the controller timing matches the manifest, the blow lands
       return bone.getWorldPosition(new Vector3());
     };
     const rest = at(0);
+    const ready = at(spec.ready);
     const windup = at(spec.windup);
     const hit = at(spec.hit);
-    // The character faces +Z; its right side (the striking one) is -X.
-    assert.ok(hit.z > windup.z + 0.3 && hit.z > rest.z + 0.4, `${kind}: forward from ${windup.z.toFixed(2)} to ${hit.z.toFixed(2)}`);
+    // The character faces +Z; its right side (the striking one) is -X. Charging draws the fist or foot back.
+    assert.ok(windup.z < ready.z - 0.2, `${kind}: draws back from ${ready.z.toFixed(2)} to ${windup.z.toFixed(2)}`);
+    assert.ok(at(strikeCharge(spec, STRIKE_CHARGE / 4)).z < ready.z - 0.05, `${kind}: already drawing back at a quarter charge`);
+    assert.ok(hit.z > windup.z + 0.5 && hit.z > rest.z + 0.25, `${kind}: forward from ${windup.z.toFixed(2)} to ${hit.z.toFixed(2)}`);
     assert.ok(hit.x < 0.05, `${kind}: the right side (x ${hit.x.toFixed(2)})`);
-    if (kind === 'kick') assert.ok(hit.y > 0.6, `kick at ${hit.y.toFixed(2)} m`);
+    // A ball kick hits low; the punch at chest height.
+    if (kind === 'kick') assert.ok(hit.y > 0.1 && hit.y < 0.5, `kick at ${hit.y.toFixed(2)} m`);
     else assert.ok(hit.y > 1.3, `punch at ${hit.y.toFixed(2)} m`);
+    // Let go at any charge, the swing continues from the very pose the charge reached.
+    for (const held of [0, STRIKE_CHARGE / 3, STRIKE_CHARGE * 0.7, STRIKE_CHARGE]) {
+      const gap = at(strikeCharge(spec, held)).distanceTo(at(strikeLaunch(spec, held)));
+      assert.ok(gap < 0.03, `${kind}: released after ${held.toFixed(2)} s, ${gap.toFixed(3)} m apart`);
+    }
     action.reset().play();
     assert.ok(at(0).distanceTo(at(clip.duration - 1e-4)) < 0.01, `${kind}: starts and ends standing`);
   }

@@ -141,13 +141,15 @@
     },
     {
       "name": "punch_ual",
-      "duration": 1.4,
+      "duration": 1.9666666666666666,
       "loop": false,
       "source": "Quaternius Universal Animation Library \u00b7 Punch_Cross (CC0)",
       "strike": {
         "bone": "hand_L",
-        "windup": 0.26666666666666666,
-        "hit": 0.4666666666666667
+        "ready": 0.26666666666666666,
+        "windup": 0.7333333333333333,
+        "release": 0.8333333333333334,
+        "hit": 1.0333333333333334
       }
     },
     {
@@ -158,13 +160,15 @@
     },
     {
       "name": "kick",
-      "duration": 1.2,
+      "duration": 1.6333333333333333,
       "loop": false,
       "source": "procedural",
       "strike": {
         "bone": "foot_L",
-        "windup": 0.36,
-        "hit": 0.504
+        "ready": 0.22,
+        "windup": 0.67,
+        "release": 0.78,
+        "hit": 0.8350000000000001
       }
     }
   ]
