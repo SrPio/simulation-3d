@@ -21,7 +21,10 @@ the room floor, so the room reads as a raised platform) and uses the walkable `b
   [radius, height, centre height, ...] about the piece origin for a pin.
 - `Floor_<Id>`: where the viewer paints on the ground (intro sentence, crossroads arrows, controls,
   playground sign, bowling lane, footprints out of the room's front corner); extras `floor` and `size` [width, depth] in the anchor's own axes, the
-  `gap` left for the 3D keys, or the `targets` the crossroads arrows point at (three.js x, z pairs).
+  `gap` left for the 3D keys, or the `targets` the crossroads arrows point at (three.js x, z pairs) with the
+  comma-separated zone `labels` they are named after.
+- `Lamppost`: the street lamp in the middle of the crossroads circle; extras `height`, `pole_radius` and where the
+  viewer hangs one arrow board per crossroads arrow (`arrows_top`, `arrow_step`), plus `Collider_Lamppost`.
 - `Zone_<Id>`: floor zones that put a group of pieces back (`zone` 'reset', `target`, `area`).
 Layout positions are written in three.js ground coordinates (x, z); Blender Y is three.js -Z.
 The room itself (room.glb) is not modified.
@@ -191,7 +194,10 @@ BLOCK_YAW = 0.0
 INTRO = (9.0, -1.3)            # centre of the arrow keys, in the gap of the intro sentence
 INTRO_SIZE, INTRO_GAP = (12.4, 3.6), 2.4
 KEY_SIZE, KEY_HEIGHT, KEY_PITCH = 0.6, 0.3, 0.68
-CROSSROADS = (9.25, 8.3)
+CROSSROADS = (15.75, 10.0)
+# Lamppost in the crossroads circle: pole top, pole radius, and the arrow boards from ARROWS_TOP down by ARROW_STEP.
+LAMP_HEIGHT, LAMP_POLE = 3.4, 0.065
+LAMP_ARROWS_TOP, LAMP_ARROW_STEP = 2.85, 0.48
 CONTROLS, CONTROLS_SIZE = (3.75, 15.8), (5.6, 4.8)
 PLAY_SIGN, PLAY_SIGN_SIZE = (14.25, 14.8), (6.4, 1.9)
 PLAYGROUND = (20.75, 21.3)
@@ -371,10 +377,11 @@ def build_playground(root):
         piece(f'Key_{name}', key, intro(x * KEY_PITCH, z * KEY_PITCH), KEY_HEIGHT / 2, BLOCK_YAW + turn, keys,
               prop='key', group='keys', mass=MASS['key'], box=[KEY_SIZE, KEY_HEIGHT, KEY_SIZE])
 
-    # Crossroads: arrows towards the links, the controls and the playground sign.
-    links = (SIGN_FIRST_X + SIGN_SPACING, -(SIGN_Y - AREA_OFFSET))
+    # Crossroads: a painted arrow and a 3D arrow on the lamppost towards each zone. Another zone is one more
+    # entry here (its name is `floor.<id>` in src/core/i18n.ts); the controls panel gets no arrow.
+    arrows = [('links', (SIGN_FIRST_X + SIGN_SPACING, -(SIGN_Y - AREA_OFFSET))), ('playground', PLAY_SIGN)]
     room.anchor('Floor_Crossroads', at(CROSSROADS), root, BLOCK_YAW, floor='crossroads', size=[10.6, 7.0],
-                targets=[*links, *CONTROLS, *PLAY_SIGN])
+                targets=[value for _, point in arrows for value in point], labels=','.join(label for label, _ in arrows))
     room.anchor('Floor_Controls', at(CONTROLS), root, BLOCK_YAW, floor='controls', size=list(CONTROLS_SIZE))
     room.anchor('Floor_Playground', at(PLAY_SIGN), root, BLOCK_YAW, floor='playground', size=list(PLAY_SIGN_SIZE),
                 targets=list(PLAYGROUND))
@@ -415,11 +422,33 @@ def build_playground(root):
     room.anchor('Zone_Bricks', at(play(7.6, 3.4)), root, BLOCK_YAW, zone='reset', target='bricks', area=RESET_AREA)
 
 
+def build_lamppost(root, iron, glow):
+    """Street lamp: a stepped base, a thin pole with collars and a lantern with a glowing glass."""
+    lamp = room.anchor('Lamppost', at(CROSSROADS), root, BLOCK_YAW, height=LAMP_HEIGHT, pole_radius=LAMP_POLE,
+                       arrows_top=LAMP_ARROWS_TOP, arrow_step=LAMP_ARROW_STEP)
+    glass = room.material('LampGlass', (1.0, 0.88, 0.7), 0.3, emission=(1.0, 0.82, 0.6), strength=4.0)
+    h = LAMP_HEIGHT
+    room.cylinder('LampBase', (0, 0, 0.08), 0.24, 0.16, iron, lamp, top=0.2, segments=16)
+    room.cylinder('LampPlinth', (0, 0, 0.32), 0.12, 0.32, iron, lamp, top=LAMP_POLE + 0.015, segments=16)
+    room.cylinder('LampPole', (0, 0, (0.48 + h) / 2), LAMP_POLE, h - 0.48, iron, lamp, segments=16)
+    for index, z in enumerate((1.15, h - 0.08)):
+        room.cylinder(f'LampCollar_{index}', (0, 0, z), LAMP_POLE + 0.03, 0.06, iron, lamp, segments=16)
+    room.cylinder('LampSeat', (0, 0, h + 0.02), 0.08, 0.04, iron, lamp, top=0.13, segments=16)
+    room.cylinder('LampRing', (0, 0, h + 0.055), 0.125, 0.03, glow, lamp, segments=16)
+    room.cylinder('LampGlass', (0, 0, h + 0.24), 0.11, 0.36, glass, lamp, top=0.15, segments=16)
+    room.cylinder('LampCap', (0, 0, h + 0.48), 0.21, 0.13, iron, lamp, top=0.05, segments=16)
+    room.cylinder('LampFinial', (0, 0, h + 0.58), 0.022, 0.08, iron, lamp, segments=8)
+    x, y, _ = at(CROSSROADS)
+    room.collider('Lamppost', (x - 0.25, y - 0.25, GROUND_Z), (x + 0.25, y + 0.25, GROUND_Z + h), root)
+    return lamp
+
+
 def build(root):
     frame = room.material('SignFrame', (0.02, 0.018, 0.026), 0.45, 0.5)
     glow = room.material('SignGlow', (0.55, 0.35, 1.0), 0.4, emission=(0.55, 0.35, 1.0), strength=3.0)
     for name, sign in SIGNS.items():
         build_sign(name, sign, frame, glow, root)
+    build_lamppost(root, frame, glow)
     # The ground behind the two room walls cannot be seen from the corner camera: keep the character out of it.
     room.collider('BehindLeft', (-FAR, -HALF - WALL_T, GROUND_Z), (-HALF - WALL_T, FAR, 1), root)
     room.collider('BehindBack', (-FAR, HALF + WALL_T, GROUND_Z), (HALF + WALL_T, FAR, 1), root)
@@ -456,7 +485,7 @@ def main():
     bpy.context.scene.unit_settings.system = 'METRIC'
     root = bpy.data.objects.new('Outside', None)
     bpy.context.collection.objects.link(root)
-    root['stage'] = '10-crossroads-playground'
+    root['stage'] = '11-crossroads-lamppost'
     build(root)
     BLEND.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(BLEND), compress=True)

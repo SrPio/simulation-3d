@@ -1,7 +1,7 @@
 import {
   BufferAttribute, BufferGeometry, CanvasTexture, Color, DoubleSide, Mesh, MeshBasicMaterial, SRGBColorSpace,
 } from 'three';
-import { t, type MessageKey } from '../core/i18n.ts';
+import { MESSAGES, t, type MessageKey } from '../core/i18n.ts';
 import { FONT, drawArrow, drawKey } from './canvasText.ts';
 import type { FloorBlock } from './outsideData.ts';
 
@@ -34,6 +34,12 @@ function pack(blocks: readonly FloorBlock[]): { rects: Rect[]; height: number } 
     shelf = Math.max(shelf, h);
   }
   return { rects, height: y + shelf };
+}
+
+/** Name of a zone the crossroads points at, in the current language: `floor.<id>`, or the id itself without one. */
+export function zoneName(id: string): string {
+  const key = `floor.${id}` as MessageKey;
+  return key in MESSAGES.es ? t(key) : id.toUpperCase();
 }
 
 /** A block's own axes on the ground: local +X along the text, +Z towards the camera. */
@@ -128,12 +134,13 @@ export class FloorTexts {
   private draw(context: CanvasRenderingContext2D, block: FloorBlock): void {
     const [w, d] = block.size;
     /** Writes a text at most `room` wide (shrinking it when a language needs more), returns its width. */
-    const text = (key: MessageKey, x: number, y: number, size: number, align: CanvasTextAlign = 'center', weight = 600, room = Infinity) => {
+    const text = (key: MessageKey | { words: string }, x: number, y: number, size: number, align: CanvasTextAlign = 'center', weight = 600, room = Infinity) => {
+      const words = typeof key === 'string' ? t(key) : key.words;
       context.font = `${weight} ${size}px ${FONT}`;
-      const natural = context.measureText(t(key)).width;
+      const natural = context.measureText(words).width;
       if (natural > room) context.font = `${weight} ${Math.floor(size * room / natural)}px ${FONT}`;
       context.textAlign = align;
-      context.fillText(t(key), x, y);
+      context.fillText(words, x, y);
       return Math.min(natural, room);
     };
     context.textBaseline = 'middle';
@@ -161,14 +168,14 @@ export class FloorTexts {
       context.beginPath();
       context.arc(0, 0, 0.42, 0, Math.PI * 2);
       context.stroke();
-      const labels: MessageKey[] = ['floor.links', 'floor.controls', 'floor.playground'];
+      // One arrow per zone the crossroads points at, named after it (the lamppost above carries the same ones).
       for (const [index, target] of block.targets.entries()) {
         const dir = towards(block, target);
         drawArrow(context, dir.x * 0.6, dir.z * 0.6, Math.atan2(dir.z, dir.x), 1.25, 0.14);
         const tip = { x: dir.x * 2.0, z: dir.z * 2.0 };
         scaled(() => {
           context.textBaseline = dir.z > 0.45 ? 'top' : dir.z < -0.45 ? 'bottom' : 'middle';
-          text(labels[index], tip.x * 100, tip.z * 100, 40, dir.x > 0.45 ? 'left' : dir.x < -0.45 ? 'right' : 'center');
+          text({ words: zoneName(block.labels[index] ?? '') }, tip.x * 100, tip.z * 100, 40, dir.x > 0.45 ? 'left' : dir.x < -0.45 ? 'right' : 'center');
         });
       }
     } else if (block.id === 'controls') {

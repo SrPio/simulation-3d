@@ -67,6 +67,21 @@ export type FloorBlock = {
   gap: number;
   /** Ground points the painted arrows point at. */
   targets: Point2[];
+  /** Zone each crossroads arrow is named after, one per target ('links', 'playground'; the text is `floor.<id>`). */
+  labels: string[];
+};
+
+/** Street lamp in the crossroads circle; it carries one arrow board per crossroads arrow. */
+export type Lamppost = {
+  /** Foot of the pole on the outside ground. */
+  position: Vector3;
+  height: number;
+  poleRadius: number;
+  /** Height of the first arrow board's centre above the foot, and the drop to each next one. */
+  arrowsTop: number;
+  arrowStep: number;
+  /** The zones the arrows point at, in order from the top: the crossroads' labels and targets. */
+  arrows: { id: string; target: Point2 }[];
 };
 
 export type OutsideData = {
@@ -83,6 +98,7 @@ export type OutsideData = {
   /** Arrow keys, pins, ball and bricks. */
   props: Piece[];
   floors: FloorBlock[];
+  lamppost?: Lamppost;
 };
 
 export const LETTER_MASS = 1.5;
@@ -130,7 +146,8 @@ function partsOf(object: Object3D): PiecePart[] {
 type Extras = {
   bounds?: number[]; platform?: number[]; ground_y?: number; link?: string; label?: string;
   board?: number[]; area?: number[]; area_offset?: number; collider?: string; size?: number[]; box?: number[]; title?: string;
-  zone?: string; target?: string; floor?: string; gap?: number; targets?: number[];
+  zone?: string; target?: string; floor?: string; gap?: number; targets?: number[]; labels?: string;
+  height?: number; pole_radius?: number; arrows_top?: number; arrow_step?: number;
   prop?: string; group?: string; mass?: number; radius?: number; cylinders?: number[];
 };
 
@@ -146,6 +163,7 @@ export function readOutside(root: Object3D): OutsideData {
   let bounds: Bounds | undefined;
   let platform: Bounds = { minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
   let groundY = 0;
+  let lamppost: Lamppost | undefined;
   root.traverse((object) => {
     const data = object.userData as Extras;
     if (data.bounds?.length === 4) {
@@ -160,6 +178,8 @@ export function readOutside(root: Object3D): OutsideData {
       // Sizes in Blender axes: X stays X, Blender Y becomes three.js Z. Turned boxes keep their yaw.
       const [sx, sy] = data.size;
       boxes.push({ name: object.name, minX: position.x - sx / 2, maxX: position.x + sx / 2, minZ: position.z - sy / 2, maxZ: position.z + sy / 2, ...(Math.abs(yaw) > 1e-4 ? { yaw } : {}) });
+    } else if (object.name === 'Lamppost' && data.height && data.arrows_top) {
+      lamppost = { position, height: data.height, poleRadius: data.pole_radius ?? 0.06, arrowsTop: data.arrows_top, arrowStep: data.arrow_step ?? 0.5, arrows: [] };
     } else if (object.name.startsWith('Sign_') && data.link && data.board && data.area) {
       signs.push({
         id: object.name.slice('Sign_'.length).toLowerCase(),
@@ -179,7 +199,8 @@ export function readOutside(root: Object3D): OutsideData {
       const targets: Point2[] = [];
       const flat = data.targets ?? [];
       for (let i = 0; i + 1 < flat.length; i += 2) targets.push({ x: flat[i], z: flat[i + 1] });
-      floors.push({ id: data.floor as FloorBlock['id'], position, yaw, size: [data.size[0], data.size[1]], gap: data.gap ?? 0, targets });
+      const labels = (data.labels ?? '').split(',').filter(Boolean);
+      floors.push({ id: data.floor as FloorBlock['id'], position, yaw, size: [data.size[0], data.size[1]], gap: data.gap ?? 0, targets, labels });
     } else if (data.prop && PROP_GROUPS.has(data.group ?? '') && data.box?.length === 3) {
       props.push({
         name: object.name,
@@ -212,7 +233,9 @@ export function readOutside(root: Object3D): OutsideData {
   // The name first, then the tagline, each in reading order; the props by group and name.
   letters.sort((a, b) => a.word.localeCompare(b.word) || a.name.localeCompare(b.name));
   props.sort((a, b) => a.group.localeCompare(b.group) || a.name.localeCompare(b.name));
-  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors };
+  const crossroads = floors.find((floor) => floor.id === 'crossroads');
+  if (lamppost && crossroads) lamppost.arrows = crossroads.targets.map((target, i) => ({ id: crossroads.labels[i] ?? '', target }));
+  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost };
 }
 
 /** Floor height under a point: the room floor on its platform, the outside ground elsewhere. */

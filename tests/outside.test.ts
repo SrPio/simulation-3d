@@ -6,6 +6,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CHARACTER_RADIUS, CharacterController, JUMP } from '../src/character/CharacterController.ts';
 import { groundAt, readOutside } from '../src/scene/outsideData.ts';
 import { readRoom } from '../src/scene/roomData.ts';
+import { MIN_VIEW_ANGLE, arrowYaw } from '../src/scene/Signpost.ts';
+import { MESSAGES, type MessageKey } from '../src/core/i18n.ts';
 import { overlaps, resolve, type Point2 } from '../src/world/collisions.ts';
 import { AREA_MARGIN, signAt } from '../src/world/signs.ts';
 
@@ -162,4 +164,41 @@ test('the jump in the controller matches the rig manifest', async () => {
   assert.ok(Math.abs(jump.duration - JUMP.duration) < 1e-9);
   assert.deepEqual(jump.air, JUMP.air);
   assert.equal(jump.distance, JUMP.distance);
+});
+
+test('the crossroads lamppost carries one arrow per zone, none for the controls, and blocks the way', async () => {
+  const data = readOutside((await load('outside')).gltf.scene);
+  const lamp = data.lamppost!;
+  assert.ok(lamp, 'lamppost');
+  const crossroads = data.floors.find((floor) => floor.id === 'crossroads')!;
+  const controls = data.floors.find((floor) => floor.id === 'controls')!;
+  assert.ok(Math.hypot(lamp.position.x - crossroads.position.x, lamp.position.z - crossroads.position.z) < 1e-3, 'in the circle');
+  assert.ok(lamp.height > 2.5 && lamp.arrowsTop < lamp.height && lamp.arrowsTop - (lamp.arrows.length - 1) * lamp.arrowStep > 1.2);
+  assert.deepEqual(lamp.arrows.map((arrow) => arrow.id), ['links', 'playground']);
+  assert.deepEqual(crossroads.labels, ['links', 'playground']);
+  for (const arrow of lamp.arrows) {
+    for (const language of ['es', 'en'] as const) assert.ok(MESSAGES[language][`floor.${arrow.id}` as MessageKey], `${language} name for ${arrow.id}`);
+    assert.ok(Math.hypot(arrow.target.x - controls.position.x, arrow.target.z - controls.position.z) > 3, `${arrow.id} is not the controls`);
+  }
+  const box = data.boxes.find((entry) => entry.name === 'Collider_Lamppost')!;
+  assert.ok(box && box.minX < lamp.position.x && box.maxX > lamp.position.x && box.minZ < lamp.position.z && box.maxZ > lamp.position.z);
+  const pushed = resolve({ x: lamp.position.x + 0.1, z: lamp.position.z }, CHARACTER_RADIUS, data.boxes);
+  assert.ok(Math.hypot(pushed.x - lamp.position.x, pushed.z - lamp.position.z) >= 0.25 + CHARACTER_RADIUS - 1e-3, 'the character goes round the pole');
+});
+
+test('signpost arrows point at their zone but never turn edge-on to the default view', () => {
+  const view = { x: 1, z: 1 };
+  const viewYaw = Math.atan2(-view.z, view.x);
+  const pole = { x: 0, z: 0 };
+  for (let degrees = 0; degrees < 360; degrees += 5) {
+    const angle = degrees * Math.PI / 180;
+    const target = { x: Math.cos(angle) * 5, z: -Math.sin(angle) * 5 };
+    const yaw = arrowYaw(pole, target, view);
+    const offView = Math.abs(Math.sin(yaw - viewYaw));
+    assert.ok(offView >= Math.sin(MIN_VIEW_ANGLE) - 1e-9, `${degrees}°: ${offView.toFixed(3)} off the line of sight`);
+    // It still points on the target's side, and exactly at it when that is already readable.
+    const towards = Math.cos(yaw - angle);
+    assert.ok(towards > Math.cos(MIN_VIEW_ANGLE) - 1e-9, `${degrees}°: points away`);
+    if (Math.abs(Math.sin(angle - viewYaw)) > Math.sin(MIN_VIEW_ANGLE) + 1e-6) assert.ok(towards > 1 - 1e-9, `${degrees}°: turned without need`);
+  }
 });

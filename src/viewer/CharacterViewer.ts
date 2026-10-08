@@ -22,6 +22,7 @@ import { readRoom, type RoomData } from '../scene/roomData.ts';
 import { groundAt, readOutside, type OutsideData, type Piece, type Sign } from '../scene/outsideData.ts';
 import { SignAreas, signText } from '../scene/SignAreas.ts';
 import { FloorTexts } from '../scene/FloorTexts.ts';
+import { Signpost } from '../scene/Signpost.ts';
 import { SeatBubble } from '../scene/SeatBubble.ts';
 import { InfiniteFloor } from '../scene/InfiniteFloor.ts';
 import { BlobShadows } from '../scene/BlobShadows.ts';
@@ -141,6 +142,9 @@ export class CharacterViewer {
   private floorKeys: { index: number; name: string; piece: Piece; area: FloorKey; depth: number }[] = [];
   private pressedKeys = '';
   private floorTexts?: FloorTexts;
+  private signpost?: Signpost;
+  /** Blob shadows of things that never move (the character's, the signs', the lamppost's), before the pieces' ones. */
+  private staticShadows = 0;
   private bubble?: SeatBubble;
   /** Link signs and playground reset zones: the floor zones the character can step into. */
   private zones: Sign[] = [];
@@ -359,7 +363,7 @@ export class CharacterViewer {
       this.scene.add(this.model);
       if (this.room) this.scene.add(this.room);
       if (this.outside) this.scene.add(this.outside);
-      for (const object of [this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.pieces?.mesh]) if (object) this.scene.add(object);
+      for (const object of [this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.mesh]) if (object) this.scene.add(object);
       if (!this.ground) this.createFloor(this.mixer ? 0 : box.min.y);
       this.frameLights();
       this.cameraDistance = Math.max(this.bounds.length() * 2.5, 1);
@@ -483,10 +487,18 @@ export class CharacterViewer {
       area: { center: { x: piece.position.x, z: piece.position.z }, yaw: yawOf(piece.quaternion), halfX: piece.half[0], halfZ: piece.half[2] },
       depth: 0,
     }));
-    const pieceShadows = 1 + data.signs.length;
+    const pieceShadows = 1 + data.signs.length + (data.lamppost ? 1 : 0);
+    this.staticShadows = pieceShadows;
     this.shadows = new BlobShadows(pieceShadows + this.pieceList.length + THROWN_SHADOWS, data.groundY);
     for (const [index, sign] of data.signs.entries()) {
       this.shadows.set(1 + index, sign.position.x, sign.position.z, sign.yaw, (sign.board?.width ?? 2) + 0.5, 0.55, 0.45);
+    }
+    if (data.lamppost) {
+      const { position } = data.lamppost;
+      this.shadows.set(pieceShadows - 1, position.x, position.z, 0, 0.8, 0.8, 0.5);
+      // Its arrows stay readable from the default isometric view (ROOM_VIEW).
+      this.signpost = new Signpost(data.lamppost, { x: ROOM_VIEW.x, z: ROOM_VIEW.z });
+      this.host.dataset.signpost = this.signpost.arrows.map((arrow) => arrow.id).join(',');
     }
     if (this.pieceList.length) {
       this.pieces = new PieceMeshes(this.pieceList, this.shadows, pieceShadows, data.groundY);
@@ -529,6 +541,10 @@ export class CharacterViewer {
       if (!sign.board) continue;
       const height = sign.board.bottom + sign.board.height;
       statics.push({ center: { x: sign.position.x, y: sign.position.y + height / 2, z: sign.position.z }, half: [sign.board.width / 2 + 0.1, height / 2, 0.08], yaw: sign.yaw });
+    }
+    if (data.lamppost) {
+      const { position, height } = data.lamppost;
+      statics.push({ center: { x: position.x, y: position.y + height / 2, z: position.z }, half: [0.12, height / 2, 0.12], yaw: 0 });
     }
     this.room?.traverse((object) => {
       const extras = object.userData as { collider?: string; size?: number[] };
@@ -785,7 +801,7 @@ export class CharacterViewer {
       const entry = this.thrown.find((item) => item.laptop === laptop);
       if (entry) entry.shrink = this.reducedMotion ? SHRINK_TIME : Math.max(entry.shrink, 1e-6);
     }
-    const shadowStart = 1 + (this.outsideData?.signs.length ?? 0) + this.pieceList.length;
+    const shadowStart = this.staticShadows + this.pieceList.length;
     const center = new Vector3();
     const quaternion = new Quaternion();
     this.thrown = this.thrown.filter((entry) => {
@@ -924,6 +940,7 @@ export class CharacterViewer {
     if (this.disposed) return;
     this.areas?.setLanguage();
     this.floorTexts?.paint();
+    this.signpost?.paint();
     this.bubble?.setLanguage();
     this.notice = { text: '', until: 0 };
     if (this.sign) this.emitSign();
@@ -1490,6 +1507,7 @@ export class CharacterViewer {
     this.events.render?.(null);
     this.areas?.dispose();
     this.floorTexts?.dispose();
+    this.signpost?.dispose();
     this.bubble?.dispose();
     this.clearThrown();
     this.ground?.dispose();
