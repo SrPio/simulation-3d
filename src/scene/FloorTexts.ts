@@ -46,6 +46,22 @@ export function zoneName(id: string): string {
   return key in MESSAGES.es ? t(key) : id.toUpperCase();
 }
 
+/** One shoe print at (x, z) in a block's metres, its toe along `heading`; `foot` 1 mirrors it into the other foot. */
+function drawPrint(context: CanvasRenderingContext2D, x: number, z: number, heading: number, foot: number, alpha: number): void {
+  context.save();
+  context.globalAlpha = alpha;
+  context.translate(x, z);
+  context.rotate(heading);
+  if (foot > 0) context.scale(1, -1);
+  context.beginPath();
+  context.ellipse(0.06, 0.008, 0.11, 0.068, 0.12, 0, Math.PI * 2);
+  context.fill();
+  context.beginPath();
+  context.ellipse(-0.13, 0, 0.06, 0.055, 0, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+}
+
 /** A block's own axes on the ground: local +X along the text, +Z towards the camera. */
 const axes = (yaw: number) => ({ x: { x: Math.cos(yaw), z: -Math.sin(yaw) }, z: { x: Math.sin(yaw), z: Math.cos(yaw) } });
 
@@ -61,7 +77,7 @@ function towards(block: FloorBlock, target: Local): Local {
 
 /**
  * Words and drawings painted flat on the outside ground: the intro sentence around the 3D arrow keys, the
- * crossroads arrows, the controls panel, the playground sign, the bowling lane and the footprints leaving the room.
+ * controls panel, the bowling lane, the zones' own ground, the footprints leaving the room and a few more trails of prints.
  * One canvas atlas and one mesh (a single draw call) in the sign zones' title colour; switching the language
  * repaints the canvas.
  */
@@ -167,21 +183,6 @@ export class FloorTexts {
         const middle = (edge * 100 + after - (edge * 100 + before)) / 2;
         text('floor.introNext', middle, 128, 58, 'center', 600, (w - 0.2) * 100);
       });
-    } else if (block.id === 'crossroads') {
-      context.lineWidth = 0.07;
-      context.beginPath();
-      context.arc(0, 0, 0.42, 0, Math.PI * 2);
-      context.stroke();
-      // One arrow per zone the crossroads points at, named after it (the lamppost above carries the same ones).
-      for (const [index, target] of block.targets.entries()) {
-        const dir = towards(block, target);
-        drawArrow(context, dir.x * 0.6, dir.z * 0.6, Math.atan2(dir.z, dir.x), 1.25, 0.14);
-        const tip = { x: dir.x * 2.0, z: dir.z * 2.0 };
-        scaled(() => {
-          context.textBaseline = dir.z > 0.45 ? 'top' : dir.z < -0.45 ? 'bottom' : 'middle';
-          text({ words: zoneName(block.labels[index] ?? '') }, tip.x * 100, tip.z * 100, 40, dir.x > 0.45 ? 'left' : dir.x < -0.45 ? 'right' : 'center');
-        });
-      }
     } else if (block.id === 'controls') {
       const left = -w / 2 + 0.25;
       let y = -d / 2 + 0.45;
@@ -298,18 +299,16 @@ export class FloorTexts {
         // Heading: the path direction turned by the slope of the sway.
         const slope = Math.cos(f * Math.PI * 2) * 0.16 * Math.PI * 2 / length;
         const heading = Math.atan2(along.z, along.x) + Math.atan(slope) + foot * 0.08;
-        context.save();
-        context.globalAlpha = 1 - 0.6 * f;
-        context.translate(x, z);
-        context.rotate(heading);
-        if (foot > 0) context.scale(1, -1);
-        context.beginPath();
-        context.ellipse(0.06, 0.008, 0.11, 0.068, 0.12, 0, Math.PI * 2);
-        context.fill();
-        context.beginPath();
-        context.ellipse(-0.13, 0, 0.06, 0.055, 0, 0, Math.PI * 2);
-        context.fill();
-        context.restore();
+        drawPrint(context, x, z, heading, foot, 1 - 0.6 * f);
+      }
+    } else if (block.id === 'prints') {
+      // A few prints where they were marked on the map, the same shoe as the ones leaving the room, fading as they go.
+      const { x: ax, z: az } = axes(block.yaw);
+      for (const [k, step] of block.steps.entries()) {
+        const dx = step.x - block.position.x;
+        const dz = step.z - block.position.z;
+        const f = block.steps.length > 1 ? k / (block.steps.length - 1) : 0;
+        drawPrint(context, dx * ax.x + dz * ax.z, dx * az.x + dz * az.z, step.heading - block.yaw, k % 2 === 0 ? -1 : 1, 0.9 - 0.45 * f);
       }
     }
   }

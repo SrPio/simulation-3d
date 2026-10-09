@@ -65,7 +65,7 @@ export type Letter = Piece & {
 
 /** Where the viewer paints on the ground: a block in its own axes (local +X along the text, +Z towards the camera). */
 export type FloorBlock = {
-  id: 'intro' | 'crossroads' | 'controls' | 'playground' | 'bowling' | 'footprints' | 'about' | 'targets' | 'tech' | 'playarea';
+  id: 'intro' | 'crossroads' | 'controls' | 'playground' | 'bowling' | 'footprints' | 'about' | 'targets' | 'tech' | 'playarea' | 'prints';
   position: Vector3;
   yaw: number;
   size: [number, number];
@@ -77,6 +77,8 @@ export type FloorBlock = {
   labels: string[];
   /** Throw line of the targets lane, this far ahead (local +Z) of the block centre. */
   line: number;
+  /** A trail of footprints: where each foot lands on the ground and the heading it points along (atan2(dz, dx)). */
+  steps: { x: number; z: number; heading: number }[];
 };
 
 /** Street lamp in the crossroads circle; it carries one arrow board per crossroads arrow. */
@@ -195,7 +197,7 @@ function flapsOf(object: Object3D): { flaps?: Piece['flaps'] } {
 type Extras = {
   bounds?: number[]; platform?: number[]; ground_y?: number; link?: string; label?: string;
   board?: number[]; area?: number[]; area_offset?: number; collider?: string; size?: number[]; box?: number[]; title?: string;
-  zone?: string; target?: string | number; floor?: string; line?: number; decor?: string; shadow?: number[]; solid?: number[];
+  zone?: string; target?: string | number; floor?: string; line?: number; steps?: number[]; decor?: string; shadow?: number[]; solid?: number[];
   plaque?: number[]; text?: string; centre?: number; rings?: number[]; points?: number[]; tech?: string; gap?: number; targets?: number[]; labels?: string;
   height?: number; pole_radius?: number; arrows_top?: number; arrow_step?: number;
   prop?: string; group?: string; mass?: number; radius?: number; cylinders?: number[];
@@ -268,7 +270,10 @@ export function readOutside(root: Object3D): OutsideData {
       const flat = data.targets ?? [];
       for (let i = 0; i + 1 < flat.length; i += 2) targets.push({ x: flat[i], z: flat[i + 1] });
       const labels = (data.labels ?? '').split(',').filter(Boolean);
-      floors.push({ id: data.floor as FloorBlock['id'], position, yaw, size: [data.size[0], data.size[1]], gap: data.gap ?? 0, targets, labels, line: data.line ?? 0 });
+      const steps: FloorBlock['steps'] = [];
+      const flatSteps = data.steps ?? [];
+      for (let i = 0; i + 2 < flatSteps.length; i += 3) steps.push({ x: flatSteps[i], z: flatSteps[i + 1], heading: flatSteps[i + 2] });
+      floors.push({ id: data.floor as FloorBlock['id'], position, yaw, size: [data.size[0], data.size[1]], gap: data.gap ?? 0, targets, labels, line: data.line ?? 0, steps });
     } else if (data.prop && PROP_GROUPS.has(data.group ?? '') && data.box?.length === 3) {
       props.push({
         name: object.name,

@@ -218,6 +218,17 @@ PLAYGROUND = (21.6, 32.9)       # origin of the bowling and brick lanes (playgro
 BRICKS_SHIFT = 2.5              # the brick stacks stand this far further along +X than the bowling lane's frame
 # Footprints leaving the room's open front corner towards the camera.
 FOOTPRINTS, FOOTPRINTS_SIZE = (4.45, 4.45), (3.3, 3.3)
+# A few more prints here and there, where the user marked them on the canvas: each trail is its steps (three.js x, z and
+# the heading the foot points along, atan2(dz, dx)), drawn by the viewer like the ones leaving the room.
+PRINT_TRAILS = {
+    'plaza': [(15.12, 12.63, 0.304), (15.83, 13.11, 0.264), (16.67, 13.03, 0.159), (17.47, 13.32, -0.078), (18.16, 12.84, -0.53), (18.92, 12.47, -0.97), (19.04, 11.62, -1.215)],
+    'playground': [(11.12, 20.21, 1.893), (10.53, 20.9, 1.666), (10.82, 21.72, 1.395), (10.92, 22.58, 0.907), (11.71, 22.95, 0.616), (12.26, 23.61, 0.555)],
+    'controls': [(4.04, 16.04, 2.829), (3.22, 16.09, 2.713), (2.56, 16.61, 2.932), (1.77, 16.37, -3.001)],
+    'works': [(-6.32, 21.75, 2.259), (-7.03, 22.29, 2.123), (-7.11, 23.16, 1.758), (-7.3, 24.03, 1.212), (-6.65, 24.63, 0.897), (-6.26, 25.43, 0.758)],
+    'forest': [(34.47, 21.37, -0.259), (35.33, 21.35, -0.404), (35.32, 20.5, -1.575), (35.57, 19.67, -1.582), (35.35, 18.84, -1.427), (35.87, 18.17, -0.915), (36.36, 17.49, -0.481), (37.23, 17.37, -0.47)],
+}
+# The crossroads is a round bed of grass with low bushes and a few flowers round the lamppost (nothing painted on it).
+CROSSROADS_GREEN = 4.0
 # Bowling (playground axes): the ball near the camera, the pins up the lane in a 4-3-2-1 triangle.
 LANE_X, BALL_Z, HEAD_PIN_Z = -3.6, 3.6, -1.2
 PIN_SPACING, PIN_ROW = 0.56, 0.485
@@ -392,14 +403,20 @@ def build_playground(root):
         piece(f'Key_{name}', key, intro(x * KEY_PITCH, z * KEY_PITCH), KEY_HEIGHT / 2, BLOCK_YAW + turn, keys,
               prop='key', group='keys', mass=MASS['key'], box=[KEY_SIZE, KEY_HEIGHT, KEY_SIZE])
 
-    # Crossroads: a painted arrow and a 3D arrow on the lamppost towards each zone. Another zone is one more
-    # entry here (its name is `floor.<id>` in src/core/i18n.ts); the controls panel gets no arrow.
+    # Crossroads: a 3D arrow on the lamppost towards each zone (nothing is painted on the ground there: it is a round
+    # bed of grass). Another zone is one more entry here (its name is `floor.<id>` in src/core/i18n.ts).
     arrows = [('about', ABOUT), ('playground', PLAY_AREA)]
     room.anchor('Floor_Crossroads', at(CROSSROADS), root, BLOCK_YAW, floor='crossroads', size=[10.6, 7.0],
                 targets=[value for _, point in arrows for value in point], labels=','.join(label for label, _ in arrows))
     room.anchor('Floor_Controls', at(CONTROLS), root, BLOCK_YAW, floor='controls', size=list(CONTROLS_SIZE))
 
     room.anchor('Floor_Footprints', at(FOOTPRINTS), root, BLOCK_YAW, floor='footprints', size=list(FOOTPRINTS_SIZE))
+    for name, steps in PRINT_TRAILS.items():
+        xs, zs = [x for x, _, _ in steps], [z for _, z, _ in steps]
+        centre = ((min(xs) + max(xs)) / 2, (min(zs) + max(zs)) / 2)
+        room.anchor(f'Floor_Prints_{name}', at(centre), root, BLOCK_YAW, floor='prints',
+                    size=[round(max(xs) - min(xs) + 0.8, 3), round(max(zs) - min(zs) + 0.8, 3)],
+                    steps=[value for step in steps for value in step])
 
     play = frame(PLAYGROUND)
     room.anchor('Floor_Bowling', at(play(LANE_X, (BALL_Z + HEAD_PIN_Z) / 2 - 0.4)), root, BLOCK_YAW, floor='bowling',
@@ -892,6 +909,38 @@ def build_tech(root):
     room.anchor('Zone_Tech', at((TECH[0], TECH[1] + 4.2)), root, BLOCK_YAW, zone='reset', target='tech', area=RESET_AREA)
 
 
+def build_crossroads_green(root):
+    """A round bed of grass at the crossroads, a hand high, with low bushes and a few flowers round the lamppost."""
+    grass = room.material('CrossroadsGrass', (0.05, 0.2, 0.09), 0.95)
+    edge = room.material('CrossroadsEdge', (0.04, 0.15, 0.07), 0.95)
+    bush = room.material('CrossroadsBush', (0.07, 0.27, 0.13), 0.85)
+    bloom = room.material('CrossroadsFlower', (0.95, 0.55, 0.75), 0.6)
+    green = room.anchor('CrossroadsGreen', at(CROSSROADS), root, BLOCK_YAW)
+    room.cylinder('CrossroadsGreen_Edge', (0, 0, 0.03), CROSSROADS_GREEN, 0.06, edge, green, segments=40)
+    room.cylinder('CrossroadsGreen_Grass', (0, 0, 0.07), CROSSROADS_GREEN - 0.15, 0.04, grass, green, segments=40)
+    # One shared bush and one shared flower mesh, placed and scaled per plant (the GLB keeps one copy of each).
+    shapes = {}
+    for name, mat in (('Bush', bush), ('Flower', bloom)):
+        bm = bmesh.new()
+        bmesh.ops.create_icosphere(bm, subdivisions=1, radius=1.0)
+        shapes[name] = proto_mesh(f'Crossroads{name}', bm, [mat])
+    rng = random.Random(31)
+    for k in range(9):
+        angle = k / 9 * math.tau + rng.uniform(-0.2, 0.2)
+        r = rng.uniform(1.2, CROSSROADS_GREEN - 0.6)
+        x, y = math.cos(angle) * r, math.sin(angle) * r
+        size = rng.uniform(0.28, 0.42)
+        plants = [('Bush', (x, y, 0.09 + size * 0.6), (size, size, size * 0.8))]
+        if k % 2 == 0:
+            plants.append(('Flower', (x + 0.15, y - 0.1, 0.09 + size * 1.3), (0.06, 0.06, 0.06)))
+        for kind, location, scale in plants:
+            obj = bpy.data.objects.new(f'CrossroadsGreen_{kind}{k}', shapes[kind])
+            bpy.context.collection.objects.link(obj)
+            obj.parent = green
+            obj.location = location
+            obj.scale = scale
+
+
 def build_lamppost(root, iron, glow):
     """Street lamp: a stepped base, a thin pole with collars and a lantern with a glowing glass."""
     lamp = room.anchor('Lamppost', at(CROSSROADS), root, BLOCK_YAW, height=LAMP_HEIGHT, pole_radius=LAMP_POLE,
@@ -919,6 +968,7 @@ def build(root):
     for name, sign in SIGNS.items():
         build_sign(name, sign, frame, glow, root)
     build_lamppost(root, frame, glow)
+    build_crossroads_green(root)
     # The character may walk behind the room: the viewer opens a window in the walls around it there.
     build_letters(root)
     build_playground(root)
