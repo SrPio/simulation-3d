@@ -18,16 +18,18 @@ export const CLIP_ALTERNATIVES: Readonly<Record<string, { gait: Gait; speed?: nu
 };
 /** Clips that play while walking, running and jumping when the model has them (otherwise the procedural ones). */
 export const DEFAULT_GAIT_CLIPS: Readonly<Record<Gait, string>> = { walk: 'walk_ual', run: 'run_ual_sprint', jump: 'jump_ual' };
-/** One-shot clip played in place with F: the character throws a laptop. */
+/** One-shot clip played in place with F (held to charge, like the strikes): the character throws a laptop. */
 export const THROW_CLIP = 'throw_ual';
 /**
- * The hand that holds the laptop until it leaves it, and when (seconds into THROW_CLIP): above the head and
- * already in front of it, whipping forward. The rig's side names are mirrored: hand_L is the character's right hand.
+ * The hand that holds the laptop until it leaves it. The rig's side names are mirrored: hand_L is the character's
+ * right hand.
  */
 export const THROW_HAND = 'hand_L';
-export const THROW_RELEASE = 0.53;
-/** Launch speed of the thrown laptop (m/s) along the character's facing and upwards. */
-export const THROW_SPEED = { forward: 5.5, up: 1.8 };
+/**
+ * Launch speed of the thrown laptop (m/s) along the character's facing and upwards: a tap lobs it short, a full charge
+ * sends it furthest (see throwSpeed).
+ */
+export const THROW_SPEED = { tap: { forward: 3.6, up: 1.5 }, full: { forward: 7.6, up: 2.3 } };
 /**
  * The laptop leaves the right hand, off to the side of the body: it flies towards the point this far ahead on the line
  * the character faces, so what stands straight ahead (a target) is what it hits.
@@ -41,19 +43,32 @@ export function throwDirection(from: { x: number; z: number }, yaw: number, rele
   return length > 0.5 ? { x: aim.x / length, z: aim.z / length } : { x: Math.sin(yaw), z: Math.cos(yaw) };
 }
 /**
- * Charged strikes (J punches, K kicks; manifest `strike`, seconds into the clip): the clip plays to `ready`; while
+ * Charged strikes (J punches, K kicks, F throws; manifest `strike`, seconds into the clip): the clip plays to `ready`; while
  * the key stays down the charge moves it from `ready` towards `windup` (the fist or leg drawing back, see
  * strikeAmount); on release it jumps to the same pose in the swing (`strikeLaunch`, between `windup` and `release`)
- * and plays on, and at `hit` the striking bone pushes what is in front of it. punch_ual is UAL's Punch_Cross with
+ * and plays on, and at `hit` the striking bone pushes what is in front of it (the throw lets the laptop go instead,
+ * faster the longer it charged: throwSpeed). punch_ual and throw_ual hold UAL's Punch_Cross and OverhandThrow with
  * an added pull-back; neither library has a kick, so `kick` is a procedural ball kick. As with the throw, the rig's
  * side names are mirrored: hand_L and foot_L are the character's right hand and foot.
  */
-export type StrikeKind = 'punch' | 'kick';
+export type StrikeKind = 'punch' | 'kick' | 'throw';
 export type StrikeSpec = { clip: string; bone: string; ready: number; windup: number; release: number; hit: number; reach: number };
 export const STRIKES: Readonly<Record<StrikeKind, StrikeSpec>> = {
   punch: { clip: 'punch_ual', bone: 'hand_L', ready: 0.26666666666666666, windup: 0.7333333333333333, release: 0.8333333333333334, hit: 1.0333333333333334, reach: 0.15 },
   kick: { clip: 'kick', bone: 'foot_L', ready: 0.22, windup: 0.67, release: 0.78, hit: 0.8350000000000001, reach: 0.25 },
+  throw: { clip: THROW_CLIP, bone: THROW_HAND, ready: 0.43333333333333335, windup: 0.9666666666666667, release: 1.0666666666666667, hit: 1.1666666666666667, reach: 0 },
 };
+/**
+ * When the laptop leaves the hand (seconds into THROW_CLIP, the throw's `hit`): above the head and already in front
+ * of it, whipping forward.
+ */
+export const THROW_RELEASE = STRIKES.throw.hit;
+/** Launch speed of a throw at `power` (STRIKE_MIN_POWER … 1, from strikePower). */
+export function throwSpeed(power: number): { forward: number; up: number } {
+  const charge = Math.min(Math.max((power - STRIKE_MIN_POWER) / (1 - STRIKE_MIN_POWER), 0), 1);
+  const { tap, full } = THROW_SPEED;
+  return { forward: tap.forward + (full.forward - tap.forward) * charge, up: tap.up + (full.up - tap.up) * charge };
+}
 /** How far the limb has drawn back (0…1) after charging for `held` seconds: quick at first, straining towards the end. */
 export function strikeAmount(held: number): number {
   const charge = Math.min(Math.max(held / STRIKE_CHARGE, 0), 1);

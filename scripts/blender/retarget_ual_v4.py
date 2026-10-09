@@ -17,9 +17,10 @@ up. The trunk keeps part of the source lean and the fingers keep a procedural ha
 
 Neither library has a kick, so `kick` is procedural (KICK): a ball kick, the right leg swinging back and through
 like a pendulum. The punch holds Punch_Cross's own wind-up while the trunk turns away and the fist comes back
-(PUNCH_PULL). Strike clips (punch_ual, kick) record in the manifest `strike` the striking bone and the times of
+(PUNCH_PULL). Strike clips (punch_ual, kick, throw_ual) record in the manifest `strike` the striking bone and the times of
 the charge stretches (ready → windup pulls back as the key charges, windup → release swings through the same
-poses, see KICK) and of the hit.
+poses, see KICK) and of the hit. The throw holds OverhandThrow's own wind-up the same way (THROW_PULL); its 'hit' is
+when the laptop leaves the hand.
 
 Adds every ALTERNATIVES clip (and the kick) to developer-v4-interactions.blend and its manifest; export it afterwards with
 export_assets.py --variant v4-interactions --replace-generated. --render writes side and three-quarter
@@ -109,6 +110,12 @@ KICK = {'leg': 'L', 'back': 0.9, 'follow': 1.2, 'hit_angle': 0.45, 'knee': 1.5,
 # blow, the punching elbow goes back and the fist comes back by the cheek (`pull` frames), then unwinds in
 # `unwind` frames into the source's cross. Angles at full charge (radians).
 PUNCH_PULL = {'frames': 14, 'unwind': 3, 'twist': 0.8, 'lean': 0.10, 'head': 0.55, 'elbow': 1.1, 'fold': 0.45, 'guard': 0.35}
+# Throw: OverhandThrow holds its own wind-up (the throwing hand furthest back, behind the head) while the trunk turns
+# and leans back, the throwing arm swings further back over the shoulder (a negative 'elbow': the arm is raised) and
+# the other arm reaches towards the target. The laptop leaves the hand THROW_RELEASE seconds into the source clip
+# (padding included), shifted by the inserted frames.
+THROW_PULL = {'frames': 16, 'unwind': 3, 'twist': 0.45, 'lean': 0.28, 'head': 0.4, 'elbow': -0.25, 'fold': 0.25, 'guard': 0.0}
+THROW_RELEASE = 0.53
 
 
 def bone(source, name, side=None):
@@ -315,7 +322,7 @@ def make_pose(defs, src_rest, clip, scale, shoes):
             out[f'shin_{label}'] = rig.matrix_between(knee, ankle, (1, 0, 0))
             out[f'foot_{label}'] = foot @ rest[f'foot_{label}']
         if 'pull' in clip:
-            pull_pose(out, clip['pull_side'], clip['pull'][index])
+            pull_pose(out, clip['pull_side'], clip['pull'][index], clip['pull_params'])
         weight = clip['weights'][index]
         if weight < 1:
             out = {name: blend_matrix(idle[name], matrix, weight) for name, matrix in out.items()}
@@ -433,9 +440,16 @@ def punch_timing(defs, pose, frames, pad_frames):
     return label, windup, hit
 
 
-def add_pull(clip, label, at):
+def throw_windup(defs, pose, frames, pad_frames, label):
+    """The frame before the release where the throwing hand is furthest back (+Y)."""
+    release = round(THROW_RELEASE * rig.FPS)
+    ys = [pose(defs, None, i / frames)[f'hand_{label}'].translation.y for i in range(release)]
+    return max(range(pad_frames, release), key=lambda i: ys[i])
+
+
+def add_pull(clip, label, at, params):
     """Insert the charge stretches at frame `at`: the source pose held while `pull` rises to 1 and falls back to 0."""
-    rise, fall = PUNCH_PULL['frames'], PUNCH_PULL['unwind']
+    rise, fall = params['frames'], params['unwind']
     held = [clip['samples'][at]] * (rise + fall)
     clip['samples'] = clip['samples'][:at + 1] + held + clip['samples'][at + 1:]
     clip['weights'] = clip['weights'][:at + 1] + [clip['weights'][at]] * (rise + fall) + clip['weights'][at + 1:]
@@ -443,10 +457,11 @@ def add_pull(clip, label, at):
     clip['pull'] += [0.0] * (len(clip['samples']) - len(clip['pull']))
     clip['frames'] += rise + fall
     clip['pull_side'] = label
+    clip['pull_params'] = params
 
 
-def pull_pose(out, label, amount):
-    """Wind a punch up by `amount` (0…1): trunk turned away, punching elbow back and the fist by the cheek."""
+def pull_pose(out, label, amount, params):
+    """Wind a punch or throw up by `amount` (0…1): trunk turned away, the striking arm back and the other forward."""
     if amount <= 0:
         return
     side = -1 if label == 'L' else 1
@@ -455,23 +470,23 @@ def pull_pose(out, label, amount):
                               and not name.startswith(('thigh_', 'shin_', 'foot_'))]
     upper = [name for name in out if name not in ('root', 'pelvis') and not name.startswith(('thigh_', 'shin_', 'foot_'))]
     # Turning about the spine moves the punching shoulder back (+Y); the trunk leans back a touch.
-    turn = rig.rot_about(out['spine'].translation, rig.rz(side * PUNCH_PULL['twist'] * amount) @ rig.rx(-PUNCH_PULL['lean'] * amount))
+    turn = rig.rot_about(out['spine'].translation, rig.rz(side * params['twist'] * amount) @ rig.rx(-params['lean'] * amount))
     for name in upper:
         out[name] = turn @ out[name]
     # The head keeps looking ahead.
-    look = rig.rot_about(out['neck'].translation, rig.rz(-side * PUNCH_PULL['head'] * amount))
+    look = rig.rot_about(out['neck'].translation, rig.rz(-side * params['head'] * amount))
     for name in ('neck', 'head'):
         out[name] = look @ out[name]
     chain = [name for name in arm(label) if not name.startswith('clavicle_')]
-    elbow = rig.rot_about(out[f'upper_arm_{label}'].translation, rig.rx(PUNCH_PULL['elbow'] * amount))
+    elbow = rig.rot_about(out[f'upper_arm_{label}'].translation, rig.rx(params['elbow'] * amount))
     for name in chain:
         out[name] = elbow @ out[name]
-    fold = rig.rot_about(out[f'forearm_{label}'].translation, rig.rx(-PUNCH_PULL['fold'] * amount))
+    fold = rig.rot_about(out[f'forearm_{label}'].translation, rig.rx(-params['fold'] * amount))
     for name in chain:
         if not name.startswith('upper_arm_'):
             out[name] = fold @ out[name]
     # The other fist reaches forward a little, guarding.
-    guard = rig.rot_about(out[f'upper_arm_{other}'].translation, rig.rx(-PUNCH_PULL['guard'] * amount))
+    guard = rig.rot_about(out[f'upper_arm_{other}'].translation, rig.rx(-params['guard'] * amount))
     for name in arm(other):
         if not name.startswith('clavicle_'):
             out[name] = guard @ out[name]
@@ -531,7 +546,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--replace-generated', action='store_true')
     parser.add_argument('--render', action='store_true')
-    parser.add_argument('--render-strikes', action='store_true', help='render only the punch and kick sheets')
+    parser.add_argument('--render-strikes', action='store_true', help='render only the punch, kick and throw sheets')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else [])
     if not args.replace_generated:
         raise RuntimeError('This adds clips to the existing V4 interactions blend; rerun with --replace-generated.')
@@ -555,10 +570,17 @@ def main():
         if data['kind'] == 'punch':
             # Find the source's own wind-up, then hold it there for the charge stretches.
             label, windup, hit = punch_timing(defs, rig.pose_matrices, data['frames'], round(data['pad'][0] * rig.FPS))
-            add_pull(data, label, windup)
+            add_pull(data, label, windup, PUNCH_PULL)
+        if data['kind'] == 'throw':
+            # The rig's side names are mirrored: hand_L is the character's right hand, the one that throws.
+            label = 'L'
+            windup = throw_windup(defs, rig.pose_matrices, data['frames'], round(data['pad'][0] * rig.FPS), label)
+            hit = round(THROW_RELEASE * rig.FPS)
+            add_pull(data, label, windup, THROW_PULL)
+        if data['kind'] in ('punch', 'throw'):
             rig.CLIPS = {clip: data['frames']}
             rig.pose_matrices = make_pose(defs, src_rest, data, scale, shoes)
-            rise, fall = PUNCH_PULL['frames'], PUNCH_PULL['unwind']
+            rise, fall = data['pull_params']['frames'], data['pull_params']['unwind']
             strike = {'bone': f'hand_{label}', 'ready': windup / rig.FPS, 'windup': (windup + rise) / rig.FPS,
                       'release': (windup + rise + fall) / rig.FPS, 'hit': (hit + rise + fall) / rig.FPS}
         rig.create_actions(armature, defs)
@@ -570,7 +592,7 @@ def main():
         if data['kind'] == 'jump':
             first, last = data['air']
             entry.update({'speed': 0, 'distance': data.get('distance', JUMP_DISTANCE), 'air': [first / data['frames'], last / data['frames']]})
-        if data['kind'] == 'punch':
+        if data['kind'] in ('punch', 'throw'):
             entry['strike'] = strike
         entries.append(entry)
         print(f'{clip}: {data["frames"]} frames, {json.dumps({k: v for k, v in entry.items() if k in ("speed", "air", "strike")})}')
@@ -591,7 +613,7 @@ def main():
     print(f'V4 UAL clips: {TARGET}')
     strikes = {entry['name']: entry['strike'] for entry in entries if 'strike' in entry}
     if args.render or args.render_strikes:
-        render_sheets(armature, strikes, ('punch', 'kick') if args.render_strikes else tuple(CURL))
+        render_sheets(armature, strikes, ('punch', 'kick', 'throw') if args.render_strikes else tuple(CURL))
 
 
 if __name__ == '__main__':

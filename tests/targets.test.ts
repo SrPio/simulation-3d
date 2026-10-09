@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import * as cannon from 'cannon-es';
 import { AnimationMixer, Texture, Vector3 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { THROW_CLIP, THROW_HAND, THROW_RELEASE, THROW_SPEED, throwDirection } from '../src/character/CharacterController.ts';
+import { STRIKE_MIN_POWER, THROW_CLIP, THROW_HAND, THROW_RELEASE, throwDirection, throwSpeed } from '../src/character/CharacterController.ts';
 import { readOutside } from '../src/scene/outsideData.ts';
 import { MAX_THROWN, PropPhysics, type TargetHit } from '../src/world/PropPhysics.ts';
 import { ROUND_THROWS, TargetGame, behindLine, ringPoints, type Lane } from '../src/world/targets.ts';
@@ -42,7 +42,7 @@ test(`rounds of ${ROUND_THROWS} throws from behind the line; other throws do not
   assert.deepEqual([game.score, game.throws, game.hits], [0, 1, 0]);
 });
 
-test('a laptop thrown from the line reaches every target, the farthest one included, and hits near its centre', async () => {
+test('a charged laptop thrown from the line reaches every target, the farthest one included, and hits near its centre; a tap falls short of a full charge', async () => {
   // Where the throwing hand lets go, relative to the character's feet (facing +Z): measured on the rig.
   const rig = await parse('developer-v4-interactions');
   const clip = rig.animations.find((animation) => animation.name === THROW_CLIP)!;
@@ -57,21 +57,39 @@ test('a laptop thrown from the line reaches every target, the farthest one inclu
   const lineZ = lane.position.z + lane.line;
   const distances = data.targets.map((target) => lineZ - target.position.z);
   assert.ok(Math.max(...distances) > 3.5, `the farthest target is ${Math.max(...distances).toFixed(2)} m away`);
-  for (const target of data.targets) {
-    const discs = data.targets.map((entry) => ({ center: { x: entry.position.x, y: entry.position.y + entry.centre, z: entry.position.z + 0.025 }, radius: entry.radius, yaw: entry.yaw }));
-    const physics = new PropPhysics(cannon, [], [], data.groundY, [discs[target.index]]);
-    const hits: TargetHit[] = [];
-    physics.onTargetHit = (hit) => hits.push(hit);
-    // The thrower stands just behind the line, straight in front of the target and facing it (-Z), as the keys allow;
-    // the laptop leaves the right hand, off to the side, and flies towards the line the character faces.
-    const feet = { x: target.position.x, z: lineZ + 0.3 };
-    const yaw = Math.PI;
+  // The thrower stands just behind the line, facing -Z, as the keys allow; the laptop leaves the right hand, off to
+  // the side, and flies towards the line the character faces, faster the longer F was held.
+  const yaw = Math.PI;
+  const quaternion = new cannon.Quaternion().setFromEuler(0, yaw, 0);
+  const launch = (physics: PropPhysics, feet: { x: number; z: number }, power: number) => {
     const release = { x: feet.x + hand.x * Math.cos(yaw) + hand.z * Math.sin(yaw), y: data.groundY + hand.y, z: feet.z - hand.x * Math.sin(yaw) + hand.z * Math.cos(yaw) };
     const forward = throwDirection(feet, yaw, release);
-    const quaternion = new cannon.Quaternion().setFromEuler(0, yaw, 0);
-    physics.throwLaptop({ position: release, quaternion }, { x: forward.x * THROW_SPEED.forward, y: THROW_SPEED.up, z: forward.z * THROW_SPEED.forward }, { x: 0, y: 0, z: 0 });
-    for (let i = 0; i < 60 * 3 && !hits.length; i++) physics.step(1 / 60, undefined);
-    assert.equal(hits.length, 1, `target ${target.index} (${(lineZ - target.position.z).toFixed(1)} m) was reached`);
-    assert.ok(hits[0].distance < target.rings[1], `target ${target.index} hit ${hits[0].distance.toFixed(2)} m from its centre`);
+    const speed = throwSpeed(power);
+    return physics.throwLaptop({ position: release, quaternion }, { x: forward.x * speed.forward, y: speed.up, z: forward.z * speed.forward }, { x: 0, y: 0, z: 0 });
+  };
+  const powers = Array.from({ length: 16 }, (_, i) => STRIKE_MIN_POWER + (1 - STRIKE_MIN_POWER) * i / 15);
+  for (const target of data.targets) {
+    const discs = data.targets.map((entry) => ({ center: { x: entry.position.x, y: entry.position.y + entry.centre, z: entry.position.z + 0.025 }, radius: entry.radius, yaw: entry.yaw }));
+    // Some charge hits the target near its centre.
+    let best = Infinity;
+    for (const power of powers) {
+      const physics = new PropPhysics(cannon, [], [], data.groundY, [discs[target.index]]);
+      const hits: TargetHit[] = [];
+      physics.onTargetHit = (hit) => hits.push(hit);
+      launch(physics, { x: target.position.x, z: lineZ + 0.3 }, power);
+      for (let i = 0; i < 60 * 3 && !hits.length; i++) physics.step(1 / 60, undefined);
+      if (hits.length) best = Math.min(best, hits[0].distance);
+    }
+    assert.ok(best < target.rings[1], `target ${target.index} (${(lineZ - target.position.z).toFixed(1)} m) hit ${best.toFixed(2)} m from its centre at best`);
   }
+  // On open ground, a full charge lands much further than a tap.
+  const landing = (power: number) => {
+    const physics = new PropPhysics(cannon, [], [], data.groundY);
+    const laptop = launch(physics, { x: 0, z: 0 }, power);
+    for (let i = 0; i < 60 * 3 && laptop.base.position.y > data.groundY + 0.1; i++) physics.step(1 / 60, undefined);
+    return -laptop.base.position.z;
+  };
+  const tap = landing(STRIKE_MIN_POWER);
+  const full = landing(1);
+  assert.ok(tap > 1.5 && full > tap * 1.8, `a tap lands ${tap.toFixed(2)} m away, a full charge ${full.toFixed(2)} m`);
 });

@@ -348,6 +348,9 @@ export class PropPhysics {
     if (!group) {
       for (const laptop of [...this.laptops]) this.removeLaptop(laptop);
       this.retired.length = 0;
+      // The character is put back too: its pusher jumps there on the next step instead of sweeping across the pieces
+      // just put back (at the speed of that jump it would fling them away).
+      this.idle = true;
     }
   }
 

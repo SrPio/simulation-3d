@@ -154,9 +154,16 @@
     },
     {
       "name": "throw_ual",
-      "duration": 1.8,
+      "duration": 2.433333333333333,
       "loop": false,
-      "source": "Quaternius Universal Animation Library 2 \u00b7 OverhandThrow (CC0)"
+      "source": "Quaternius Universal Animation Library 2 \u00b7 OverhandThrow (CC0)",
+      "strike": {
+        "bone": "hand_L",
+        "ready": 0.43333333333333335,
+        "windup": 0.9666666666666667,
+        "release": 1.0666666666666667,
+        "hit": 1.1666666666666667
+      }
     },
     {
       "name": "kick",

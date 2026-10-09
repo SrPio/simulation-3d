@@ -93,3 +93,18 @@ test('the character walking through the name knocks letters over, and reset stan
   assert.equal(physics.fallen(), 0);
   assert.equal(physics.active, false);
 });
+
+test('reset with the character among the letters and something still moving: the character goes back without sweeping the letters', async () => {
+  const data = await outside();
+  const physics = new PropPhysics(cannon, bodies(data), [], data.groundY);
+  const target = data.letters[7].position;
+  // Where the browser test stands after walking through the name: in front of it, with the spawn behind the letters.
+  const among = { x: -3.7, y: data.groundY, z: 6.2 };
+  for (let i = 0; i < 30; i++) physics.step(1 / 60, among);
+  // A laptop still in the air elsewhere keeps the world awake through the reset.
+  physics.reset();
+  physics.throwLaptop({ position: { x: target.x + 8, y: data.groundY + 2, z: target.z }, quaternion: new cannon.Quaternion() }, { x: 0, y: 3, z: 0 }, { x: 0, y: 0, z: 0 });
+  const spawn = { x: 2.3, y: 0, z: 2.3 };
+  for (let i = 0; i < 60; i++) physics.step(1 / 60, spawn);
+  assert.equal(physics.fallen(['name', 'tag']), 0, 'the letters stand where they were put back');
+});

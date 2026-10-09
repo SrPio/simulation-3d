@@ -9,7 +9,7 @@ import { PropPhysics, STRIKE_RADIUS } from '../src/world/PropPhysics.ts';
 
 const root = new URL('../', import.meta.url);
 
-test('punch and kick: timing matches the manifest, the limb draws back while charging and the blow lands in front', async () => {
+test('punch, kick and throw: timing matches the manifest, the limb draws back while charging and the blow lands in front', async () => {
   const bytes = await readFile(new URL('public/models/developer-v4-interactions.glb', root));
   const manifest = JSON.parse(await readFile(new URL('public/models/developer-v4-interactions.manifest.json', root), 'utf8'));
   const loader = new GLTFLoader();
@@ -44,7 +44,7 @@ test('punch and kick: timing matches the manifest, the limb draws back while cha
     assert.ok(hit.x < 0.05, `${kind}: the right side (x ${hit.x.toFixed(2)})`);
     // A ball kick hits low; the punch at chest height.
     if (kind === 'kick') assert.ok(hit.y > 0.1 && hit.y < 0.5, `kick at ${hit.y.toFixed(2)} m`);
-    else assert.ok(hit.y > 1.3, `punch at ${hit.y.toFixed(2)} m`);
+    else assert.ok(hit.y > 1.3, `${kind} at ${hit.y.toFixed(2)} m`);
     // Let go at any charge, the swing continues from the very pose the charge reached.
     for (const held of [0, STRIKE_CHARGE / 3, STRIKE_CHARGE * 0.7, STRIKE_CHARGE]) {
       const gap = at(strikeCharge(spec, held)).distanceTo(at(strikeLaunch(spec, held)));

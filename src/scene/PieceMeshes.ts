@@ -52,6 +52,8 @@ export class PieceMeshes {
   private readonly quaternion = new Quaternion();
   private readonly one = new Vector3(1, 1, 1);
   private readonly axes = [new Vector3(), new Vector3(), new Vector3()];
+  /** Called with every new pose of a piece (graffiti painted on the bricks follows them). */
+  onPose?: (index: number, matrix: Matrix4) => void;
 
   constructor(pieces: readonly Piece[], shadows: BlobShadows, shadowOffset: number, groundY: number) {
     this.pieces = pieces;
@@ -113,6 +115,7 @@ export class PieceMeshes {
     this.matrix.compose(this.position, this.quaternion, this.one);
     for (const { mesh, id } of this.instances[index]) mesh.setMatrixAt(id, this.matrix);
     this.poses[index].copy(this.matrix);
+    this.onPose?.(index, this.matrix);
     this.placeFlaps(index);
     // Footprint of the turned box on the ground: its extent along the piece's projected width axis and across it.
     const half = this.pieces[index].half;

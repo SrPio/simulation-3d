@@ -10,9 +10,9 @@ import { QUALITY, defaultQuality, nextPixelRatio, ratioRange, type QualityId } f
 import { mergeSkinnedMeshes, mergeStaticMeshes } from '../scene/mergeStatic.ts';
 import {
   CHARACTER_RADIUS, CLIP_ALTERNATIVES, CharacterController, DEFAULT_GAIT_CLIPS, JUMP, RUN_CLIP_SPEED, STRIKE_CHARGE, STRIKE_MIN_POWER, STRIKES,
-  THROW_CLIP, THROW_HAND, THROW_RELEASE, THROW_SPEED, WALK_CLIP_SPEED, throwDirection, WALK_SPEED, strikeCharge, strikeLaunch, strikePower, type Gait, type Locomotion, type StrikeKind,
+  THROW_CLIP, THROW_HAND, THROW_RELEASE, WALK_CLIP_SPEED, throwDirection, throwSpeed, WALK_SPEED, strikeCharge, strikeLaunch, strikePower, type Gait, type Locomotion, type StrikeKind,
 } from '../character/CharacterController';
-import { onLanguage, t } from '../core/i18n.ts';
+import { getLanguage, onLanguage, t } from '../core/i18n.ts';
 import { KeyboardInput, type HoldAction, type PressAction } from '../input/KeyboardInput';
 import {
   disposeObjects, laptopFile, loadCharacter, loadCircuit, loadLaptop, loadOutside, loadRoom, modelVersions, outsideFile, roomFile, type ModelVersionId, type SceneId,
@@ -36,6 +36,8 @@ import { chairAt, driveStep, forwardSpeed, type ChairState } from '../world/chai
 import type { SeatSpot } from '../interactions/InteractionController.ts';
 import type { FloorBlock } from '../scene/outsideData.ts';
 import { RoomReveal } from '../scene/RoomReveal.ts';
+import { Graffiti } from '../scene/Graffiti.ts';
+import { GRAFFITI } from '../scene/graffitiData.ts';
 import { hiddenBehind, revealStep, type Bounds3 } from '../world/reveal.ts';
 import { TargetGame, type Lane } from '../world/targets.ts';
 import { signAt } from '../world/signs.ts';
@@ -165,6 +167,8 @@ export class CharacterViewer {
   private bubble?: SeatBubble;
   /** The about-me plaza's plaques and globe. */
   private about?: AboutPlaza;
+  /** Spray-painted words and symbols on the outside's surfaces and ground (graffitiData.ts). */
+  private graffiti?: Graffiti;
   /** The standing targets and their scoreboard, and the round being played on their lane. */
   private targetsView?: TargetsView;
   private circuit?: CircuitView;
@@ -243,7 +247,7 @@ export class CharacterViewer {
   private activeClip = '';
   /** Clips that play while walking, running and jumping with the keyboard: procedural or one of CLIP_ALTERNATIVES. */
   private readonly gait: Record<Gait, string> = { ...DEFAULT_GAIT_CLIPS };
-  /** F plays the throw in place; movement keys wait until it ends. */
+  /** F plays the throw in place, charged like a strike (`strike` kind 'throw'); movement keys wait until it ends. */
   private throwing = false;
   /**
    * J (punch) or K (kick) in progress: the limb draws back while the key is down (charge in seconds), then strikes
@@ -428,7 +432,7 @@ export class CharacterViewer {
       this.scene.add(this.model);
       if (this.room) this.scene.add(this.room);
       if (this.outside) this.scene.add(this.outside);
-      for (const object of [this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.targetsView?.root, this.circuit?.root]) if (object) this.scene.add(object);
+      for (const object of [this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.targetsView?.root, this.circuit?.root, this.graffiti?.root]) if (object) this.scene.add(object);
       if (!this.ground) this.createFloor(this.mixer ? 0 : box.min.y);
       this.frameLights();
       this.cameraDistance = Math.max(this.bounds.length() * 2.5, 1);
@@ -580,8 +584,16 @@ export class CharacterViewer {
       this.signpost = new Signpost(data.lamppost, { x: ROOM_VIEW.x, z: ROOM_VIEW.z });
       this.host.dataset.signpost = this.signpost.arrows.map((arrow) => arrow.id).join(',');
     }
+    // Graffiti: on the merged static surfaces, and on loose pieces (a brick wall) whose poses it then follows. Built
+    // before the pieces' source geometry is released.
+    if (GRAFFITI.length) this.graffiti = new Graffiti(GRAFFITI, [outside], data.groundY, this.pieceList, getLanguage());
+    this.host.dataset.graffiti = this.graffiti?.painted.join(',') || 'none';
     if (this.pieceList.length) {
       this.pieces = new PieceMeshes(this.pieceList, this.shadows, pieceShadows, data.groundY);
+      if (this.graffiti) {
+        const graffiti = this.graffiti;
+        this.pieces.onPose = (index, matrix) => graffiti.followPiece(index, matrix);
+      }
       // The batched mesh holds its own copy of the pieces' geometry.
       for (const geometry of new Set(this.pieceList.flatMap((piece) => [...piece.parts, ...(piece.flaps ?? [])].map((part) => part.geometry)))) geometry.dispose();
       this.boxes = this.pieceList.flatMap((piece, index) => (piece.flaps?.length ? [index] : []));
@@ -753,9 +765,12 @@ export class CharacterViewer {
       return;
     }
     if (action === 'throw') {
-      // Like the jump: only from free keyboard movement, never from a seat or a clip picked by hand.
+      // Like the jump: only from free keyboard movement, never from a seat or a clip picked by hand. While F is down
+      // the throwing arm draws back with the charge; on release the laptop flies further the longer it charged.
       if (interaction.phase !== 'free' || !this.isLocomotion(this.activeClip) || !this.actions.has(THROW_CLIP)) return;
       this.throwing = true;
+      this.strike = { kind: 'throw', held: true, charge: 0, power: 0, launched: false, hit: false };
+      this.host.dataset.strike = 'charging';
       this.controller.speed = 0;
       this.driving = true;
       if (!this.playing) this.setPlaying(true);
@@ -793,7 +808,7 @@ export class CharacterViewer {
     this.notice = accepted ? { text: '', until: 0 } : { text: interaction.message, until: performance.now() + 2500 };
   };
 
-  /** J or K let go: the held wind-up turns into the blow, stronger the longer it charged. */
+  /** J, K or F let go: the held wind-up turns into the blow or the throw, stronger the longer it charged. */
   private readonly onRelease = (action: HoldAction): void => {
     const strike = this.strike;
     if (!strike || strike.kind !== action || !strike.held) return;
@@ -832,7 +847,8 @@ export class CharacterViewer {
     }
     if (strike.hit || action.time < spec.hit) return;
     strike.hit = true;
-    if (!this.physics) return;
+    // The throw's `hit` is the laptop leaving the hand (updateThrow).
+    if (!this.physics || strike.kind === 'throw') return;
     this.model.updateMatrixWorld(true);
     const bone = this.model.getObjectByName(spec.bone);
     if (!bone) return;
@@ -923,6 +939,7 @@ export class CharacterViewer {
   /** The throw clip ended: back to idle, and the keys move the character again. */
   private endThrow(): void {
     this.throwing = false;
+    this.cancelStrike();
     this.driving = false;
     this.dropHeldLaptop();
     if (this.actions.has('idle')) this.selectClip('idle');
@@ -962,16 +979,16 @@ export class CharacterViewer {
     return { position, quaternion };
   }
 
-  /** At the release time the laptop appears at the hand and goes straight to the physics. */
+  /** At the release time (after the charge was let go) the laptop appears at the hand and goes straight to the physics. */
   private updateThrow(): void {
     const action = this.actions.get(THROW_CLIP);
-    if (!this.throwing || !this.pendingThrow || !action || !this.model) return;
+    if (!this.throwing || !this.pendingThrow || !action || !this.model || this.strike?.held || !this.strike?.launched) return;
     if (action.time < THROW_RELEASE) return;
     this.model.updateMatrixWorld(true);
     const pose = this.heldPose();
     if (!pose) return;
     this.pendingThrow = false;
-    this.throwLaptop(pose);
+    this.throwLaptop(pose, this.strike.power);
   }
 
   /** Put a laptop copy (origin at the foot of its base) so its base centre is at `center`. */
@@ -980,14 +997,15 @@ export class CharacterViewer {
     copy.position.copy(center).sub(new Vector3(0, LAPTOP.base / 2, 0).applyQuaternion(quaternion));
   }
 
-  private throwLaptop(pose: { position: Vector3; quaternion: Quaternion }): void {
+  private throwLaptop(pose: { position: Vector3; quaternion: Quaternion }, power: number): void {
     if (!this.physics || !this.controller) return;
     const yaw = this.controller.yaw;
     const forward = throwDirection(this.controller.position, yaw, pose.position);
+    const speed = throwSpeed(power);
     const jitter = () => (Math.random() - 0.5) * 2;
     const laptop = this.physics.throwLaptop(
       { position: pose.position, quaternion: pose.quaternion },
-      { x: forward.x * THROW_SPEED.forward, y: THROW_SPEED.up, z: forward.z * THROW_SPEED.forward },
+      { x: forward.x * speed.forward, y: speed.up, z: forward.z * speed.forward },
       { x: jitter() * 0.6, y: jitter() * 1.5, z: jitter() * 0.6 },
       4 + Math.random() * 4,
     );
@@ -1398,6 +1416,7 @@ export class CharacterViewer {
     this.floorTexts?.paint();
     this.signpost?.paint();
     this.about?.paint();
+    this.graffiti?.setLanguage(getLanguage());
     this.targetsView?.paint();
     this.techLabels?.setLanguage();
     this.bubble?.setLanguage();
@@ -1982,6 +2001,7 @@ export class CharacterViewer {
     this.floorTexts?.dispose();
     this.signpost?.dispose();
     this.about?.dispose();
+    this.graffiti?.dispose();
     this.targetsView?.dispose();
     this.techLabels?.dispose();
     this.bubble?.dispose();

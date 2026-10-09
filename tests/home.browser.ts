@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { after, test } from 'node:test';
 import { chromium, expect, type Page } from '@playwright/test';
+import { GRAFFITI } from '../src/scene/graffitiData.ts';
 
 const baseURL = process.env.VIEWER_URL ?? 'http://127.0.0.1:5173/';
 const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL ?? 'msedge', headless: true });
@@ -136,7 +137,7 @@ test('the root shows only the room with V4, neutral light, a fixed following cam
   assert.deepEqual(errors, []);
 });
 
-test('Space hops forward, F throws a laptop, the character knocks over the name letters and steps down to the outside ground', async (t) => {
+test('Space hops forward, F throws a laptop (held, it charges), the character knocks over the name letters and steps down to the outside ground', async (t) => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, ...spanish });
   t.after(() => page.close());
   const errors: string[] = [];
@@ -145,6 +146,9 @@ test('Space hops forward, F throws a laptop, the character knocks over the name 
   await expect(host(page)).toHaveAttribute('data-physics', 'ready', { timeout: 10000 });
   await expect(host(page)).toHaveAttribute('data-elevation', '0.00');
   await expect(host(page)).toHaveAttribute('data-thrown', '0');
+  // Every graffiti found its surface (or the ground) and was painted.
+  const graffiti = (await host(page).getAttribute('data-graffiti'))!;
+  assert.deepEqual(graffiti === 'none' ? [] : graffiti.split(','), GRAFFITI.map((spot) => spot.id));
   const start = await position(page);
   await page.keyboard.press('Space');
   await expect(host(page)).toHaveAttribute('data-locomotion', 'jump');
@@ -163,9 +167,23 @@ test('Space hops forward, F throws a laptop, the character knocks over the name 
   await expect(host(page)).toHaveAttribute('data-locomotion', 'walk', { timeout: 3000 });
   await page.keyboard.up('KeyW');
   await expect(host(page)).toHaveAttribute('data-locomotion', 'idle', { timeout: 3000 });
-  // Three at most: the fourth throw retires the oldest.
+  // A tap throws at the lowest power.
+  assert.equal(await host(page).getAttribute('data-strike-power'), '0.25');
+  // Three at most: the fourth throw retires the oldest. The last one is held: the arm draws back with the charge bar
+  // over the head, and the laptop leaves only once F is let go, at full power.
   for (let throws = 2; throws <= 4; throws++) {
-    await page.keyboard.press('KeyF');
+    if (throws < 4) {
+      await page.keyboard.press('KeyF');
+    } else {
+      await page.keyboard.down('KeyF');
+      await expect(host(page)).toHaveAttribute('data-strike', 'charging');
+      await expect(page.locator('.charge-meter')).not.toHaveAttribute('hidden');
+      await page.waitForTimeout(1800);
+      await expect(host(page)).toHaveAttribute('data-thrown', '3');
+      await expect(host(page)).toHaveAttribute('data-strike', 'charging');
+      await page.keyboard.up('KeyF');
+      await expect(host(page)).toHaveAttribute('data-strike-power', '1.00');
+    }
     await expect(host(page)).toHaveAttribute('data-locomotion', 'idle', { timeout: 4000 });
     await expect(host(page)).toHaveAttribute('data-thrown', String(Math.min(throws, 3)));
   }
@@ -389,8 +407,12 @@ test('playground: laptops thrown from the line score on the targets, the tech to
   await page.keyboard.up('KeyD');
   await expect(host(page)).toHaveAttribute('data-locomotion', 'idle', { timeout: 3000 });
   assert.ok((await position(page))[1] > 36.5, 'still behind the line');
+  // A tap lobs the laptop short of the targets: hold F until the arm is drawn back about halfway (the clip reaches its
+  // wind-up after ~0.4 s, then the charge builds).
   for (let i = 1; i <= 3; i++) {
-    await page.keyboard.press('KeyF');
+    await page.keyboard.down('KeyF');
+    await page.waitForTimeout(1050);
+    await page.keyboard.up('KeyF');
     await expect(host(page)).toHaveAttribute('data-throws', String(i), { timeout: 3000 });
     await expect(host(page)).toHaveAttribute('data-locomotion', 'idle', { timeout: 4000 });
   }

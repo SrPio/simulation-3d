@@ -27,7 +27,7 @@ test('room GLB is a grounded diorama with every reference element and embedded t
   assert.ok(document.images.length >= 9 && document.images.every((image: { uri?: string; bufferView?: number }) => !image.uri && image.bufferView !== undefined));
   assert.equal(gltf.animations.length, 0);
   assert.ok(!document.nodes.some((node: { camera?: number }) => node.camera !== undefined), 'No cameras in the room asset');
-  for (const name of ['Room', 'Platform', 'Wall_Left', 'Wall_BackLow', 'BedFrame', 'Mattress', 'Duvet', 'Pillow_Back', 'BedLed_Front',
+  for (const name of ['Room', 'Platform', 'Wall_Left', 'Wall_BackLow', 'BedFrame', 'Mattress', 'Duvet', 'Pillow_Back', 'Pillow_Front',
     'Nightstand', 'LampShade', 'Book_0', 'DeskTop', 'DeskMat', 'KeyboardCase', 'Mouse', 'Mug',
     'ChairSeat', 'ChairBack', 'Poster_cruzados', 'Poster_bug_hunter', 'Poster_merge_conflict', 'Poster_404', 'WindowGlass', 'NightCity']) {
     assert.ok(gltf.scene.getObjectByName(name), name);
@@ -70,7 +70,10 @@ test('room exports seats, laptop spots, spawn, lights and colliders for the inte
   const seat = node('Anchor_ChairSeat').getWorldPosition(new Vector3());
   const chair = new Box3().setFromObject(node('ChairSeat'), true);
   assert.ok(Math.abs(seat.y - chair.max.y) < 0.01, 'Chair anchor on the seat surface');
-  for (const name of ['Light_Lamp', 'Light_BedGlow', 'Light_WallGlow', 'Light_Screen', 'Light_Window']) {
+  for (const name of ['Light_BedGlow', 'Light_WallGlow', 'BedLed_Front', 'BedLed_Foot', 'BedLed_Head', 'BedLed_Wall']) {
+    assert.equal(gltf.scene.getObjectByName(name), undefined, `${name}: no violet glow under or behind the bed`);
+  }
+  for (const name of ['Light_Lamp', 'Light_Screen', 'Light_Window']) {
     const data = node(name).userData;
     assert.equal(data.light, 'point', name);
     assert.equal(data.color.length, 3, name);

@@ -32,7 +32,6 @@ SHIFT = (-(HALF - LAYOUT), HALF - LAYOUT, 0.0)
 # so V4's hands stay on the laptop keyboard instead of reaching into the screen.
 DESK_FORWARD = 0.14
 WINDOW = (0.25, 1.65, 1.75, 3.0)  # x0, x1, z0, z1 on the +Y wall, in layout coordinates
-LED = (1.0, 0.16, 0.86)
 random.seed(11)
 
 
@@ -87,7 +86,7 @@ def materials(tex):
         'bed_frame': material('BedFrame', (0.075, 0.07, 0.085), 0.65),
         'sheet': material('Sheet', (0.62, 0.58, 0.70), 0.85),
         'duvet': material('DuvetCircuit', (1, 1, 1), 0.9, image=tex['circuit']),
-        'led': material('LedStrip', LED, 0.4, emission=LED, strength=7),
+        'pillow': material('PillowCotton', (0.74, 0.71, 0.84), 0.9),
         'lamp_shade': material('LampShade', (0.95, 0.72, 0.45), 0.8, emission=(1.0, 0.62, 0.3), strength=1.6),
         'lamp_metal': material('LampMetal', (0.12, 0.1, 0.14), 0.35, 0.8),
         'frame_white': material('FrameWhite', (0.86, 0.85, 0.88), 0.45),
@@ -172,6 +171,27 @@ def blob(name, center, scale, mat, parent, rotation=(0, 0, 0), uv=None):
     m = Euler(rotation).to_matrix()
     for v in bm.verts:
         v.co = m @ Vector((v.co.x * scale[0], v.co.y * scale[1], v.co.z * scale[2])) + Vector(center)
+    return finish(name, bm, mat, parent, smooth=True, uv=uv)
+
+
+def pillow(name, center, size, mat, parent, rotation=(0, 0, 0), uv=None):
+    """A stuffed pillow, `size` its half-size: square in plan with a lens-shaped cross-section that thins to a seam
+    all round, sides bowing inwards between plump corners and a soft dent in the middle of the faces."""
+    bm = bmesh.new()
+    bm.loops.layers.uv.new('UVMap')
+    bmesh.ops.create_uvsphere(bm, u_segments=48, v_segments=24, radius=1.0, calc_uvs=True)
+    signed = lambda value, exponent: math.copysign(abs(value) ** exponent, value)
+    turn = Euler(rotation).to_matrix()
+    for v in bm.verts:
+        lat = math.atan2(v.co.z, math.hypot(v.co.x, v.co.y))
+        lon = math.atan2(v.co.y, v.co.x)
+        # Superquadric: squarish in plan (exponent 0.3), pinched to a seam across (1.5).
+        x = signed(math.cos(lat), 1.5) * signed(math.cos(lon), 0.3)
+        y = signed(math.cos(lat), 1.5) * signed(math.sin(lon), 0.3)
+        z = signed(math.sin(lat), 1.5)
+        x, y = x * (1 - 0.08 * (1 - y * y)), y * (1 - 0.06 * (1 - x * x))
+        z *= 1 - 0.15 * math.exp(-3.0 * (x * x + y * y))
+        v.co = turn @ Vector((x * size[0], y * size[1], z * size[2])) + Vector(center)
     return finish(name, bm, mat, parent, smooth=True, uv=uv)
 
 
@@ -260,19 +280,14 @@ def build_bed(m, root):
     box('BedFrame', (x0, y0, 0.12), (x1, y1, 0.32), m['bed_frame'], root, bevel=0.015)
     for i, (x, y) in enumerate(((x0 + 0.1, y0 + 0.1), (x1 - 0.1, y0 + 0.1), (x0 + 0.1, y1 - 0.1), (x1 - 0.1, y1 - 0.1))):
         box(f'BedLeg_{i}', (x - 0.04, y - 0.04, 0), (x + 0.04, y + 0.04, 0.12), m['bed_frame'], root)
-    inset, t = 0.05, 0.012
-    for name, lo, hi in (('Front', (x0 + inset, y0 + inset, 0.1), (x1 - inset, y0 + inset + t, 0.12)),
-                         ('Foot', (x1 - inset - t, y0 + inset, 0.1), (x1 - inset, y1 - inset, 0.12)),
-                         ('Head', (x0 + inset, y0 + inset, 0.1), (x0 + inset + t, y1 - inset, 0.12))):
-        box(f'BedLed_{name}', lo, hi, m['led'], root)
-    box('BedLed_Wall', (x0 + 0.1, y1 - 0.004, 0.33), (x1 - 0.05, y1 + 0.01, 0.345), m['led'], root)
     box('Mattress', (x0 + 0.04, y0 + 0.04, 0.32), (x1 - 0.04, y1 - 0.04, 0.56), m['sheet'], root, bevel=0.05, segments=3)
     box('Duvet', (-0.02, y0 - 0.02, 0.30), (x1 + 0.02, y1 + 0.01, 0.63), m['duvet'], root, bevel=0.07, segments=4,
         uv=project_uv(2.3))
     box('DuvetFold', (-0.05, y0 - 0.025, 0.5), (0.28, y1 + 0.015, 0.655), m['duvet'], root, bevel=0.06, segments=4,
         uv=project_uv(2.3, (0.3, 0.1)))
-    blob('Pillow_Back', (-0.43, 1.84, 0.66), (0.26, 0.36, 0.1), m['duvet'], root, (0.0, -0.25, 0.1), uv=project_uv(1.6))
-    blob('Pillow_Front', (-0.35, 1.34, 0.68), (0.25, 0.34, 0.1), m['duvet'], root, (0.15, -0.35, -0.15), uv=project_uv(1.6, (0.4, 0.2)))
+    # Two plain cotton pillows side by side across the head end, lying on the mattress; the front one a little askew.
+    pillow('Pillow_Back', (-0.45, 1.87, 0.645), (0.25, 0.28, 0.085), m['pillow'], root, (0.0, 0.04, 0.04), uv=project_uv(1.6))
+    pillow('Pillow_Front', (-0.43, 1.30, 0.655), (0.24, 0.28, 0.08), m['pillow'], root, (0.04, 0.06, -0.1), uv=project_uv(1.6, (0.4, 0.2)))
 
 
 def build_nightstand(m, root):
@@ -374,8 +389,6 @@ def build_anchors(root):
     anchor('Anchor_DeskLaptop', (-0.82 + DESK_FORWARD, -1.0, 1.056), root, math.radians(90), laptop='desk')
     anchor('Anchor_BedLaptop', (0.7, 0.58, 0.90), root, 0.0, laptop='bed')
     lights = (('Lamp', (-1.33, 1.93, 1.02), (1.0, 0.62, 0.32), 5.0),
-              ('BedGlow', (0.7, 0.85, 0.06), LED, 9.0),
-              ('WallGlow', (0.7, 2.05, 0.45), LED, 7.0),
               ('Screen', (-0.94 + DESK_FORWARD, -1.0, 1.3), (0.55, 0.6, 1.0), 1.2),
               ('Window', (0.95, 1.9, 2.4), (0.4, 0.5, 1.0), 1.0))
     for name, location, color, intensity in lights:
@@ -407,9 +420,6 @@ def build_lighting():
 
     light('Key', 'AREA', (4.5, -4.5, 7.0), (0.55, 0.45, 1.0), 320, 6.0, (math.radians(45), 0, math.radians(45)))
     light('Lamp', 'POINT', (-1.33, 1.93, 1.02), (1.0, 0.6, 0.3), 90, 0.1)
-    light('UnderBed', 'AREA', (0.7, 1.58, 0.1), LED, 700, (2.8, 1.1), (math.pi, 0, 0))
-    light('BedFrontSpill', 'AREA', (0.7, 0.9, 0.12), LED, 420, (2.6, 0.2), (math.radians(150), 0, 0))
-    light('WallWash', 'AREA', (0.7, 2.05, 0.4), LED, 520, (2.8, 0.3), (math.radians(-80), 0, 0))
     light('Screen', 'AREA', (-0.70 + DESK_FORWARD, -1.0, 1.25), (0.55, 0.6, 1.0), 12, (0.3, 0.45), (0, math.radians(-90), 0))
     light('Moon', 'AREA', (0.95, 2.6, 2.4), (0.45, 0.55, 1.0), 40, (1.3, 1.2), (math.radians(90), 0, 0))
     light('PosterWash', 'AREA', (-0.8, -1.0, 3.3), (1.0, 0.9, 0.95), 70, (0.6, 2.2), (0, math.radians(40), 0))
