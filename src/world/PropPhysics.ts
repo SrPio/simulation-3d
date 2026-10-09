@@ -1,12 +1,17 @@
 import type { Body as BodyType, HingeConstraint as HingeType, Material as MaterialType, World as WorldType } from 'cannon-es';
 import { LETTER_MASS, type PieceGroup, type PieceShape } from '../scene/outsideData.ts';
+import { FLAP_CENTRE } from '../scene/PieceMeshes.ts';
 
 type Cannon = typeof import('cannon-es');
 type Vec = { x: number; y: number; z: number };
 type Quat = Vec & { w: number };
 
 /** A piece at rest: where it stands, the half sizes of its box (width, height, depth) and, optionally, another shape, its mass and group. */
-export type PieceBody = { position: Vec; quaternion: Quat; half: [number, number, number]; shape?: PieceShape; mass?: number; group?: PieceGroup };
+export type PieceBody = {
+  position: Vec; quaternion: Quat; half: [number, number, number]; shape?: PieceShape; mass?: number; group?: PieceGroup;
+  /** A cardboard box's flaps: each hinge on its rim, in the box's own axes (the hinge runs along its local X). */
+  flaps?: { position: Vec; quaternion: Quat }[];
+};
 /** Something pieces bounce off: a box turned about +Y (sign boards, the room platform, furniture, walls). */
 export type StaticBox = { center: Vec; half: [number, number, number]; yaw: number };
 /** A standing target's disc: its centre, radius and the yaw of its face (local +Z). Thrown laptops that hit it are reported. */
@@ -23,6 +28,13 @@ export const LID_LIMIT = Math.PI * 0.75;
 /** The closed stop: a hair below 0 so a lid resting on the keys can settle; its front edge stays above them. */
 export const LID_CLOSED = -0.02;
 export type ThrownLaptop = { base: BodyType; lid: BodyType; hinge: HingeType; born: number };
+/** A box flap: a thin board hinged on the rim, light, opening from shut (0) up to FLAP_LIMIT. */
+export const FLAP = { width: 0.488, thickness: 0.008, length: 0.246, mass: 0.08 } as const;
+export const FLAP_LIMIT = 2.6;
+/** One box flap: its body, its hinge and where the hinge sits on the box. */
+export type Flap = { body: BodyType; hinge: HingeType; at: { position: Vec; quaternion: Quat } };
+/** Collision groups: flaps only meet the ground, the static boxes, laptops and the character, not the loose pieces. */
+const GROUP = { world: 1, piece: 2, flap: 4 } as const;
 /** At most this many thrown laptops at once: the next throw retires the oldest. */
 export const MAX_THROWN = 3;
 
@@ -86,6 +98,8 @@ export class PropPhysics {
   /** Called when a thrown laptop first touches a target disc (once per laptop and target). */
   onTargetHit?: (hit: TargetHit) => void;
   private readonly targetBodies: BodyType[] = [];
+  /** Each piece's flaps (none for most). */
+  readonly flaps: Flap[][] = [];
   private readonly scored = new WeakMap<ThrownLaptop, Set<number>>();
 
   static async load(pieces: readonly PieceBody[], statics: readonly StaticBox[], groundY: number, targets: readonly TargetDisc[] = []): Promise<PropPhysics> {
@@ -96,8 +110,9 @@ export class PropPhysics {
     const { Body, Box, ContactMaterial, Cylinder, Material, Plane, SAPBroadphase, Sphere, Vec3, World } = cannon;
     this.cannon = cannon;
     // Copied field by field: three.js vectors and quaternions keep their values in accessors.
-    this.rest = pieces.map(({ position: p, quaternion: q, half, shape, mass, group }) => ({
+    this.rest = pieces.map(({ position: p, quaternion: q, half, shape, mass, group, flaps }) => ({
       position: { x: p.x, y: p.y, z: p.z }, quaternion: { x: q.x, y: q.y, z: q.z, w: q.w }, half, shape, mass, group,
+      flaps: flaps?.map(({ position: h, quaternion: r }) => ({ position: { x: h.x, y: h.y, z: h.z }, quaternion: { x: r.x, y: r.y, z: r.z, w: r.w } })),
     }));
     this.groups = this.rest.map((piece) => piece.group ?? 'name');
     this.round = this.rest.map((piece) => piece.shape?.kind === 'sphere');
@@ -156,16 +171,89 @@ export class PropPhysics {
         for (const part of shape.cylinders) body.addShape(new Cylinder(part.radius, part.radius, part.height, 10), new Vec3(0, part.y, 0));
       } else body.addShape(new Box(new Vec3(...piece.half)));
       this.configure(body, settings);
+      body.collisionFilterGroup = GROUP.piece;
       this.world.addBody(body);
       this.bodies.push(body);
+      this.flaps.push((piece.flaps ?? []).map((at) => this.addFlap(body, at)));
     }
     this.pusher = new Body({ type: Body.KINEMATIC });
     for (const y of PUSHER_SPHERES) this.pusher.addShape(new Sphere(PUSHER_RADIUS), new Vec3(0, y, 0));
     this.pusher.allowSleep = false;
     this.world.addBody(this.pusher);
     this.world.addEventListener('postStep', this.limitLids);
+    this.world.addEventListener('postStep', this.limitFlaps);
     this.reset();
   }
+
+  /**
+   * A flap hinged on box `box` at `at`: its body sits at the flap's centre (so gravity swings it), and the hinge joins
+   * it to the box along the rim. It only collides with the ground, the static boxes, laptops and the character.
+   */
+  private addFlap(box: BodyType, at: { position: Vec; quaternion: Quat }): Flap {
+    const { Body, Box, HingeConstraint, Quaternion, Vec3 } = this.cannon;
+    const body = new Body({ mass: FLAP.mass, material: this.materials.get('brick'), shape: new Box(new Vec3(FLAP.width / 2, FLAP.thickness / 2, FLAP.length / 2)) });
+    body.collisionFilterGroup = GROUP.flap;
+    body.collisionFilterMask = GROUP.world;
+    this.configure(body, { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.6, linearDamping: 0.1 });
+    const turn = new Quaternion(at.quaternion.x, at.quaternion.y, at.quaternion.z, at.quaternion.w);
+    const hinge = new HingeConstraint(box, body, {
+      pivotA: new Vec3(at.position.x, at.position.y, at.position.z), axisA: turn.vmult(new Vec3(1, 0, 0)),
+      pivotB: new Vec3(-FLAP_CENTRE.x, -FLAP_CENTRE.y, -FLAP_CENTRE.z), axisB: new Vec3(1, 0, 0),
+    });
+    this.world.addBody(body);
+    this.world.addConstraint(hinge);
+    return { body, hinge, at };
+  }
+
+  /** Flap pose for a box pose: shut on the rim, or opened by `angle` about its hinge. */
+  private placeFlap(box: BodyType, flap: Flap, angle = 0): void {
+    const { Quaternion, Vec3 } = this.cannon;
+    const local = new Quaternion(flap.at.quaternion.x, flap.at.quaternion.y, flap.at.quaternion.z, flap.at.quaternion.w)
+      .mult(new Quaternion().setFromAxisAngle(new Vec3(1, 0, 0), angle));
+    const orientation = box.quaternion.mult(local);
+    const hinge = box.pointToWorldFrame(new Vec3(flap.at.position.x, flap.at.position.y, flap.at.position.z));
+    flap.body.position.copy(hinge.vadd(orientation.vmult(new Vec3(FLAP_CENTRE.x, FLAP_CENTRE.y, FLAP_CENTRE.z))));
+    flap.body.quaternion.copy(orientation);
+    flap.body.velocity.setZero();
+    flap.body.angularVelocity.setZero();
+    flap.body.sleep();
+  }
+
+  /** How far flap `k` of piece `index` stands open (radians about its hinge): 0 shut, up to FLAP_LIMIT. */
+  flapAngle(index: number, k: number): number {
+    const box = this.bodies[index];
+    const flap = this.flaps[index]?.[k];
+    if (!box || !flap) return 0;
+    const { Quaternion } = this.cannon;
+    const shut = box.quaternion.mult(new Quaternion(flap.at.quaternion.x, flap.at.quaternion.y, flap.at.quaternion.z, flap.at.quaternion.w));
+    const relative = shut.conjugate().mult(flap.body.quaternion);
+    return Math.atan2(Math.sin(2 * Math.atan2(relative.x, relative.w)), Math.cos(2 * Math.atan2(relative.x, relative.w)));
+  }
+
+  /**
+   * Flaps stop shut on the box and fully open: past either stop the flap is turned back onto it about its hinge and the
+   * relative spin pushing further out is taken away (like the laptop lids, so a flap resting on a stop can sleep).
+   */
+  private readonly limitFlaps = (): void => {
+    const { Quaternion, Vec3 } = this.cannon;
+    for (const [index, flaps] of this.flaps.entries()) {
+      const box = this.bodies[index];
+      for (const [k, flap] of flaps.entries()) {
+        const angle = this.flapAngle(index, k);
+        const over = angle < 0 ? angle : angle > FLAP_LIMIT ? angle - FLAP_LIMIT : 0;
+        if (!over) continue;
+        const local = new Quaternion(flap.at.quaternion.x, flap.at.quaternion.y, flap.at.quaternion.z, flap.at.quaternion.w);
+        const axis = box.quaternion.mult(local).vmult(new Vec3(1, 0, 0));
+        const pivot = box.pointToWorldFrame(new Vec3(flap.at.position.x, flap.at.position.y, flap.at.position.z));
+        const turn = new Quaternion().setFromAxisAngle(axis, -over);
+        flap.body.position.copy(pivot.vadd(turn.vmult(flap.body.position.vsub(pivot))));
+        flap.body.quaternion.copy(turn.mult(flap.body.quaternion));
+        const relative = flap.body.angularVelocity.vsub(box.angularVelocity).dot(axis);
+        const excess = over > 0 ? Math.max(0, relative) : Math.min(0, relative);
+        if (excess) flap.body.angularVelocity.vsub(axis.scale(excess), flap.body.angularVelocity);
+      }
+    }
+  };
 
   private configure(body: BodyType, settings: Settings): void {
     body.allowSleep = true;
@@ -193,6 +281,7 @@ export class PropPhysics {
     body.velocity.setZero();
     body.angularVelocity.setZero();
     body.sleep();
+    for (const flap of this.flaps[this.bodies.indexOf(body)] ?? []) this.placeFlap(body, flap);
   }
 
   /**
@@ -334,6 +423,7 @@ export class PropPhysics {
   get active(): boolean {
     const asleep = this.cannon.Body.SLEEPING;
     return this.bodies.some((body) => body.sleepState !== asleep)
+      || this.flaps.some((flaps) => flaps.some((flap) => flap.body.sleepState !== asleep))
       || this.laptops.some((laptop) => laptop.base.sleepState !== asleep || laptop.lid.sleepState !== asleep);
   }
 
@@ -358,6 +448,11 @@ export class PropPhysics {
       if (body.sleepState === asleep) continue;
       const speed = body.velocity.length();
       if (speed > 0.5) movers.push({ x: body.position.x, z: body.position.z, reach: 0.8 + speed * STEP * MAX_SUBSTEPS });
+    }
+    // A box that moves takes its flaps along: a sleeping flap would hold its hinge still.
+    for (const [index, flaps] of this.flaps.entries()) {
+      if (this.bodies[index].sleepState === asleep) continue;
+      for (const flap of flaps) if (flap.body.sleepState === asleep) flap.body.wakeUp();
     }
     for (const body of this.bodies) {
       if (body.sleepState !== asleep) continue;

@@ -78,8 +78,7 @@ function plaqueRects(plaques: readonly Plaque[]): { rects: Rect[]; height: numbe
 }
 
 /**
- * The about-me plaza's painted parts: the plaques (the bust's name, role and country, the globe's country, the two
- * diplomas in the glass case) as one mesh over one canvas atlas facing the front, and the globe itself, a sphere with
+ * The about-me plaza's painted parts: the plaques (the bust's name, role and country, the globe's country) as one mesh over one canvas atlas facing the front, and the globe itself, a sphere with
  * the continents painted on and a pin on Colombia turned towards the default view. Plaques repaint on a language change.
  */
 export class AboutPlaza {
@@ -247,22 +246,6 @@ export class AboutPlaza {
     };
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    if (id === 'degree' || id === 'react') {
-      // A diploma: cream paper, a thin inner border, the kind of paper, the title, the name and a gold seal.
-      context.fillStyle = '#f5efe1';
-      context.fillRect(0, 0, w, h);
-      context.strokeStyle = '#b08a4a';
-      context.lineWidth = 4;
-      context.strokeRect(10, 10, w - 20, h - 20);
-      line(t(id === 'degree' ? 'about.degreeKind' : 'about.reactKind').toUpperCase(), h * 0.2, 20, 600, '#7a6440');
-      line(t(id === 'degree' ? 'about.degree' : 'about.react'), h * 0.45, 30, 700, '#2a2233');
-      line(t('about.name'), h * 0.68, 18, 500, '#4a4055');
-      context.fillStyle = '#d4a548';
-      context.beginPath();
-      context.arc(w - 40, h - 36, 16, 0, Math.PI * 2);
-      context.fill();
-      return;
-    }
     // A brass plate with dark engraved letters.
     const gradient = context.createLinearGradient(0, 0, 0, h);
     gradient.addColorStop(0, '#d9b871');

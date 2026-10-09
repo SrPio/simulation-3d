@@ -20,6 +20,9 @@ function plain(geometry: BufferGeometry, textured = false): BufferGeometry {
   return copy;
 }
 
+/** A box flap's centre from its hinge, in the hinge's axes (it lies flat, reaching inwards along -Z when shut). */
+export const FLAP_CENTRE = { x: 0, y: 0.004, z: -0.123 };
+
 type Batch = { mesh: BatchedMesh; geometries: Map<BufferGeometry, BufferGeometry>; ids: Map<BufferGeometry, number>; instances: number };
 
 /**
@@ -35,6 +38,12 @@ export class PieceMeshes {
   readonly textured?: BatchedMesh;
   private readonly pieces: readonly Piece[];
   private readonly instances: { mesh: BatchedMesh; id: number }[][] = [];
+  /** Each box's flaps: their instance and place on the rim. */
+  private readonly flapInstances: { id: number; local: Matrix4 }[][] = [];
+  /** Each piece's last pose: the flaps sit shut on it until their own bodies move them. */
+  private readonly poses: Matrix4[] = [];
+  private readonly flapMatrix = new Matrix4();
+  private readonly toHinge = new Matrix4().makeTranslation(-FLAP_CENTRE.x, -FLAP_CENTRE.y, -FLAP_CENTRE.z);
   private readonly shadows: BlobShadows;
   private readonly shadowOffset: number;
   private readonly groundY: number;
@@ -54,7 +63,7 @@ export class PieceMeshes {
     const texturedParts: Batch = { mesh: undefined!, geometries: new Map(), ids: new Map(), instances: 0 };
     let map: Texture | undefined;
     for (const piece of pieces) {
-      for (const part of piece.parts) {
+      for (const part of [...piece.parts, ...(piece.flaps ?? [])]) {
         const batch = part.map && part.geometry.getAttribute('uv') ? texturedParts : plainParts;
         if (batch === texturedParts) map ??= part.map;
         if (!batch.geometries.has(part.geometry)) batch.geometries.set(part.geometry, plain(part.geometry, batch === texturedParts));
@@ -85,6 +94,12 @@ export class PieceMeshes {
         batch.mesh.setColorAt(id, part.color);
         return { mesh: batch.mesh, id };
       }));
+      this.flapInstances.push((piece.flaps ?? []).map((flap) => {
+        const id = plainParts.mesh.addInstance(plainParts.ids.get(flap.geometry)!);
+        plainParts.mesh.setColorAt(id, flap.color);
+        return { id, local: flap.matrix };
+      }));
+      this.poses.push(new Matrix4());
       this.set(index, piece);
     }
     for (const batch of [plainParts, texturedParts]) for (const geometry of batch.geometries.values()) geometry.dispose();
@@ -97,6 +112,8 @@ export class PieceMeshes {
     this.quaternion.set(q.x, q.y, q.z, q.w);
     this.matrix.compose(this.position, this.quaternion, this.one);
     for (const { mesh, id } of this.instances[index]) mesh.setMatrixAt(id, this.matrix);
+    this.poses[index].copy(this.matrix);
+    this.placeFlaps(index);
     // Footprint of the turned box on the ground: its extent along the piece's projected width axis and across it.
     const half = this.pieces[index].half;
     const [ax, ay, az] = this.axes;
@@ -118,6 +135,27 @@ export class PieceMeshes {
     // Flat pieces (the tagline) only get a faint contact shadow; standing ones a fuller one.
     const presence = Math.min(1, lowest / 0.2);
     this.shadows.set(this.shadowOffset + index, p.x, p.z, yaw, along * 2 + 0.25 * presence, across * 2 + 0.25 * presence, 0.5 * fade * presence);
+  }
+
+  /** The flaps of box `index` shut on it (before the physics runs, and after a reset). */
+  private placeFlaps(index: number): void {
+    const flaps = this.flapInstances[index];
+    if (!flaps?.length) return;
+    for (const flap of flaps) {
+      this.flapMatrix.multiplyMatrices(this.poses[index], flap.local);
+      this.mesh.setMatrixAt(flap.id, this.flapMatrix);
+    }
+  }
+
+  /** Flap `k` of box `index` where its own body is (the body sits at the flap's centre, the mesh at its hinge). */
+  setFlap(index: number, k: number, pose: Pose): void {
+    const flap = this.flapInstances[index]?.[k];
+    if (!flap) return;
+    const { position: p, quaternion: q } = pose;
+    this.position.set(p.x, p.y, p.z);
+    this.quaternion.set(q.x, q.y, q.z, q.w);
+    this.flapMatrix.compose(this.position, this.quaternion, this.one).multiply(this.toHinge);
+    this.mesh.setMatrixAt(flap.id, this.flapMatrix);
   }
 
   /** Copy the poses of the bodies that moved (sleeping ones keep theirs), or of all of them. */

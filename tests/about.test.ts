@@ -26,7 +26,7 @@ test('everything new keeps the block perspective: axis aligned, fronts towards +
   for (const item of data.decor.filter((entry) => entry.kind !== 'tree' && entry.kind !== 'rock')) {
     assert.ok(offAxis(item.yaw) < 1e-3, `${item.name} is axis aligned (${item.yaw.toFixed(3)})`);
   }
-  for (const kind of ['bust', 'globe', 'vitrine', 'rack', 'scoreboard']) {
+  for (const kind of ['bust', 'globe', 'planter', 'lamp', 'scoreboard']) {
     const items = data.decor.filter((entry) => entry.kind === kind);
     assert.ok(items.length > 0, kind);
     for (const item of items) assert.ok(facesFront(item.yaw), `${item.name} faces +Z`);
@@ -40,7 +40,7 @@ test('everything new keeps the block perspective: axis aligned, fronts towards +
     assert.ok(offAxis(yaw) < 1e-3, `${piece.name} is axis aligned`);
   }
   // Rows run along +X: the plaza's objects share one line, the tech tower's bottom row too.
-  const row = data.decor.filter((entry) => ['globe', 'bust', 'vitrine'].includes(entry.kind));
+  const row = data.decor.filter((entry) => ['globe', 'bust'].includes(entry.kind));
   assert.ok(Math.max(...row.map((entry) => entry.position.z)) - Math.min(...row.map((entry) => entry.position.z)) < 1e-3, 'one row');
   const bottom = data.props.filter((entry) => entry.group === 'tech').slice(0, 4);
   assert.ok(Math.max(...bottom.map((entry) => entry.position.z)) - Math.min(...bottom.map((entry) => entry.position.z)) < 1e-3, 'tower row');
@@ -54,16 +54,17 @@ test('the about-me plaza holds the signs, a bust, a globe and a glass case in fr
   for (const sign of data.signs) assert.ok(inside(sign.position.x, sign.position.z), `${sign.id} in the plaza`);
   const signZ = data.signs[0].position.z;
   const kinds = new Map(data.decor.map((entry) => [entry.kind, entry]));
-  for (const kind of ['bust', 'globe', 'vitrine']) {
+  for (const kind of ['bust', 'globe', 'planter', 'lamp']) {
     const item = kinds.get(kind)!;
     assert.ok(item && inside(item.position.x, item.position.z), `${kind} in the plaza`);
     // In front of the sign zones and their titles, so it never hides a board.
     assert.ok(item.position.z > signZ + 4, `${kind} in front of the signs`);
   }
-  assert.ok(kinds.get('globe')!.position.x < kinds.get('bust')!.position.x && kinds.get('bust')!.position.x < kinds.get('vitrine')!.position.x);
+  assert.ok(kinds.get('globe')!.position.x < kinds.get('bust')!.position.x);
+  assert.ok(!kinds.has('vitrine') && !kinds.has('rack'), 'no glass case, no racks');
   assert.ok(data.globe && data.globe.radius > 0.2 && data.globe.centre > 0.8, 'globe stand');
-  assert.deepEqual(data.plaques.map((plaque) => plaque.id).sort(), ['bust', 'degree', 'globe', 'react']);
-  for (const key of ['about.name', 'about.role', 'about.country', 'about.degree', 'about.degreeKind', 'about.react', 'about.reactKind', 'floor.about'] as MessageKey[]) {
+  assert.deepEqual(data.plaques.map((plaque) => plaque.id).sort(), ['bust', 'globe']);
+  for (const key of ['about.name', 'about.role', 'about.country', 'floor.about'] as MessageKey[]) {
     for (const language of ['es', 'en'] as const) assert.ok(MESSAGES[language][key], `${language} ${key}`);
   }
   assert.equal(MESSAGES.es['about.country'], 'Colombia');

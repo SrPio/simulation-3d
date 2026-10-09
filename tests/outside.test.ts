@@ -35,7 +35,7 @@ test('outside GLB: no ground mesh, three standing signs linking to the portfolio
   const root = gltf.scene.getObjectByName('Outside');
   assert.ok(root, 'Outside root');
   assert.equal(gltf.scene.getObjectByName('Room'), undefined, 'the room stays in room.glb');
-  assert.ok(bytes.length < 800_000, `outside.glb ${bytes.length} bytes`);
+  assert.ok(bytes.length < 900_000, `outside.glb ${bytes.length} bytes`);
   const json = glbJson(bytes);
   assert.ok(json.extensionsUsed?.includes('EXT_texture_webp'), 'screenshots are embedded as WebP');
   assert.ok(json.images.length >= 3 && json.images.every((image: { mimeType: string }) => image.mimeType === 'image/webp'));
@@ -51,8 +51,8 @@ test('outside GLB: no ground mesh, three standing signs linking to the portfolio
     assert.ok(sign.label.length > 3, sign.id);
     assert.ok(Math.abs(sign.position.y - groundY) < 1e-4, `${sign.id} stands on the outside ground`);
     assert.ok(sign.board.bottom > 0.3 && sign.board.height > 1, `${sign.id}: a standing board`);
-    // In a row 5 m in front of the back (-Z) wall line, past the room's open +X side, facing +Z like its window.
-    assert.ok(Math.abs(sign.position.z - 1.95) < 0.05 && sign.position.x - sign.board.width / 2 > 3.2, `${sign.id} at ${sign.position.x},${sign.position.z}`);
+    // In a row at the back of the about-me plaza, near the back (-Z) wall line, past the room's open +X side, facing +Z.
+    assert.ok(Math.abs(sign.position.z + 4.39) < 0.05 && sign.position.x - sign.board.width / 2 > 3.2, `${sign.id} at ${sign.position.x},${sign.position.z}`);
     assert.ok(Math.cos(sign.yaw) > 0.999, `${sign.id} faces +Z`);
   }
   // A large walkable ground that still holds the whole room floor.

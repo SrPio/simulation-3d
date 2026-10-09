@@ -1,4 +1,4 @@
-import { Color, Mesh, Quaternion, Vector3, type BufferGeometry, type Material, type MeshStandardMaterial, type Object3D, type Texture } from 'three';
+import { Color, Matrix4, Mesh, Quaternion, Vector3, type BufferGeometry, type Material, type MeshStandardMaterial, type Object3D, type Texture } from 'three';
 import type { Bounds, Box2, Point2 } from '../world/collisions.ts';
 
 /** Floor zone in front of a sign: an oriented rectangle on the ground. */
@@ -51,6 +51,8 @@ export type Piece = {
   mass: number;
   /** The tool a tech cube shows ('typescript', 'node', …). */
   tech?: string;
+  /** A cardboard box's flaps: each part at its hinge on the rim (`matrix`, in the piece's own axes), opening about its local X. */
+  flaps?: (PiecePart & { matrix: Matrix4; position: Vector3; quaternion: Quaternion })[];
 };
 
 /** One loose letter (the standing name or the flat tagline): its mesh, centred on the letter, and the box its physics body uses. */
@@ -63,7 +65,7 @@ export type Letter = Piece & {
 
 /** Where the viewer paints on the ground: a block in its own axes (local +X along the text, +Z towards the camera). */
 export type FloorBlock = {
-  id: 'intro' | 'crossroads' | 'controls' | 'playground' | 'bowling' | 'footprints' | 'about' | 'targets' | 'tech';
+  id: 'intro' | 'crossroads' | 'controls' | 'playground' | 'bowling' | 'footprints' | 'about' | 'targets' | 'tech' | 'playarea';
   position: Vector3;
   yaw: number;
   size: [number, number];
@@ -172,13 +174,22 @@ function shapeOf(data: { radius?: number; cylinders?: number[] }): PieceShape {
   return { kind: 'box' };
 }
 
-/** The meshes of a node: itself, or the one-material children the loader makes of a multi-material mesh. */
+const FLAP = /_Flap_\d+$/;
+
+/** The meshes of a node: itself, or the one-material children the loader makes of a multi-material mesh (not its flaps). */
 function partsOf(object: Object3D): PiecePart[] {
-  const meshes = object instanceof Mesh ? [object] : object.children.filter((child): child is Mesh => child instanceof Mesh);
+  const meshes = object instanceof Mesh ? [object] : object.children.filter((child): child is Mesh => child instanceof Mesh && !FLAP.test(child.name));
   return meshes.map((mesh) => {
     const material = mesh.material as MeshStandardMaterial;
     return { geometry: mesh.geometry, color: (material.color ?? new Color(1, 1, 1)).clone(), ...(material.map ? { map: material.map } : {}) };
   });
+}
+
+/** A box's hinged flaps, from its `<name>_Flap_<i>` children. */
+function flapsOf(object: Object3D): { flaps?: Piece['flaps'] } {
+  const flaps = object.children.filter((child) => FLAP.test(child.name)).sort((a, b) => a.name.localeCompare(b.name))
+    .flatMap((child) => partsOf(child).map((part) => ({ ...part, matrix: child.matrix.clone(), position: child.position.clone(), quaternion: child.quaternion.clone() })));
+  return flaps.length ? { flaps } : {};
 }
 
 type Extras = {
@@ -269,6 +280,7 @@ export function readOutside(root: Object3D): OutsideData {
         shape: shapeOf(data),
         mass: data.mass ?? 1,
         ...(data.tech ? { tech: data.tech } : {}),
+        ...flapsOf(object),
       });
     } else if (object instanceof Mesh && /^(Letter|Tag)_/.test(object.name) && data.box?.length === 3) {
       const word = object.name.startsWith('Tag_') ? 'tag' : 'name';

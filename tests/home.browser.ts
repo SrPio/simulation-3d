@@ -315,11 +315,11 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
   await page.screenshot({ path: shot('home-key.png') });
   await walkTo(page, { x: 9.0, z: 1.8 });
   await expect(host(page)).toHaveAttribute('data-keys', 'none');
-  await walkTo(page, { x: 15.5, z: 3.5 });
+  await walkTo(page, { x: 22.0, z: -2.84 });
   for (const [id, link, target, open] of [
-    ['portfolio', 'https://andres-jaramillo.is-a.dev/', { x: 19.0, z: 3.5 }, 'click'],
-    ['github', 'https://github.com/SrPio', { x: 22.2, z: 3.5 }, 'enter'],
-    ['linkedin', 'https://www.linkedin.com/in/andres-fernando-jaramillo-avila/', { x: 25.4, z: 3.5 }, 'enter'],
+    ['portfolio', 'https://andres-jaramillo.is-a.dev/', { x: 27.0, z: -2.84 }, 'click'],
+    ['github', 'https://github.com/SrPio', { x: 30.2, z: -2.84 }, 'enter'],
+    ['linkedin', 'https://www.linkedin.com/in/andres-fernando-jaramillo-avila/', { x: 33.4, z: -2.84 }, 'enter'],
   ] as const) {
     await walkTo(page, target, async () => (await host(page).getAttribute('data-sign')) === id);
     await expect(host(page)).toHaveAttribute('data-sign', id);
@@ -344,10 +344,8 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
     await tab.waitForURL(link);
     await tab.close();
   }
-  // Out of the zones, round the plaza's bench and glass case to the front of the bust.
-  await walkTo(page, { x: 24.8, z: 5.2 });
-  await walkTo(page, { x: 24.8, z: 8.2 });
-  await walkTo(page, { x: 22.2, z: 8.4 });
+  // Out of the zones, past the glass case on the plaza's right.
+  await walkTo(page, { x: 36.8, z: 0.5 });
   await expect(host(page)).toHaveAttribute('data-sign', 'none');
   await expect(page.locator('#sign-link')).toBeHidden();
   await expect(host(page)).toHaveAttribute('data-sign-area', 'none');
@@ -358,8 +356,8 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
   await page.waitForTimeout(500);
   assert.equal(opened, false);
   // The bowling reset zone: Enter puts the pins back, no link, no new tab.
-  await walkTo(page, { x: 14.75, z: 12.0 });
-  await walkTo(page, { x: 14.75, z: 24.9 }, async () => (await host(page).getAttribute('data-sign')) === 'reset-bowling');
+  for (const point of [{ x: 40.5, z: 12 }, { x: 40.5, z: 24 }, { x: 14, z: 24 }, { x: 14, z: 36.5 }]) await walkTo(page, point);
+  await walkTo(page, { x: 15.6, z: 36.5 }, async () => (await host(page).getAttribute('data-sign')) === 'reset-bowling');
   await expect(host(page)).toHaveAttribute('data-sign', 'reset-bowling');
   await expect(page.locator('#sign-link')).toBeHidden();
   await page.keyboard.press('Enter');
@@ -380,9 +378,9 @@ test('playground: laptops thrown from the line score on the targets, the tech to
   await expect(host(page)).toHaveAttribute('data-score', '0');
   // Round the scoreboard to the middle of the lane, then towards the targets (-Z) up to the throw line.
   await page.keyboard.press('Shift');
-  for (const point of [{ x: 7, z: 4 }, { x: 7, z: 12 }, { x: 7.2, z: 20 }, { x: 7.2, z: 28.8 }, { x: 11.4, z: 28.8 }]) await walkTo(page, point);
+  for (const point of [{ x: 6, z: 4 }, { x: 7, z: 14 }, { x: 4.5, z: 25 }, { x: 4.5, z: 38.3 }, { x: 9, z: 38.3 }]) await walkTo(page, point);
   await page.keyboard.press('Shift');
-  await walkTo(page, { x: 11.4, z: 27.75 });
+  await walkTo(page, { x: 9, z: 37.25 });
   // Turn to face the targets (W + D is -Z on screen) with a short step towards the line.
   await page.keyboard.down('KeyW');
   await page.keyboard.down('KeyD');
@@ -390,7 +388,7 @@ test('playground: laptops thrown from the line score on the targets, the tech to
   await page.keyboard.up('KeyW');
   await page.keyboard.up('KeyD');
   await expect(host(page)).toHaveAttribute('data-locomotion', 'idle', { timeout: 3000 });
-  assert.ok((await position(page))[1] > 27, 'still behind the line');
+  assert.ok((await position(page))[1] > 36.5, 'still behind the line');
   for (let i = 1; i <= 3; i++) {
     await page.keyboard.press('KeyF');
     await expect(host(page)).toHaveAttribute('data-throws', String(i), { timeout: 3000 });
@@ -400,7 +398,7 @@ test('playground: laptops thrown from the line score on the targets, the tech to
   await expect.poll(async () => Number(await host(page).getAttribute('data-score')), { timeout: 4000 }).toBeGreaterThan(0);
   assert.ok(Number(await host(page).getAttribute('data-targets-hit')) > 0);
   await page.screenshot({ path: shot('home-targets.png') });
-  await walkTo(page, { x: 8.4, z: 27.0 }, async () => (await host(page).getAttribute('data-sign')) === 'reset-targets');
+  await walkTo(page, { x: 6.0, z: 36.5 }, async () => (await host(page).getAttribute('data-sign')) === 'reset-targets');
   await expect(host(page)).toHaveAttribute('data-sign', 'reset-targets');
   await page.keyboard.press('Enter');
   await expect(host(page)).toHaveAttribute('data-score', '0');
@@ -408,9 +406,9 @@ test('playground: laptops thrown from the line score on the targets, the tech to
   await expect(host(page)).toHaveAttribute('data-thrown', '0');
   // The tech tower: a charged punch from in front brings cubes down and their labels show; its zone stacks it again.
   await page.keyboard.press('Shift');
-  for (const point of [{ x: 7.2, z: 29.2 }, { x: 31, z: 29.2 }, { x: 33, z: 21.6 }]) await walkTo(page, point);
+  for (const point of [{ x: 6, z: 40.5 }, { x: 41, z: 40.5 }, { x: 39, z: 34.4 }]) await walkTo(page, point);
   await page.keyboard.press('Shift');
-  await walkTo(page, { x: 33, z: 21.0 });
+  await walkTo(page, { x: 39, z: 33.0 });
   await page.keyboard.down('KeyJ');
   await page.waitForTimeout(1300);
   await page.keyboard.up('KeyJ');
@@ -418,7 +416,7 @@ test('playground: laptops thrown from the line score on the targets, the tech to
   await expect(host(page)).not.toHaveAttribute('data-tech-labels', 'none');
   await expect(page.locator('.tech-label-body').first()).toBeVisible();
   await page.screenshot({ path: shot('home-tech.png') });
-  await walkTo(page, { x: 33, z: 24.2 }, async () => (await host(page).getAttribute('data-sign')) === 'reset-tech');
+  await walkTo(page, { x: 39, z: 36.2 }, async () => (await host(page).getAttribute('data-sign')) === 'reset-tech');
   await page.keyboard.press('Enter');
   await expect(host(page)).toHaveAttribute('data-tech', '0');
   assert.deepEqual(errors, []);

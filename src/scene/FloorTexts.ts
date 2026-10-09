@@ -12,24 +12,28 @@ const PAD = 8;
 const OPACITY = 0.6;
 const VIOLET = new Color(0xb79bff);
 
-type Rect = { x: number; y: number; w: number; h: number };
+/** A block's region of the atlas and its pixels per metre (lower for blocks wider than the atlas). */
+type Rect = { x: number; y: number; w: number; h: number; ppm: number };
 type Local = { x: number; z: number };
+
+/** Pixels per metre of a block: PPM, or less so a wide area (the plaza, the playground) still fits the atlas whole. */
+const ppmOf = (block: FloorBlock) => Math.min(PPM, (ATLAS_WIDTH - 2) / block.size[0]);
 
 /** Shelf packing of the blocks into one atlas row after row. */
 function pack(blocks: readonly FloorBlock[]): { rects: Rect[]; height: number } {
   const rects: Rect[] = [];
-  const order = blocks.map((block, index) => ({ index, w: Math.ceil(block.size[0] * PPM), h: Math.ceil(block.size[1] * PPM) }))
+  const order = blocks.map((block, index) => ({ index, ppm: ppmOf(block), w: Math.ceil(block.size[0] * ppmOf(block)), h: Math.ceil(block.size[1] * ppmOf(block)) }))
     .sort((a, b) => b.h - a.h);
   let x = 0;
   let y = 0;
   let shelf = 0;
-  for (const { index, w, h } of order) {
+  for (const { index, ppm, w, h } of order) {
     if (x + w > ATLAS_WIDTH) {
       x = 0;
       y += shelf + PAD;
       shelf = 0;
     }
-    rects[index] = { x, y, w: Math.min(w, ATLAS_WIDTH), h };
+    rects[index] = { x, y, w: Math.min(w, ATLAS_WIDTH), h, ppm };
     x += w + PAD;
     shelf = Math.max(shelf, h);
   }
@@ -124,7 +128,7 @@ export class FloorTexts {
       context.clip();
       // Draw in metres about the block centre: +x along the text, +y towards the camera.
       context.translate(rect.x + rect.w / 2, rect.y + rect.h / 2);
-      context.scale(PPM, PPM);
+      context.scale(rect.ppm, rect.ppm);
       this.draw(context, block);
       context.restore();
     }
@@ -223,8 +227,9 @@ export class FloorTexts {
         context.fill();
       }
       scaled(() => text('floor.bowling', 0, (d / 2 - 0.38) * 100, 40, 'center', 700));
-    } else if (block.id === 'about') {
-      // The plaza around the signs: a faint floor of its own, a dashed border and its name at the front left.
+    } else if (block.id === 'about' || block.id === 'playarea') {
+      // A zone's own ground (the plaza around the signs, the playground): a faint floor, a dashed border and its name
+      // at the front left.
       context.save();
       context.globalAlpha = 0.1;
       context.beginPath();
@@ -237,7 +242,22 @@ export class FloorTexts {
       context.roundRect(-w / 2 + 0.1, -d / 2 + 0.1, w - 0.2, d - 0.2, 0.5);
       context.stroke();
       context.setLineDash([]);
-      scaled(() => text('floor.about', (-w / 2 + 0.45) * 100, (d / 2 - 0.5) * 100, 64, 'left', 700, (w / 2) * 100));
+      // The plaza's path: a ring round the bust (its centre in `targets`, its radius in `gap`).
+      const centre = block.targets[0];
+      if (block.id === 'about' && centre && block.gap > 0) {
+        const { x, z } = axes(block.yaw);
+        const dx = centre.x - block.position.x;
+        const dz = centre.z - block.position.z;
+        context.save();
+        // The same dashed line as the zone borders.
+        context.lineWidth = 0.06;
+        context.setLineDash([0.32, 0.2]);
+        context.beginPath();
+        context.arc(dx * x.x + dz * x.z, dx * z.x + dz * z.z, block.gap, 0, Math.PI * 2);
+        context.stroke();
+        context.restore();
+      }
+      scaled(() => text(block.id === 'about' ? 'floor.about' : 'floor.playground', (-w / 2 + 0.7) * 100, (d / 2 - 0.85) * 100, 64, 'left', 700, (w / 2) * 100));
     } else if (block.id === 'targets') {
       // The lane's sides up to the throw line, the line itself, and the names in front of it.
       const line = block.line;

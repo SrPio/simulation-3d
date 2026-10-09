@@ -29,11 +29,12 @@ the room floor, so the room reads as a raised platform) and uses the walkable `b
   clears the thrown laptops and the score of the targets lane instead.
 - `About`: the plaza around the signs (`Floor_About`): `Bust` (the web V4 head and shoulders in marble on a pedestal,
   the cap keeping its own materials), `Globe` (stand only, with `radius` and `centre`; the viewer draws the sphere and
-  the pin on Colombia), `Vitrine` (a glass case with two framed diplomas) and `Plaque_<text>` anchors where the viewer
+  the pin on Colombia), planters, park lamps and `Plaque_<text>` anchors where the viewer
   paints plaques (`plaque` [width, height], `text`) facing the front.
-- `Decor`: fixed trees, rocks, benches and server racks sharing one mesh per kind; extras `decor`, `shadow` [width, depth]
+- `Decor`: fixed trees, rocks and benches sharing one mesh per kind; extras `decor`, `shadow` [width, depth]
   for the blob shadow and `solid` [width, height, depth] for the box pieces bounce off, plus a `Collider_*` each.
-- `Clutter`: crates and cones the character can knock about (group 'decor').
+- `Clutter`: cardboard boxes and cones the character can knock about (group 'decor'); each box (`prop` 'box') has four
+  `<name>_Flap_<i>` children hinged at its rim that the viewer opens when the character comes near.
 - `Targets`: `Target_<i>` anchors at the foot of each standing target (`radius`, disc `centre` height, `rings` radii and
   their `points`), facing the throw line painted by `Floor_Targets` (`line`: its distance ahead of the block centre);
   `Scoreboard` (`board` [width, height, bottom]) where the viewer paints the score.
@@ -65,13 +66,13 @@ HALF, WALL_T = room.HALF, room.WALL_T
 GROUND_Z = -0.12    # outside ground, below the room floor (plank tops at 0)
 FAR = 24.0          # walkable ground from the room centre, further on the +X side and in front (BOUNDS)
 # Blender XY rectangle of the walkable ground: the crossroads and the playground lie towards +X and -Y.
-BOUNDS = [-FAR, 44.0, -30.0, FAR]
+BOUNDS = [-30.0, 52.0, -46.0, FAR]
 # Room platform footprint in Blender XY (create_room.build_shell): the floor is at 0 inside it.
 PLATFORM = [-HALF - WALL_T, HALF + 0.1, -HALF - 0.1, HALF + WALL_T]
 BOARD_W, BOARD_H, BOARD_BOTTOM, BOARD_T, BORDER, POST = 2.4, 1.5, 0.6, 0.06, 0.07, 0.08
 AREA, AREA_OFFSET = (2.6, 1.8), 1.55
-# Signs: a row facing the front past the crossroads on the +X side, 5 m nearer the front than the back wall line.
-SIGN_Y, SIGN_FIRST_X, SIGN_SPACING = HALF + 0.15 - 5.0, 19.0, 3.2
+# Signs: a row facing the front at the back of the about-me plaza, past the room's +X side.
+SIGN_Y, SIGN_FIRST_X, SIGN_SPACING = 4.39, 27.0, 3.2   # three.js z -4.39: near the back edge of the about-me plaza
 SIGNS = {
     'Portfolio': {'link': 'https://andres-jaramillo.is-a.dev/', 'label': 'Ver portafolio', 'title': 'PORTAFOLIO', 'slot': 0, 'image': 'portfolio.png'},
     'GitHub': {'link': 'https://github.com/SrPio', 'label': 'Ver GitHub', 'title': 'GITHUB', 'slot': 1, 'image': 'github.png'},
@@ -208,13 +209,13 @@ BLOCK_YAW = 0.0
 INTRO = (9.0, -1.3)            # centre of the arrow keys, in the gap of the intro sentence
 INTRO_SIZE, INTRO_GAP = (12.4, 3.6), 2.4
 KEY_SIZE, KEY_HEIGHT, KEY_PITCH = 0.6, 0.3, 0.68
-CROSSROADS = (14.25, 10.0)
+CROSSROADS = (10.1, 12.3)      # where the footprints out of the room lead
 # Lamppost in the crossroads circle: pole top, pole radius, and the arrow boards from ARROWS_TOP down by ARROW_STEP.
 LAMP_HEIGHT, LAMP_POLE = 3.4, 0.065
 LAMP_ARROWS_TOP, LAMP_ARROW_STEP = 2.85, 0.48
-CONTROLS, CONTROLS_SIZE = (3.75, 15.8), (5.6, 4.8)
-PLAY_SIGN, PLAY_SIGN_SIZE = (12.75, 14.8), (6.4, 1.9)
-PLAYGROUND = (20.75, 21.3)
+CONTROLS, CONTROLS_SIZE = (-1.7, 16.25), (5.6, 4.8)
+PLAYGROUND = (21.6, 32.9)       # origin of the bowling and brick lanes (playground axes)
+BRICKS_SHIFT = 2.5              # the brick stacks stand this far further along +X than the bowling lane's frame
 # Footprints leaving the room's open front corner towards the camera.
 FOOTPRINTS, FOOTPRINTS_SIZE = (4.45, 4.45), (3.3, 3.3)
 # Bowling (playground axes): the ball near the camera, the pins up the lane in a 4-3-2-1 triangle.
@@ -393,12 +394,10 @@ def build_playground(root):
 
     # Crossroads: a painted arrow and a 3D arrow on the lamppost towards each zone. Another zone is one more
     # entry here (its name is `floor.<id>` in src/core/i18n.ts); the controls panel gets no arrow.
-    arrows = [('about', (SIGN_FIRST_X + SIGN_SPACING, -(SIGN_Y - AREA_OFFSET))), ('playground', PLAY_SIGN)]
+    arrows = [('about', ABOUT), ('playground', PLAY_AREA)]
     room.anchor('Floor_Crossroads', at(CROSSROADS), root, BLOCK_YAW, floor='crossroads', size=[10.6, 7.0],
                 targets=[value for _, point in arrows for value in point], labels=','.join(label for label, _ in arrows))
     room.anchor('Floor_Controls', at(CONTROLS), root, BLOCK_YAW, floor='controls', size=list(CONTROLS_SIZE))
-    room.anchor('Floor_Playground', at(PLAY_SIGN), root, BLOCK_YAW, floor='playground', size=list(PLAY_SIGN_SIZE),
-                targets=list(PLAYGROUND))
 
     room.anchor('Floor_Footprints', at(FOOTPRINTS), root, BLOCK_YAW, floor='footprints', size=list(FOOTPRINTS_SIZE))
 
@@ -422,9 +421,9 @@ def build_playground(root):
     # Bricks: a running-bond wall, a stepped pyramid and a square tower.
     group = room.anchor('Bricks', (0, 0, 0), root)
     stacks = [
-        ((1.8, -1.6), 0.0, brick_layers([(6, 0.0), (5, 0.0)] * 2 + [(6, 0.0)])),
-        ((5.8, 0.6), 0.0, brick_layers([(5, 0.0), (4, 0.0), (3, 0.0), (2, 0.0), (1, 0.0)])),
-        ((2.2, 2.6), 0.0, tower_layers(8)),
+        ((1.8 + BRICKS_SHIFT, -1.6), 0.0, brick_layers([(6, 0.0), (5, 0.0)] * 2 + [(6, 0.0)])),
+        ((5.8 + BRICKS_SHIFT, 0.6), 0.0, brick_layers([(5, 0.0), (4, 0.0), (3, 0.0), (2, 0.0), (1, 0.0)])),
+        ((2.2 + BRICKS_SHIFT, 2.6), 0.0, tower_layers(8)),
     ]
     count = 0
     for (sx, sz), turn, layout in stacks:
@@ -433,7 +432,7 @@ def build_playground(root):
             piece(f'Brick_{count:02d}', bricks[rng.random() < 0.35], play(sx + x, sz + z), BRICK_H / 2 + layer * (BRICK_H + 0.001),
                   BLOCK_YAW + turn + yaw + wobble, group, prop='brick', group='bricks', mass=MASS['brick'], box=[BRICK_W, BRICK_H, BRICK_D])
             count += 1
-    room.anchor('Zone_Bricks', at(play(7.6, 3.4)), root, BLOCK_YAW, zone='reset', target='bricks', area=RESET_AREA)
+    room.anchor('Zone_Bricks', at(play(7.6 + BRICKS_SHIFT, 3.4)), root, BLOCK_YAW, zone='reset', target='bricks', area=RESET_AREA)
 
 
 # ------------------------------------------------------------------ about me plaza, decor, targets and tech tower
@@ -442,36 +441,45 @@ def build_playground(root):
 # fronts face three.js +Z (Blender -Y) like the signs, and rows run along +X, so the default corner camera sees
 # each front and its +X side. Only round things (tree crowns, rocks) turn freely.
 V4_GLB = ROOT / 'public' / 'models' / 'developer-v4.glb'
-MARBLE = TEXTURES / 'marble.png'
+STONE = TEXTURES / 'stone.png'
 TECH_ATLAS = TEXTURES / 'tech-atlas.png'
-ABOUT, ABOUT_SIZE = (22.1, 3.8), (11.0, 8.4)     # plaza floor around the three signs
-ABOUT_ROW = 6.6                                  # the row of objects in front of the sign titles
-GLOBE_X, BUST_X, VITRINE_X = 18.4, 22.2, 25.9
-BENCHES_X = (20.6, 23.8)
-PEDESTAL = (0.8, 1.0)                            # width/depth, height
-BUST_CUT_Z, BUST_CUT_X, BUST_SCALE = 1.62, 0.46, 0.85
-BUST_FACES = {'marble': 2600, 'cap': 800}   # outside.glb stays under its size budget (tests/outside.test.ts)
+# The about-me plaza: a park around the bust with the signs at its back (positions set on the adjustable canvas).
+ABOUT, ABOUT_SIZE = (30.25, 2.5), (17.5, 16.5)
+BUST = (30.2, 2.25)
+GLOBE = (25.2, 2.25)
+PATH_RADIUS = 2.6                                # painted ring round the bust
+ABOUT_BENCHES = [(30.2, 5.85), (26.6, 5.25), (33.8, 5.25)]   # along X, facing the bust
+ABOUT_TREES = [(23.0, -3.75, 0), (37.4, -3.75, 1), (23.0, 8.75, 1), (37.4, 8.75, 0)]
+PLANTERS = [(26.5, 8.85), (33.9, 8.85)]
+PARK_LAMPS = [(24.6, 5.45), (36.0, 5.45)]
+PLANTER_SIZE = (2.4, 0.8, 0.45)                  # length along X, depth, height
+PEDESTAL = (1.7, 1.0)                            # width/depth, height
+BUST_CUT_Z, BUST_CUT_X, BUST_SCALE = 1.62, 0.46, 0.85 * 2.5   # 2.5 times the first statue
+BUST_HEIGHT = (2.65 - 1.62) * BUST_SCALE        # from the pedestal top to the cap
+BUST_FACES = {'stone': 3200, 'cap': 1000}   # outside.glb stays under its size budget (tests/outside.test.ts)
 GLOBE_RADIUS, GLOBE_HEIGHT = 0.42, 1.25          # globe centre above the ground
 # Targets lane: the laptop flies towards -Z from the throw line; the far target sits lower so the arc reaches it.
-TARGET_LANE_X, THROW_LINE_Z = 11.4, 27.0
-TARGETS = [(10.3, 3.0, 1.72), (12.5, 3.6, 1.3), (11.4, 4.2, 0.8)]   # x, distance from the line, disc centre height (on the laptop's arc)
+TARGET_LANE_X, THROW_LINE_Z = 9.0, 36.5
+TARGETS = [(7.9, 3.0, 1.72), (10.1, 3.6, 1.3), (9.0, 4.2, 0.8)]   # x, distance from the line, disc centre height (on the laptop's arc)
 TARGET_RINGS = [(0.4, 10), (0.26, 25), (0.12, 50)]                 # ring radius, points (outer to inner)
-SCOREBOARD = (8.6, 24.8)      # left of the lane, where no target hides it from the corner camera
+SCOREBOARD = (6.2, 34.3)      # left of the lane, where no target hides it from the corner camera
 SCOREBOARD_SIZE = (1.5, 0.9, 1.0)                                  # board width, height, bottom
 # Tech tower: a 4-3-2-1 pyramid of cubes along +X, logos on the +Z and +X faces.
-TECH = (33.0, 20.0)
+TECH = (39.0, 32.0)
 TECH_CUBE, TECH_GAP = 0.6, 0.02
 TECH_ROWS = [['typescript', 'node', 'pnpm', 'vite'], ['three', 'github', 'playwright'], ['blender', 'gltf'], ['openvdb']]
 TECH_ATLAS_COLUMNS = 5
+# The playground's own floor, bordered like the about-me plaza, around its four lanes and their reset zones.
+PLAY_AREA, PLAY_AREA_SIZE = (25.0, 33.0), (42.0, 16.0)
 MASS.update({'crate': 2.0, 'cone': 0.5, 'tech': 0.9})
-TREES = [(-9.6, 10.4, 0), (-7.4, 11.8, 1), (-9.8, 13.6, 0), (-8.4, 22.9, 1), (-6.2, 24.0, 0),
-         (29.6, 6.8, 1), (30.8, 9.0, 0), (29.2, 11.2, 1), (30.9, 13.4, 0), (12.5, 5.5, 1)]
-ROCKS = [(-8.1, 15.1, 0.9), (28.3, 14.1, 0.75)]
-BENCHES = [((BENCHES_X[0], ABOUT_ROW), math.pi / 2), ((BENCHES_X[1], ABOUT_ROW), math.pi / 2), ((-5.4, 7.5), 0.0),
-           ((20.2, 12.4), math.pi / 2)]   # the last one beside the crossroads, off the paths through it
-RACKS = [(29.2, 1.0), (30.0, 1.0), (30.8, 1.0)]
-CRATES = [(-6.0, 17.8, 0.0), (-5.0, 18.4, 0.0), (4.2, 21.0, 0.0), (4.72, 21.0, 0.0), (4.46, 21.0, 1.0), (6.0, 22.4, 0.0)]
-CONES = [(3.4, 23.6), (4.6, 24.0), (5.8, 23.6), (7.0, 24.0), (14.3, 4.5), (15.5, 5.1)]
+TREES = [(-15.5, 10.5, 0), (-11.5, 12.0, 1), (-16.0, 15.0, 0), (-12.5, 19.5, 1), (-15.5, 21.5, 0),   # park
+         (43.2, 1.8, 1), (46.8, 3.2, 0), (43.6, 6.4, 0), (47.0, 8.0, 1), (44.4, 9.8, 0),             # forest
+         (12.5, 5.5, 1)] + ABOUT_TREES
+ROCKS = [(-11.0, 16.5, 0.9), (46.0, 10.6, 0.75)]
+BENCHES = [(point, 0.0) for point in ABOUT_BENCHES] + [((-13.5, 14.0), 0.0),
+           ((3.9, 12.3), math.pi / 2)]   # the last one at the crossroads' left side, off the paths to the zones
+CRATES = [(-10.5, 20.5, 0.0), (-10.0, 21.2, 0.0), (-7.0, 28.0, 0.0), (-6.48, 28.0, 0.0), (-6.74, 28.0, 1.0), (-4.5, 29.5, 0.0)]
+CONES = [(-7.5, 31.0), (-6.3, 31.4), (-5.1, 31.0), (-3.9, 31.4), (15.5, 4.0), (16.6, 4.6)]
 CONE_ORIGIN = 0.15
 CONE_CYLINDERS = [(0.18, 0.04, 0.02), (0.13, 0.2, 0.14), (0.085, 0.2, 0.34), (0.045, 0.1, 0.49)]
 
@@ -523,22 +531,53 @@ def bench_mesh(wood, iron):
     return proto_mesh('Decor_Bench', bm, [wood, iron])
 
 
-def rack_mesh(body, led, vent):
-    """Server rack: a dark cabinet with LED strips and vents on its front (Blender -Y, three.js +Z)."""
-    bm = bmesh.new()
-    bm_box(bm, (-0.3, -0.4, 0.0), (0.3, 0.4, 1.9), 0)
-    for i in range(5):
-        z = 0.3 + i * 0.3
-        bm_box(bm, (-0.22, -0.415, z), (0.12, -0.4, z + 0.12), 2)
-        bm_box(bm, (0.16, -0.415, z + 0.03), (0.22, -0.4, z + 0.06), 1)
-    return proto_mesh('Decor_Rack', bm, [body, led, vent])
+BOX_SIZE, BOX_WALL, FLAP_T = 0.5, 0.012, 0.008
 
 
-def crate_mesh(mat):
+def box_body_mesh(card, inside, tape):
+    """Open cardboard box: outer walls and bottom, darker inner walls, the rim between them and a tape band down the
+    front and back where the flaps would be sealed. Origin at the box centre; the flaps are separate (box_flap_mesh)."""
+    h, w = BOX_SIZE / 2, BOX_SIZE / 2 - BOX_WALL
     bm = bmesh.new()
-    bmesh.ops.create_cube(bm, size=0.5)
-    bmesh.ops.bevel(bm, geom=list(bm.edges), offset=0.025, segments=1, affect='EDGES')
-    return proto_mesh('Prop_Crate', bm, [mat])
+    outer = [bm.verts.new(co) for co in ((-h, -h, -h), (h, -h, -h), (h, h, -h), (-h, h, -h), (-h, -h, h), (h, -h, h), (h, h, h), (-h, h, h))]
+    inner = [bm.verts.new(co) for co in ((-w, -w, -h + BOX_WALL), (w, -w, -h + BOX_WALL), (w, w, -h + BOX_WALL), (-w, w, -h + BOX_WALL),
+                                          (-w, -w, h), (w, -w, h), (w, w, h), (-w, w, h))]
+    faces = []
+    faces.append((bm.faces.new([outer[i] for i in (3, 2, 1, 0)]), 0))
+    for a, b in ((0, 1), (1, 2), (2, 3), (3, 0)):
+        faces.append((bm.faces.new((outer[a], outer[b], outer[b + 4], outer[a + 4])), 0))
+        faces.append((bm.faces.new((inner[b], inner[a], inner[a + 4], inner[b + 4])), 1))
+        faces.append((bm.faces.new((outer[a + 4], outer[b + 4], inner[b + 4], inner[a + 4])), 0))
+    faces.append((bm.faces.new([inner[i] for i in (0, 1, 2, 3)]), 1))
+    for face, index in faces:
+        face.material_index = index
+    # Tape: a band over the front (Blender -Y, three.js +Z) and back walls, standing a hair proud of them.
+    for side in (-1, 1):
+        y = side * (h + 0.001)
+        bm_box(bm, (-0.045, y - 0.0005, -0.1), (0.045, y + 0.0005, h), 2)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return proto_mesh('Prop_Box', bm, [card, inside, tape])
+
+
+def box_flap_mesh(card):
+    """One flap, hinged at its origin along Blender X and reaching inwards along +Y (three.js -Z) when closed."""
+    bm = bmesh.new()
+    bm_box(bm, (-BOX_SIZE / 2 + 0.006, 0.0, 0.0), (BOX_SIZE / 2 - 0.006, BOX_SIZE / 2 - 0.004, FLAP_T), 0)
+    return proto_mesh('Prop_BoxFlap', bm, [card])
+
+
+def cardboard_box(name, body, flap, point, height, parent):
+    """A box piece with its four flaps as children at the rim, closed: the long pair over the short pair. The viewer
+    opens them (about each child's local X) when the character comes close."""
+    obj = piece(name, body, point, height, BLOCK_YAW, parent, prop='box', group='decor', mass=MASS['crate'], box=[BOX_SIZE] * 3)
+    h = BOX_SIZE / 2
+    for index, (x, y, turn, lift) in enumerate(((0, -h, 0.0, FLAP_T), (0, h, math.pi, FLAP_T), (h, 0, math.pi / 2, 0.0), (-h, 0, -math.pi / 2, 0.0))):
+        child = bpy.data.objects.new(f'{name}_Flap_{index}', flap)
+        bpy.context.collection.objects.link(child)
+        child.parent = obj
+        child.location = (x, y, h + lift)
+        child.rotation_euler.z = turn
+    return obj
 
 
 def cone_mesh(orange, white):
@@ -568,27 +607,36 @@ def decor(name, mesh, point, yaw, parent, kind, shadow, solid=None, height=0.0):
     return obj
 
 
-def marble_image():
-    """Generated white marble with grey veins (assets/textures/outside/marble.png)."""
-    if MARBLE.exists():
-        return MARBLE
-    size = 256
-    image = bpy.data.images.new('MarbleTexture', size, size)
-    rng = random.Random(7)
-    waves = [(rng.uniform(1, 4), rng.uniform(1, 4), rng.uniform(0, 6.3), rng.uniform(0.3, 1.0)) for _ in range(6)]
+def stone_image():
+    """Generated grey stone: soft blotches with fine speckles and a few darker grains (assets/textures/outside/stone.png)."""
+    if STONE.exists():
+        return STONE
+    size = 128   # small: its noise barely compresses (outside.glb size budget)
+    image = bpy.data.images.new('StoneTexture', size, size)
+    rng = random.Random(11)
+    waves = [(rng.randint(1, 5), rng.randint(1, 5), rng.uniform(0, 6.3), rng.uniform(0.3, 1.0)) for _ in range(7)]
     pixels = []
     for j in range(size):
         for i in range(size):
             u, v = i / size, j / size
-            turbulence = sum(a * math.sin(2 * math.pi * (fx * u + fy * v) + p) for fx, fy, p, a in waves) / 3
-            vein = abs(math.sin(2 * math.pi * (u * 2 + v) + turbulence * 2.2)) ** 0.18
-            shade = 0.93 - 0.22 * (1 - vein) - 0.03 * turbulence
-            pixels.extend((shade, shade, min(1.0, shade + 0.015), 1.0))
+            blotch = sum(a * math.sin(2 * math.pi * (fx * u + fy * v) + p) for fx, fy, p, a in waves) / 7
+            grain = rng.random()
+            shade = 0.5 + 0.05 * blotch + 0.07 * (grain - 0.5) - (0.12 if grain > 0.97 else 0.0)
+            pixels.extend((shade, shade, shade * 1.02, 1.0))
     image.pixels = pixels
-    image.filepath_raw = str(MARBLE)
+    image.filepath_raw = str(STONE)
     image.file_format = 'PNG'
     image.save()
-    return MARBLE
+    return STONE
+
+
+def ico(name, center, scale, mat, parent):
+    """A small faceted blob (bush, flower): a once-subdivided icosphere, far lighter than a UV sphere."""
+    bm = bmesh.new()
+    bmesh.ops.create_icosphere(bm, subdivisions=1, radius=1.0)
+    for v in bm.verts:
+        v.co = Vector((v.co.x * scale[0] + center[0], v.co.y * scale[1] + center[1], v.co.z * scale[2] + center[2]))
+    return room.finish(name, bm, mat, parent)
 
 
 def decimate(obj, faces):
@@ -612,8 +660,8 @@ def join(objects, name):
     return obj
 
 
-def build_bust(holder, marble):
-    """Head and shoulders of the web V4 model in marble on a pedestal; the cap keeps its own materials."""
+def build_bust(holder, stone_mat):
+    """Head and shoulders of the web V4 model in grey stone on a pedestal; the cap keeps its own materials."""
     before = set(bpy.data.objects)
     bpy.ops.import_scene.gltf(filepath=str(V4_GLB))
     imported = [obj for obj in bpy.data.objects if obj not in before]
@@ -635,7 +683,7 @@ def build_bust(holder, marble):
     total = sum(len(obj.data.polygons) for obj in stone)
     for obj in stone:
         obj.data.materials.clear()
-        obj.data.materials.append(marble)
+        obj.data.materials.append(stone_mat)
         if obj.name.startswith('Hoodie'):
             bm = bmesh.new()
             bm.from_mesh(obj.data)
@@ -645,16 +693,16 @@ def build_bust(holder, marble):
                 bmesh.ops.holes_fill(bm, edges=edges, sides=0)
             bm.to_mesh(obj.data)
             bm.free()
-        decimate(obj, max(60, int(len(obj.data.polygons) * BUST_FACES['marble'] / total)))
+        decimate(obj, max(60, int(len(obj.data.polygons) * BUST_FACES['stone'] / total)))
     cap_total = sum(len(obj.data.polygons) for obj in cap)
     for obj in cap:
         decimate(obj, max(40, int(len(obj.data.polygons) * BUST_FACES['cap'] / cap_total)))
-    bust = join(stone, 'BustMarble')
+    bust = join(stone, 'BustStone')
     # One projection from the front: every vertex keeps a single UV, so the export splits no vertices at seams.
     layer = bust.data.uv_layers[0] if bust.data.uv_layers else bust.data.uv_layers.new()
     for loop in bust.data.loops:
         co = bust.data.vertices[loop.vertex_index].co
-        layer.data[loop.index].uv = (co.x / 0.6, co.z / 0.6 + co.y * 0.4)
+        layer.data[loop.index].uv = (co.x / 0.3, co.z / 0.3 + co.y * 0.8)   # before the 2.5x scale
     while len(bust.data.uv_layers) > 1:
         bust.data.uv_layers.remove(bust.data.uv_layers[1])
     caps = join(cap, 'BustCap')
@@ -672,50 +720,60 @@ def build_bust(holder, marble):
 
 def build_about(root, frame_mat, glow):
     """The plaza around the signs: a bust on a pedestal, a globe, a glass case with two diplomas and two benches."""
-    room.anchor('Floor_About', at(ABOUT), root, BLOCK_YAW, floor='about', size=list(ABOUT_SIZE))
-    stone = room.material('Pedestal', (0.72, 0.71, 0.76), 0.6)
-    marble = room.material('Marble', (1, 1, 1), 0.35, image=marble_image())
+    room.anchor('Floor_About', at(ABOUT), root, BLOCK_YAW, floor='about', size=list(ABOUT_SIZE), targets=list(BUST), gap=PATH_RADIUS)
+    stone = room.material('Pedestal', (0.6, 0.59, 0.62), 0.85)
+    statue = room.material('Stone', (1, 1, 1), 0.9, image=stone_image())
     group = room.anchor('About', (0, 0, 0), root)
     # Bust on its pedestal; the plaque on the pedestal front is painted by the viewer (Plaque_bust).
-    holder = room.anchor('Bust', at((BUST_X, ABOUT_ROW)), group, BLOCK_YAW, decor='bust', shadow=[1.1, 1.1],
-                         solid=[PEDESTAL[0], PEDESTAL[1] + 1.0, PEDESTAL[0]])
+    holder = room.anchor('Bust', at(BUST), group, BLOCK_YAW, decor='bust', shadow=[2.2, 2.2],
+                         solid=[PEDESTAL[0], PEDESTAL[1] + BUST_HEIGHT, PEDESTAL[0]])
     w = PEDESTAL[0] / 2
     room.box('BustPedestal', (-w, -w, 0), (w, w, PEDESTAL[1]), stone, holder)
     room.box('BustPedestalTop', (-w - 0.05, -w - 0.05, PEDESTAL[1] - 0.06), (w + 0.05, w + 0.05, PEDESTAL[1]), stone, holder)
     room.box('BustPedestalFoot', (-w - 0.06, -w - 0.06, 0), (w + 0.06, w + 0.06, 0.08), stone, holder)
-    build_bust(holder, marble)
-    x, y, _ = at((BUST_X, ABOUT_ROW))
-    room.collider('Bust', (x - w - 0.06, y - w - 0.06, GROUND_Z), (x + w + 0.06, y + w + 0.06, GROUND_Z + PEDESTAL[1] + 1.0), group)
-    room.anchor('Plaque_bust', at((BUST_X, ABOUT_ROW + w + 0.002), 0.5), group, BLOCK_YAW, plaque=[0.66, 0.34], text='bust')
+    build_bust(holder, statue)
+    x, y, _ = at(BUST)
+    room.collider('Bust', (x - w - 0.06, y - w - 0.06, GROUND_Z), (x + w + 0.06, y + w + 0.06, GROUND_Z + PEDESTAL[1] + BUST_HEIGHT), group)
+    room.anchor('Plaque_bust', at((BUST[0], BUST[1] + w + 0.002), 0.5), group, BLOCK_YAW, plaque=[1.1, 0.56], text='bust')
     # Globe: the stand here, the sphere and the pin on Colombia drawn by the viewer (it paints the continents).
-    globe = room.anchor('Globe', at((GLOBE_X, ABOUT_ROW)), group, BLOCK_YAW, radius=GLOBE_RADIUS, centre=GLOBE_HEIGHT,
+    globe = room.anchor('Globe', at(GLOBE), group, BLOCK_YAW, radius=GLOBE_RADIUS, centre=GLOBE_HEIGHT,
                         decor='globe', shadow=[1.0, 1.0], solid=[0.6, GLOBE_HEIGHT + GLOBE_RADIUS, 0.6])
     room.cylinder('GlobeFoot', (0, 0, 0.04), 0.3, 0.08, frame_mat, globe, segments=20)
     room.cylinder('GlobeStem', (0, 0, (GLOBE_HEIGHT - GLOBE_RADIUS) / 2 + 0.04), 0.035, GLOBE_HEIGHT - GLOBE_RADIUS, frame_mat, globe, segments=10)
     room.cylinder('GlobeMeridian', (0, 0, GLOBE_HEIGHT), GLOBE_RADIUS + 0.05, 0.03, glow, globe, segments=32, axis='Y')
-    room.anchor('Plaque_globe', at((GLOBE_X, ABOUT_ROW + 0.302), 0.12), group, BLOCK_YAW, plaque=[0.56, 0.16], text='globe')
-    x, y, _ = at((GLOBE_X, ABOUT_ROW))
+    room.anchor('Plaque_globe', at((GLOBE[0], GLOBE[1] + 0.302), 0.12), group, BLOCK_YAW, plaque=[0.56, 0.16], text='globe')
+    x, y, _ = at(GLOBE)
     room.collider('Globe', (x - 0.3, y - 0.3, GROUND_Z), (x + 0.3, y + 0.3, GROUND_Z + GLOBE_HEIGHT + GLOBE_RADIUS), group)
-    # Glass case with two framed diplomas standing inside, facing the front.
-    case = room.anchor('Vitrine', at((VITRINE_X, ABOUT_ROW)), group, BLOCK_YAW, decor='vitrine', shadow=[1.6, 0.9],
-                       solid=[1.3, 1.5, 0.6])
-    glass = room.material('VitrineGlass', (0.75, 0.85, 1.0), 0.05, alpha=0.18)
-    wood = room.material('DiplomaFrame', (0.2, 0.14, 0.1), 0.6)
-    room.box('VitrineBase', (-0.65, -0.3, 0), (0.65, 0.3, 0.8), frame_mat, case)
-    room.box('VitrineGlass', (-0.63, -0.28, 0.8), (0.63, 0.28, 1.5), glass, case)
-    room.box('VitrineTop', (-0.65, -0.3, 1.5), (0.65, 0.3, 1.54), frame_mat, case)
-    for index, (dx, text) in enumerate(((-0.3, 'degree'), (0.3, 'react'))):
-        room.box(f'Diploma_{index}', (dx - 0.25, -0.02, 0.86), (dx + 0.25, 0.02, 1.24), wood, case)
-        room.anchor(f'Plaque_{text}', at((VITRINE_X + dx, ABOUT_ROW + 0.022), 1.05), group, BLOCK_YAW, plaque=[0.44, 0.32], text=text)
-    x, y, _ = at((VITRINE_X, ABOUT_ROW))
-    room.collider('Vitrine', (x - 0.65, y - 0.3, GROUND_Z), (x + 0.65, y + 0.3, GROUND_Z + 1.54), group)
+    # Planters with low bushes and flowers, and two park lamps, like a small park round the bust.
+    soil = room.material('Soil', (0.24, 0.17, 0.12), 0.95)
+    leaves = room.material('Bush', (0.07, 0.27, 0.13), 0.85)
+    bloom = room.material('Flower', (0.95, 0.55, 0.75), 0.6)
+    l, d, h = PLANTER_SIZE
+    for index, point in enumerate(PLANTERS):
+        bed = room.anchor(f'Planter_{index}', at(point), group, BLOCK_YAW, decor='planter', shadow=[l + 0.4, d + 0.4], solid=[l, h, d])
+        room.box(f'Planter_{index}_Box', (-l / 2, -d / 2, 0), (l / 2, d / 2, h), stone, bed)
+        room.box(f'Planter_{index}_Soil', (-l / 2 + 0.06, -d / 2 + 0.06, h - 0.04), (l / 2 - 0.06, d / 2 - 0.06, h - 0.01), soil, bed)
+        for k in range(4):
+            ico(f'Planter_{index}_Bush{k}', ((k - 1.5) * 0.52, 0, h + 0.12), (0.26, 0.24, 0.2), leaves, bed)
+            ico(f'Planter_{index}_Flower{k}', ((k - 1.5) * 0.52 + 0.12, -0.12, h + 0.3), (0.06, 0.06, 0.06), bloom, bed)
+        x, y, _ = at(point)
+        room.collider(f'Planter_{index}', (x - l / 2, y - d / 2, GROUND_Z), (x + l / 2, y + d / 2, GROUND_Z + h), group)
+    lamp_glow = room.material('ParkLampGlass', (1.0, 0.9, 0.72), 0.3, emission=(1.0, 0.82, 0.6), strength=3.5)
+    for index, point in enumerate(PARK_LAMPS):
+        post = room.anchor(f'ParkLamp_{index}', at(point), group, BLOCK_YAW, decor='lamp', shadow=[0.6, 0.6], solid=[0.2, 2.6, 0.2])
+        room.cylinder(f'ParkLamp_{index}_Foot', (0, 0, 0.06), 0.14, 0.12, frame_mat, post, segments=12)
+        room.cylinder(f'ParkLamp_{index}_Pole', (0, 0, 1.25), 0.04, 2.3, frame_mat, post, segments=10)
+        room.cylinder(f'ParkLamp_{index}_Glass', (0, 0, 2.5), 0.13, 0.28, lamp_glow, post, top=0.16, segments=12)
+        room.cylinder(f'ParkLamp_{index}_Cap', (0, 0, 2.67), 0.2, 0.07, frame_mat, post, top=0.04, segments=12)
+        x, y, _ = at(point)
+        room.collider(f'ParkLamp_{index}', (x - 0.12, y - 0.12, GROUND_Z), (x + 0.12, y + 0.12, GROUND_Z + 2.7), group)
 
 
 def build_decor(root, frame_mat):
-    """Park, forest, server racks and benches (fixed), and crates and cones the character can knock about."""
+    """Park, forest and benches (fixed), and cardboard boxes and cones the character can knock about."""
     group = room.anchor('Decor', (0, 0, 0), root)
     trunk = room.material('Trunk', (0.33, 0.22, 0.16), 0.85)
-    leaves = room.material('Leaves', (0.2, 0.46, 0.34), 0.8)
+    leaves = room.material('Leaves', (0.06, 0.24, 0.12), 0.85)
     trees = [tree_mesh(f'Decor_Tree{variant}', variant, trunk, leaves) for variant in (0, 1)]
     rng = random.Random(21)
     for index, (x, z, variant) in enumerate(TREES):
@@ -729,18 +787,13 @@ def build_decor(root, frame_mat):
     bench = bench_mesh(wood, frame_mat)
     for index, (point, yaw) in enumerate(BENCHES):
         decor(f'Bench_{index}', bench, point, yaw, group, 'bench', (1.6, 0.6), (1.4, 0.5, 0.4))
-    led = room.material('RackLed', (0.3, 1.0, 0.6), 0.4, emission=(0.3, 1.0, 0.6), strength=3.0)
-    vent = room.material('RackVent', (0.16, 0.14, 0.22), 0.6)
-    body = room.material('RackBody', (0.07, 0.065, 0.1), 0.45, 0.4)
-    rack = rack_mesh(body, led, vent)
-    for index, point in enumerate(RACKS):
-        decor(f'Rack_{index}', rack, point, BLOCK_YAW, group, 'rack', (0.85, 1.0), (0.6, 1.9, 0.8))
     # Loose: crates and cones, pushed, punched and kicked like the bricks.
     loose = room.anchor('Clutter', (0, 0, 0), root)
-    crate = crate_mesh(room.material('Crate', (0.62, 0.44, 0.24), 0.8))
+    card = room.material('Cardboard', (0.66, 0.49, 0.31), 0.85)
+    body = box_body_mesh(card, room.material('CardboardInside', (0.42, 0.3, 0.19), 0.9), room.material('Tape', (0.86, 0.74, 0.52), 0.45))
+    flap = box_flap_mesh(card)
     for index, (x, z, layer) in enumerate(CRATES):
-        piece(f'Crate_{index}', crate, (x, z), 0.25 + layer * 0.501, BLOCK_YAW, loose, prop='crate', group='decor',
-              mass=MASS['crate'], box=[0.5, 0.5, 0.5])
+        cardboard_box(f'Crate_{index}', body, flap, (x, z), BOX_SIZE / 2 + layer * (BOX_SIZE + 2 * FLAP_T + 0.002), loose)   # resting on the closed flaps below
     cone = cone_mesh(room.material('Cone', (0.95, 0.42, 0.12), 0.6), room.material('ConeBand', (0.95, 0.95, 0.95), 0.5))
     cylinders = [round(value, 4) for radius, height, centre in CONE_CYLINDERS for value in (radius, height, centre - CONE_ORIGIN)]
     for index, (x, z) in enumerate(CONES):
@@ -866,15 +919,14 @@ def build(root):
     for name, sign in SIGNS.items():
         build_sign(name, sign, frame, glow, root)
     build_lamppost(root, frame, glow)
-    # The ground behind the two room walls cannot be seen from the corner camera: keep the character out of it.
-    room.collider('BehindLeft', (-FAR, -HALF - WALL_T, GROUND_Z), (-HALF - WALL_T, FAR, 1), root)
-    room.collider('BehindBack', (-FAR, HALF + WALL_T, GROUND_Z), (HALF + WALL_T, FAR, 1), root)
+    # The character may walk behind the room: the viewer opens a window in the walls around it there.
     build_letters(root)
     build_playground(root)
     build_about(root, frame, glow)
     build_decor(root, frame)
     build_targets(root, frame)
     build_tech(root)
+    room.anchor('Floor_PlayArea', at(PLAY_AREA), root, BLOCK_YAW, floor='playarea', size=list(PLAY_AREA_SIZE))
     root['bounds'] = BOUNDS
     root['ground_y'] = GROUND_Z
     root['platform'] = PLATFORM

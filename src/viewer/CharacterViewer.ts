@@ -31,6 +31,8 @@ import { PieceMeshes } from '../scene/PieceMeshes.ts';
 import { AboutPlaza } from '../scene/AboutPlaza.ts';
 import { TargetsView } from '../scene/TargetsView.ts';
 import { TechLabels } from '../scene/TechLabels.ts';
+import { RoomReveal } from '../scene/RoomReveal.ts';
+import { hiddenBehind, revealStep, type Bounds3 } from '../world/reveal.ts';
 import { TargetGame, type Lane } from '../world/targets.ts';
 import { signAt } from '../world/signs.ts';
 import { KEY_SINK, onKey, pressStep, type FloorKey } from '../world/keyPress.ts';
@@ -96,6 +98,8 @@ const SHADOWLESS = /^(FloorPlank|Platform|Wall|Baseboard|Poster|NightCity|Window
 const STEP_RATE = 25;
 /** Blob shadow slots: the character first, then the signs, then the loose pieces, then the thrown laptops. */
 const CHARACTER_SHADOW = 0;
+/** cannon-es sleepState of a sleeping body. */
+const FLAP_SLEEPING = 2;
 /** Blob shadow slots of the thrown laptops, after the pieces. */
 const THROWN_SHADOWS = 3;
 /** Seconds a retired thrown laptop takes to shrink away. */
@@ -164,6 +168,12 @@ export class CharacterViewer {
   /** Labels over the tech tower's cubes as they fall; the cubes (piece indices) already labelled since the last reset. */
   private techLabels?: TechLabels;
   private readonly techDown = new Set<number>();
+  /** The see-through window in the room while it hides the character, and the room's bounds it is tested against. */
+  private reveal?: RoomReveal;
+  private roomBounds?: Bounds3;
+  private revealAmount = 0;
+  /** Cardboard boxes (piece indices): their flaps follow their own bodies. */
+  private boxes: number[] = [];
   /** Link signs and playground reset zones: the floor zones the character can step into. */
   private zones: Sign[] = [];
   private physics?: PropPhysics;
@@ -336,6 +346,9 @@ export class CharacterViewer {
           object.castShadow = !SHADOWLESS.test(object.name);
         });
         mergeStaticMeshes(roomGltf.scene);
+        this.reveal = new RoomReveal(roomGltf.scene);
+        const bounds = new Box3().setFromObject(roomGltf.scene);
+        this.roomBounds = { min: bounds.min.clone(), max: bounds.max.clone() };
         if (laptopGltf) this.addLaptop(laptopGltf.scene);
       }
       // Fewer draw calls: static and skinned parts are merged by material (they render identically).
@@ -538,7 +551,8 @@ export class CharacterViewer {
     if (this.pieceList.length) {
       this.pieces = new PieceMeshes(this.pieceList, this.shadows, pieceShadows, data.groundY);
       // The batched mesh holds its own copy of the pieces' geometry.
-      for (const geometry of new Set(this.pieceList.flatMap((piece) => piece.parts.map((part) => part.geometry)))) geometry.dispose();
+      for (const geometry of new Set(this.pieceList.flatMap((piece) => [...piece.parts, ...(piece.flaps ?? [])].map((part) => part.geometry)))) geometry.dispose();
+      this.boxes = this.pieceList.flatMap((piece, index) => (piece.flaps?.length ? [index] : []));
     }
     this.shadows.flush();
     this.zones = [...data.signs, ...data.zones];
@@ -1036,6 +1050,34 @@ export class CharacterViewer {
     if (this.host.dataset.tech !== value) this.host.dataset.tech = value;
   }
 
+  /** Box flaps follow their bodies (only the awake ones, or all of them); data-boxes-open counts the ones standing open. */
+  private syncFlaps(all = false): void {
+    const physics = this.physics;
+    if (!physics || !this.pieces || !this.boxes.length) return;
+    let open = 0;
+    for (const index of this.boxes) {
+      for (const [k, flap] of (physics.flaps[index] ?? []).entries()) {
+        if (all || flap.body.sleepState !== FLAP_SLEEPING) this.pieces.setFlap(index, k, flap.body);
+        if (physics.flapAngle(index, k) > 0.6) open++;
+      }
+    }
+    const value = String(open);
+    if (this.host.dataset.boxesOpen !== value && this.outside) this.host.dataset.boxesOpen = value;
+  }
+
+  /** While the room stands between the camera and the character, a window opens in it around the character. */
+  private updateReveal(delta: number): void {
+    if (!this.reveal || !this.roomBounds || !this.model || !this.renderer) return;
+    const toCamera = this.camera.getWorldDirection(new Vector3()).negate();
+    const hidden = hiddenBehind(this.model.position, toCamera, this.roomBounds);
+    this.revealAmount = revealStep(this.revealAmount, hidden, delta, this.reducedMotion);
+    const size = this.renderer.getDrawingBufferSize(new Vector2());
+    const chest = this.model.position.clone().setY(this.model.position.y + 1.2);
+    this.reveal.update(this.camera, chest, this.revealAmount, size.x, size.y);
+    const value = this.revealAmount > 0.5 ? 'open' : 'none';
+    if (this.host.dataset.reveal !== value) this.host.dataset.reveal = value;
+  }
+
   private resetTargets(): void {
     this.physics?.clearThrown();
     this.targetGame.reset();
@@ -1074,6 +1116,7 @@ export class CharacterViewer {
     this.host.dataset.locomotion = 'idle';
     this.physics?.reset();
     this.pieces?.reset();
+    this.syncFlaps(true);
     this.targetGame.reset();
     this.targetsView?.reset();
     this.reportTargets();
@@ -1148,6 +1191,7 @@ export class CharacterViewer {
         this.checkTech();
       }
       if (this.physics) this.pieces?.sync(this.physics.bodies, true);
+      this.syncFlaps(true);
       this.reportLetters();
       return;
     }
@@ -1197,10 +1241,12 @@ export class CharacterViewer {
     const { x, z } = this.model.position;
     if (this.physics && this.physics.step(delta, { x, y: this.elevation + lift, z })) {
       this.pieces?.sync(this.physics.bodies);
+      this.syncFlaps();
       this.reportLetters();
       this.checkTech();
     }
     this.targetsView?.update(delta, this.reducedMotion);
+    this.updateReveal(delta);
     if (this.techLabels) this.techLabels.update(this.camera, this.host.clientWidth, this.host.clientHeight, performance.now());
     if (this.thrown.length || this.physics?.retired.length) this.syncThrown(delta);
     if (this.elevation < -1e-3 || groundAt({ x, z }, this.outsideData) < 0) {
