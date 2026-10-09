@@ -75,6 +75,7 @@ const SETTINGS: Record<PieceGroup | 'laptop', Settings> = {
   decor: { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.4, linearDamping: 0.1 },
   tech: { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.4, linearDamping: 0.1 },
   circuit: { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.3, linearDamping: 0.08 },
+  wall: { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.4, linearDamping: 0.1 },
   laptop: { material: 'laptop', sleepSpeed: 0.15, angularDamping: 0.3, linearDamping: 0.05 },
 };
 /** The ball rolls: it keeps less damping than the pins but still comes to rest on the flat ground. */

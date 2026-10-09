@@ -1,10 +1,11 @@
 import { Color, Matrix4, Mesh, Quaternion, Vector3, type BufferGeometry, type Material, type MeshStandardMaterial, type Object3D, type Texture } from 'three';
+import type { SeatSpot } from '../interactions/InteractionController.ts';
 import type { Bounds, Box2, Point2 } from '../world/collisions.ts';
 
 /** Floor zone in front of a sign: an oriented rectangle on the ground. */
 export type SignArea = { center: Point2; axisX: Point2; axisZ: Point2; halfX: number; halfZ: number };
 
-export type PieceGroup = 'name' | 'tag' | 'keys' | 'bowling' | 'bricks' | 'decor' | 'tech' | 'circuit';
+export type PieceGroup = 'name' | 'tag' | 'keys' | 'bowling' | 'bricks' | 'decor' | 'tech' | 'circuit' | 'wall';
 /** What a reset zone puts back: a group of pieces, or the targets lane (its thrown laptops and score). */
 export type ResetTarget = PieceGroup | 'targets';
 
@@ -154,6 +155,8 @@ export type OutsideData = {
   chair?: OfficeChair;
   lapBoard?: Scoreboard;
   trafficLight?: Object3D;
+  /** The park benches as seats (the bed's clips and the lap laptop), each with its bench's name as `id`. */
+  benches: SeatSpot[];
 };
 
 export const LETTER_MASS = 1.5;
@@ -180,7 +183,7 @@ function areaOf(position: Vector3, quaternion: Quaternion, size: number[], offse
   };
 }
 
-const PROP_GROUPS = new Set<string>(['keys', 'bowling', 'bricks', 'decor', 'tech', 'circuit']);
+const PROP_GROUPS = new Set<string>(['keys', 'bowling', 'bricks', 'decor', 'tech', 'circuit', 'wall']);
 const RESET_TARGETS = new Set<string>([...PROP_GROUPS, 'targets']);
 
 function shapeOf(data: { radius?: number; cylinders?: number[] }): PieceShape {
@@ -219,6 +222,7 @@ type Extras = {
   height?: number; pole_radius?: number; arrows_top?: number; arrow_step?: number;
   prop?: string; group?: string; mass?: number; radius?: number; cylinders?: number[];
   joint?: string; ramp?: number[]; profile?: string; tape?: number[]; chair?: string;
+  seat?: string; stand?: number; approach?: number;
 };
 
 /** Read what the outside GLB exports (see scripts/blender/create_outside.py). */
@@ -244,6 +248,7 @@ export function readOutside(root: Object3D): OutsideData {
   let chair: OfficeChair | undefined;
   let lapBoard: Scoreboard | undefined;
   let trafficLight: Object3D | undefined;
+  const benches: SeatSpot[] = [];
   root.traverse((object) => {
     const data = object.userData as Extras;
     if (data.bounds?.length === 4) {
@@ -271,6 +276,11 @@ export function readOutside(root: Object3D): OutsideData {
         lapBoard = { position, yaw, width: data.board[0], height: data.board[1], bottom: data.board[2] };
       }
       if (object.name === 'TrafficLight') trafficLight = object;
+      if (data.seat === 'bench' && data.stand !== undefined && data.approach !== undefined) {
+        // Seated it faces the bench's front (local +Z); the clips start `stand` ahead, the walk ends `approach` ahead.
+        const ahead = (distance: number) => ({ x: position.x + Math.sin(yaw) * distance, z: position.z + Math.cos(yaw) * distance });
+        benches.push({ id: object.name, seat: 'bench', approaches: [ahead(data.approach)], stand: ahead(data.stand), yaw });
+      }
       if (data.ramp?.length === 3) {
         ramps.push({ position, yaw, length: data.ramp[0], width: data.ramp[1], height: data.ramp[2], profile: data.profile === 'bump' ? 'bump' : 'up' });
       }
@@ -347,7 +357,7 @@ export function readOutside(root: Object3D): OutsideData {
   if (lamppost && crossroads) lamppost.arrows = crossroads.targets.map((target, i) => ({ id: crossroads.labels[i] ?? '', target }));
   targets.sort((a, b) => a.index - b.index);
   tapes.sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }));
-  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost, decor, plaques, targets, scoreboard, globe, ramps, tapes, chair, lapBoard, trafficLight };
+  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost, decor, plaques, targets, scoreboard, globe, ramps, tapes, chair, lapBoard, trafficLight, benches };
 }
 
 /** Height of a ramp's surface above the ground at a point, 0 off it. */

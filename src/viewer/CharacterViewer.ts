@@ -1,7 +1,7 @@
 import {
   AnimationMixer, Box3, CircleGeometry, Color, DirectionalLight, Group, HemisphereLight, InstancedMesh, LoopOnce, LoopRepeat, PointLight,
   Raycaster, RepeatWrapping, Vector2, type Texture,
-  Mesh, MeshStandardMaterial, OrthographicCamera, Quaternion, Scene, SkinnedMesh, Vector3, type AnimationAction, type Object3D,
+  Matrix4, Mesh, MeshStandardMaterial, OrthographicCamera, Quaternion, Scene, SkinnedMesh, Vector3, type AnimationAction, type Object3D,
   type WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -490,7 +490,8 @@ export class CharacterViewer {
     const floor = this.outsideData?.bounds ?? data.halfSize;
     const boxes = [...data.boxes, ...(this.outsideData?.boxes ?? [])];
     this.controller = new CharacterController(spawn, boxes, floor);
-    this.interaction = new InteractionController(data.seats, boxes, floor, CHARACTER_RADIUS);
+    // The park benches outside are seats too (the bed's clips, the laptop on the lap).
+    this.interaction = new InteractionController([...data.seats, ...(this.outsideData?.benches ?? [])], boxes, floor, CHARACTER_RADIUS);
     this.setupChair();
     if (this.keyboard) {
       this.keyboard.onPress = this.onPress;
@@ -517,9 +518,18 @@ export class CharacterViewer {
 
   private placeForClip(clip: string): void {
     if (!this.room || !this.model) return;
-    const office = this.interaction?.seat?.seat === 'office';
-    const seat = clip.endsWith('_chair') ? (office ? 'office' : 'chair') : clip.endsWith('_bed') ? 'bed' : 'spawn';
+    const spot = this.interaction?.seat;
+    const seat = clip.endsWith('_chair') ? (spot?.seat === 'office' ? 'office' : 'chair')
+      : clip.endsWith('_bed') ? (spot?.seat === 'bench' ? 'bench' : 'bed') : 'spawn';
+    if (seat === 'bench' && spot) {
+      // A bench's clips start on the outside ground at its stand point, facing its front.
+      this.standPoints.set('bench', {
+        position: new Vector3(spot.stand.x, this.elevation, spot.stand.z),
+        quaternion: new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), spot.yaw),
+      });
+    }
     const point = this.standPoints.get(seat) ?? this.standPoints.get('spawn');
+    if ((seat === 'bed' || seat === 'bench') && point) this.placeLapLaptop(point);
     if (seat === 'spawn' && this.controller) {
       this.applyController();
     } else if (point) {
@@ -527,6 +537,18 @@ export class CharacterViewer {
       this.model.quaternion.copy(point.quaternion);
     }
     this.host.dataset.seat = seat;
+  }
+
+  /** The lap laptop sits where it does on the bed relative to the bed's stand point, from this stand point. */
+  private placeLapLaptop(point: { position: Vector3; quaternion: Quaternion }): void {
+    const bed = this.standPoints.get('bed');
+    const spot = this.roomData?.laptopSpots.get('lap');
+    if (!this.lapLaptop || !bed || !spot) return;
+    const one = new Vector3(1, 1, 1);
+    const offset = new Matrix4().compose(bed.position, bed.quaternion, one).invert()
+      .multiply(new Matrix4().compose(spot.position, spot.quaternion, one));
+    new Matrix4().compose(point.position, point.quaternion, one).multiply(offset)
+      .decompose(this.lapLaptop.position, this.lapLaptop.quaternion, new Vector3());
   }
 
   private isInRoom(object: Object3D, root: Object3D | undefined = this.room): boolean {

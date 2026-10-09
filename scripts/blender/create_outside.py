@@ -31,8 +31,10 @@ the room floor, so the room reads as a raised platform) and uses the walkable `b
   the cap keeping its own materials), `Globe` (stand only, with `radius` and `centre`; the viewer draws the sphere and
   the pin on Colombia), planters, park lamps and `Plaque_<text>` anchors where the viewer
   paints plaques (`plaque` [width, height], `text`) facing the front.
-- `Decor`: fixed trees, rocks and benches sharing one mesh per kind; extras `decor`, `shadow` [width, depth]
+- `Decor`: fixed trees, rocks and park benches sharing one mesh per kind; extras `decor`, `shadow` [width, depth]
   for the blob shadow and `solid` [width, height, depth] for the box pieces bounce off, plus a `Collider_*` each.
+  A bench is also a seat (`seat` 'bench', its clips start `stand` metres in front of its middle and the character walks
+  to `approach` metres in front first); its seat is as high as the bed's, so the viewer plays the bed's clips there.
 - `Clutter`: cardboard boxes and cones the character can knock about (group 'decor'); each box (`prop` 'box') has four
   `<name>_Flap_<i>` children hinged at its rim that the viewer opens when the character comes near.
 - `Targets`: `Target_<i>` anchors at the foot of each standing target (`radius`, disc `centre` height, `rings` radii and
@@ -501,7 +503,11 @@ PLANTERS = [(26.5, 8.85), (33.9, 8.85)]
 PARK_LAMPS = [(24.6, 5.45), (36.0, 5.45)]
 PLANTER_SIZE = (2.4, 0.8, 0.45)                  # length along X, depth, height
 PEDESTAL = (1.7, 1.0)                            # width/depth, height
-BUST_CUT_Z, BUST_CUT_X, BUST_SCALE = 1.62, 0.46, 0.85 * 2.5   # 2.5 times the first statue
+BUST_CUT_Z, BUST_SCALE = 1.62, 0.85 * 2.5   # 2.5 times the first statue
+# The sides are cut off where the sleeves start, so only the trunk, neck and head stay: BUST_CUT_X from the middle at the
+# bottom cut, leaning out by BUST_CUT_LEAN per metre up to the shoulders (wider at the top, like a carved bust), always
+# inside the pedestal top.
+BUST_CUT_X, BUST_CUT_LEAN = 0.3, 0.3
 BUST_HEIGHT = (2.65 - 1.62) * BUST_SCALE        # from the pedestal top to the cap
 BUST_FACES = {'stone': 3200, 'cap': 1000}   # outside.glb stays under its size budget (tests/outside.test.ts)
 GLOBE_RADIUS, GLOBE_HEIGHT = 0.42, 1.25          # globe centre above the ground
@@ -518,6 +524,8 @@ TECH_ROWS = [['typescript', 'node', 'pnpm', 'vite'], ['three', 'github', 'playwr
 TECH_ATLAS_COLUMNS = 5
 # The playground's own floor, bordered like the about-me plaza, around its four lanes and their reset zones.
 PLAY_AREA, PLAY_AREA_SIZE = (25.0, 33.0), (42.0, 16.0)
+# Dashed lines across the playground between its games (three.js x): targets | bowling | bricks | tech tower.
+PLAY_DIVIDERS = [12.8, 21.7, 34.7]
 MASS.update({'crate': 2.0, 'cone': 0.5, 'tech': 0.9})
 TREES = [(-15.5, 10.5, 0), (-11.5, 12.0, 1), (-16.0, 15.0, 0), (-12.5, 19.5, 1), (-15.5, 21.5, 0),   # park
          (43.2, 1.8, 1), (46.8, 3.2, 0), (43.6, 6.4, 0), (47.0, 8.0, 1), (44.4, 9.8, 0),             # forest
@@ -525,7 +533,7 @@ TREES = [(-15.5, 10.5, 0), (-11.5, 12.0, 1), (-16.0, 15.0, 0), (-12.5, 19.5, 1),
 ROCKS = [(-11.0, 16.5, 0.9), (46.0, 10.6, 0.75)]
 BENCHES = [(point, 0.0) for point in ABOUT_BENCHES] + [((-13.5, 14.0), 0.0),
            ((3.9, 12.3), math.pi / 2)]   # the last one at the crossroads' left side, off the paths to the zones
-CRATES = [(-10.5, 20.5, 0.0), (-10.0, 21.2, 0.0), (-7.0, 28.0, 0.0), (-6.48, 28.0, 0.0), (-6.74, 28.0, 1.0), (-4.5, 29.5, 0.0)]
+CRATES = [(-10.5, 20.5, 0.0), (-10.0, 21.2, 0.0), (-7.6, 30.0, 0.0), (-7.08, 30.0, 0.0), (-7.34, 30.0, 1.0), (-4.5, 29.5, 0.0)]   # in front of the circuit's end wall
 CONES = [(-7.5, 31.0), (-6.3, 31.4), (-5.1, 31.0), (-3.9, 31.4), (15.5, 4.0), (16.6, 4.6)]
 CONE_ORIGIN = 0.15
 CONE_CYLINDERS = [(0.18, 0.04, 0.02), (0.13, 0.2, 0.14), (0.085, 0.2, 0.34), (0.045, 0.1, 0.49)]
@@ -569,12 +577,65 @@ def rock_mesh(name, seed, mat):
     return proto_mesh(name, bm, [mat])
 
 
+# Park bench (Blender axes, front -Y = three.js +Z): the seat is as high as the bed's duvet, so the character sits on it
+# with the bed's clips, and the hips go BENCH_HIP behind the front edge of the seat like on the bed.
+BENCH_LENGTH, BENCH_SEAT, BENCH_FRONT, BENCH_BACK = 1.9, 0.63, -0.27, 0.24
+BENCH_FRAME_X = 0.8
+BENCH_HIP, BENCH_STAND_OFFSET, BENCH_APPROACH = 0.07, 0.25, 0.45
+BENCH_SOLID = (2.0, 1.22, 0.64)
+
+
+def bm_bar(bm, a, b, x, width, depth, material=1):
+    """A bar of the bench's iron side frame from (y, z) a to b at Blender x: `width` along X, `depth` across it."""
+    (ya, za), (yb, zb) = a, b
+    length = math.hypot(yb - ya, zb - za)
+    ny, nz = -(zb - za) / length * depth / 2, (yb - ya) / length * depth / 2
+    verts = [bm.verts.new((x + sx * width / 2, y + s * ny, z + s * nz)) for (y, z) in (a, b) for s in (-1, 1) for sx in (-1, 1)]
+    # verts: a(-n,-x) a(-n,+x) a(+n,-x) a(+n,+x) b(...) in the same order
+    for face in ((0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)):
+        face = bm.faces.new([verts[i] for i in face])
+        face.material_index = material
+        face.smooth = True   # rounded-looking iron, and its corners share vertices in the GLB
+
+
+def bm_slat(bm, y, z, width, thickness, tilt=0.0, length=BENCH_LENGTH):
+    """A wooden slat along X centred at (y, z), `width` across, tilted back by `tilt` about X (flat shaded)."""
+    geom = bmesh.ops.create_cube(bm, size=1.0)
+    rotation = Matrix.Rotation(tilt, 3, 'X')
+    for v in geom['verts']:
+        v.co = rotation @ Vector((v.co.x * length, v.co.y * width, v.co.z * thickness)) + Vector((0, y, z))
+
+
 def bench_mesh(wood, iron):
-    """Backless park bench, its length along Blender X (three.js X)."""
+    """Park bench with a backrest, its length along Blender X (three.js X), its front facing -Y (three.js +Z): five seat
+    slats with a rounded front, three slats on a reclined back, and two cast-iron side frames (curved front leg, rear leg
+    running up into the back support, armrest with a scrolled end) on little feet."""
     bm = bmesh.new()
-    bm_box(bm, (-0.7, -0.2, 0.42), (0.7, 0.2, 0.48), 0)
-    for x in (-0.55, 0.55):
-        bm_box(bm, (x - 0.04, -0.18, 0.0), (x + 0.04, 0.18, 0.42), 1)
+    # Seat slats from the front edge back; the front one a little lower, so the seat rounds over its front.
+    count, width, thickness = 5, 0.085, 0.035
+    gap = (BENCH_BACK - BENCH_FRONT - count * width) / (count - 1)
+    for k in range(count):
+        y = BENCH_FRONT + width / 2 + k * (width + gap)
+        top = BENCH_SEAT - (0.012 if k == 0 else 0.0)
+        bm_slat(bm, y, top - thickness / 2, width, thickness)
+    # Back slats along the reclined back support line, from (BENCH_BACK, 0.62) up to (0.33, 1.2).
+    lo, hi = Vector((0, BENCH_BACK + 0.005, 0.62)), Vector((0, 0.33, 1.2))
+    tilt = math.atan2(hi.y - lo.y, hi.z - lo.z)
+    across = Vector((0, -math.cos(tilt), math.sin(tilt)))   # towards the front, square to the back
+    for share in (0.3, 0.57, 0.84):
+        point = lo.lerp(hi, share) + across * 0.045
+        bm_slat(bm, point.y, point.z, 0.13, 0.03, tilt=math.pi / 2 - tilt)   # its width up the back
+    for x in (-BENCH_FRAME_X, BENCH_FRAME_X):
+        bar = lambda points, w=0.05, d=0.055: [bm_bar(bm, a, b, x, w, d) for a, b in zip(points, points[1:])]
+        bar([(-0.31, 0.02), (-0.28, 0.2), (-0.245, 0.4), (-0.235, 0.6)])                         # front leg, curving out at its foot
+        bar([(0.31, 0.02), (0.275, 0.3), (0.245, 0.6), (0.29, 0.9), (0.33, 1.2)])                # rear leg and back support
+        bar([(BENCH_FRONT + 0.01, BENCH_SEAT - 0.06), (BENCH_BACK + 0.01, BENCH_SEAT - 0.06)], 0.05, 0.05)   # seat rail
+        bar([(-0.24, 0.6), (-0.255, 0.8)], 0.045, 0.045)                                         # armrest post
+        bar([(0.28, 0.86), (0.0, 0.875), (-0.24, 0.86), (-0.29, 0.83), (-0.3, 0.78), (-0.27, 0.76)], 0.07, 0.045)   # armrest and scroll
+        bar([(-0.2, 0.17), (0.2, 0.17)], 0.035, 0.035)                                           # stretcher between the legs
+        for y in (-0.31, 0.31):
+            bm_box(bm, (x - 0.045, y - 0.05, 0.0), (x + 0.045, y + 0.05, 0.025), 1)              # feet
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     return proto_mesh('Decor_Bench', bm, [wood, iron])
 
 
@@ -734,7 +795,8 @@ def build_bust(holder, stone_mat):
         if obj.name.startswith('Hoodie'):
             bm = bmesh.new()
             bm.from_mesh(obj.data)
-            for co, no in (((0, 0, BUST_CUT_Z), (0, 0, -1)), ((BUST_CUT_X, 0, 0), (1, 0, 0)), ((-BUST_CUT_X, 0, 0), (-1, 0, 0))):
+            for co, no in (((0, 0, BUST_CUT_Z), (0, 0, -1)), ((BUST_CUT_X, 0, BUST_CUT_Z), (1, 0, -BUST_CUT_LEAN)),
+                           ((-BUST_CUT_X, 0, BUST_CUT_Z), (-1, 0, -BUST_CUT_LEAN))):
                 cut = bmesh.ops.bisect_plane(bm, geom=list(bm.verts) + list(bm.edges) + list(bm.faces), plane_co=co, plane_no=no, clear_outer=True)
                 edges = [e for e in cut['geom_cut'] if isinstance(e, bmesh.types.BMEdge)]
                 bmesh.ops.holes_fill(bm, edges=edges, sides=0)
@@ -833,7 +895,13 @@ def build_decor(root, frame_mat):
     wood = room.material('BenchWood', (0.55, 0.37, 0.24), 0.75)
     bench = bench_mesh(wood, frame_mat)
     for index, (point, yaw) in enumerate(BENCHES):
-        decor(f'Bench_{index}', bench, point, yaw, group, 'bench', (1.6, 0.6), (1.4, 0.5, 0.4))
+        obj = decor(f'Bench_{index}', bench, point, yaw, group, 'bench', (2.1, 0.8), BENCH_SOLID)
+        # A seat for the character (the bed's clips and the lap laptop): where its clips start, `stand` metres in front
+        # of the bench's middle (local three.js +Z), and where it walks to first, `approach` metres in front.
+        hip = -(BENCH_FRONT + BENCH_HIP)
+        obj['seat'] = 'bench'
+        obj['stand'] = round(hip + BENCH_STAND_OFFSET, 3)
+        obj['approach'] = round(hip + BENCH_STAND_OFFSET + BENCH_APPROACH, 3)
     # Loose: crates and cones, pushed, punched and kicked like the bricks.
     loose = room.anchor('Clutter', (0, 0, 0), root)
     card = room.material('Cardboard', (0.66, 0.49, 0.31), 0.85)
@@ -1006,7 +1074,10 @@ def build(root):
     build_decor(root, frame)
     build_targets(root, frame)
     build_tech(root)
-    room.anchor('Floor_PlayArea', at(PLAY_AREA), root, BLOCK_YAW, floor='playarea', size=list(PLAY_AREA_SIZE))
+    # The dividers go to the viewer as line segments in `targets` (two x, z points each), from the back border to the front.
+    z0, z1 = PLAY_AREA[1] - PLAY_AREA_SIZE[1] / 2 + 0.6, PLAY_AREA[1] + PLAY_AREA_SIZE[1] / 2 - 0.6
+    room.anchor('Floor_PlayArea', at(PLAY_AREA), root, BLOCK_YAW, floor='playarea', size=list(PLAY_AREA_SIZE),
+                targets=[value for x in PLAY_DIVIDERS for value in (x, z0, x, z1)])
     root['bounds'] = BOUNDS
     root['ground_y'] = GROUND_Z
     root['platform'] = PLATFORM

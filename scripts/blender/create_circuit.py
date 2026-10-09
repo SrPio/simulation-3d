@@ -16,6 +16,8 @@ outside.glb and reads it the same way (src/scene/outsideData.ts), so the extras 
   height above the ground as the room chair's seat so its clips fit).
 - `Floor_StartLine`/`Floor_FinishLine` (floor `checker`) and `Floor_ChairHint` (floor `chairhint`: an arrow towards the
   chair and "How did that get here?"), `Zone_Circuit` (reset zone, target 'circuit').
+- The end wall: `Wall_Brick_<i>` loose bricks of group 'wall' (a wall across the end of the road and a stepped one beside it)
+  and `Zone_Wall` (reset zone, target 'wall').
 Everything is placed by its index along create_outside.CIRCUIT, a side offset and an advance, turned to the road's
 heading rounded to a quarter turn (the perspective rule: axis aligned, fronts facing three.js +Z where it matters).
 """
@@ -52,6 +54,11 @@ MASS = {'pallet': 6.0, 'brick': 0.6, 'cone': 0.5, 'drum': 3.0, 'pipe': 40.0, 'ba
 RAMP = (3.0, 2.2, 0.5)
 JUMP = (2.6, 2.6, 0.9)
 BUMP = (0.3, 4.4, 0.07)
+# Past the end of the road (it ends heading -Z at about z 33): a brick wall across it and a stepped one beside it, where
+# the user drew them; three.js ground x, z of their middles.
+END_WALL, END_WALL_BRICKS, END_WALL_LAYERS = (-5.8, 29.0), 12, 7
+STEP_WALL, STEP_WALL_ROWS = (-9.6, 31.0), (5, 4, 3, 2, 1)
+WALL_ZONE = (-1.0, 30.3)
 
 
 # ------------------------------------------------------------------ placing along the road
@@ -607,7 +614,40 @@ def build(root):
     for i in (27, 38, 43, 66, 99, 130):
         loose('chevron', meshes['chevron'], road(i, outer(i) * (HALF + 1.5)), 0.625, 0.0, MASS['sign'], [0.6, 1.25, 0.4])
     loose('works', meshes['works'], road(149, -(HALF + 1.0)), 0.73, 0.0, MASS['sign'], [0.76, 1.46, 0.4])
+    build_end_wall(m, meshes, pieces, root)
     root['counts'] = ','.join(f'{k}:{v}' for k, v in sorted(count.items()))
+
+
+def build_end_wall(m, meshes, parent, root):
+    """Past the end of the road: a running-bond brick wall across it (STOP is sprayed on it, src/scene/graffitiData.ts)
+    and a small stepped wall beside it along the road, both loose bricks of group 'wall' that can be knocked down;
+    `Zone_Wall` puts them back."""
+    dark = mesh('Prop_CircuitBrickDark', lambda bm: bm_box(bm, (-out.BRICK_W / 2, -out.BRICK_D / 2, -out.BRICK_H / 2),
+                                                          (out.BRICK_W / 2, out.BRICK_D / 2, out.BRICK_H / 2), 0),
+                [room.material('CircuitBrickDark', (0.55, 0.22, 0.16), 0.9)])
+    rng = random.Random(7)
+    pitch = out.BRICK_W + 0.01
+    count = 0
+
+    def brick(point, layer, yaw):
+        nonlocal count
+        piece(f'Wall_Brick_{count:03d}', dark if rng.random() < 0.3 else meshes['brick'], point,
+              out.BRICK_H / 2 + layer * (out.BRICK_H + 0.002), yaw + rng.uniform(-0.015, 0.015), parent,
+              prop='brick', group='wall', mass=MASS['brick'], box=[out.BRICK_W, out.BRICK_H, out.BRICK_D])
+        count += 1
+
+    # Across the road (along +X, its face towards the camera), every other layer one brick shorter and half a brick in.
+    x0, z0 = END_WALL
+    for layer in range(END_WALL_LAYERS):
+        row = END_WALL_BRICKS - layer % 2
+        for b in range(row):
+            brick((x0 + (b - (row - 1) / 2) * pitch, z0), layer, 0.0)
+    # Beside it, along the road (+Z, its face towards +X): a stepped pyramid.
+    x0, z0 = STEP_WALL
+    for layer, row in enumerate(STEP_WALL_ROWS):
+        for b in range(row):
+            brick((x0, z0 + (b - (row - 1) / 2) * pitch), layer, QUARTER)
+    room.anchor('Zone_Wall', at(WALL_ZONE), root, 0.0, zone='reset', target='wall', area=list(out.RESET_AREA))
 
 
 def export_glb(root):

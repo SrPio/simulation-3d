@@ -84,6 +84,8 @@ export const GRAFFITI: readonly GraffitiSpot[] = [
   { id: 'planter-heart', symbol: 'heartline', style: 'spray', at: [33.9, 0.14, 9.25], face: 'z', width: 0.62, tilt: -8, color: C.pink, seed: 37 },
   { id: 'park-code', symbol: 'code', style: 'piece', at: [-6.5, 'ground', 22.5], face: 'up', width: 2.4, tilt: -6, color: C.cyan, fade: C.lime, seed: 97 },
   { id: 'works-friday', text: { es: 'VIERNES:\nNO DEPLOY', en: 'FRIDAY:\nNO DEPLOY' }, style: 'spray', at: [-2.5, 'ground', 33.5], face: 'up', width: 2.6, tilt: 8, color: C.lime, seed: 413 },
+  // The brick wall at the end of the circuit: it scatters with the bricks like the playground's.
+  { id: 'wall-stop', text: 'STOP', loose: 'wall', style: 'spray', at: [-5.8, 0.72, 29.13], face: 'z', width: 3.4, tilt: -3, color: C.white, seed: 211 },
 ];
 
 /** The words of a text spot in a language. */

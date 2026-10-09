@@ -264,6 +264,25 @@ export class FloorTexts {
         context.stroke();
         context.restore();
       }
+      // The playground's dividers between its games: segments in `targets` (two points each), dashed like the border.
+      if (block.id === 'playarea' && block.targets.length >= 2) {
+        const { x, z } = axes(block.yaw);
+        const local = (point: { x: number; z: number }) => {
+          const dx = point.x - block.position.x;
+          const dz = point.z - block.position.z;
+          return [dx * x.x + dz * x.z, dx * z.x + dz * z.z] as const;
+        };
+        context.save();
+        context.lineWidth = 0.06;
+        context.setLineDash([0.32, 0.2]);
+        for (let i = 0; i + 1 < block.targets.length; i += 2) {
+          context.beginPath();
+          context.moveTo(...local(block.targets[i]));
+          context.lineTo(...local(block.targets[i + 1]));
+          context.stroke();
+        }
+        context.restore();
+      }
       scaled(() => text(block.id === 'about' ? 'floor.about' : 'floor.playground', (-w / 2 + 0.7) * 100, (d / 2 - 0.85) * 100, 64, 'left', 700, (w / 2) * 100));
     } else if (block.id === 'targets') {
       // The lane's sides up to the throw line, the line itself, and the names in front of it.

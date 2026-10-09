@@ -3,9 +3,12 @@ import { overlaps, sweep, type Box2, type Floor, type Point2 } from '../world/co
 import { t } from '../core/i18n.ts';
 import { InteractionState, type Seat } from './interactionState.ts';
 
-/** A seat as the room exports it: where to walk to (one point per free side), where its clips start, and which way they face. */
-export type SeatSpot = { seat: Seat; approaches: Point2[]; stand: Point2; yaw: number };
-/** Which laptop is in use: the desk one (it stays on the desk) or one that appears on the lap on the bed. */
+/**
+ * A seat as the room (or the outside) exports it: where to walk to (one point per free side), where its clips start, and
+ * which way they face; `id` tells apart seats of one kind (the benches).
+ */
+export type SeatSpot = { seat: Seat; id?: string; approaches: Point2[]; stand: Point2; yaw: number };
+/** Which laptop is in use: the desk one (it stays on the desk) or one that appears on the lap on the bed or a bench. */
 export type LaptopPlace = 'none' | 'desk' | 'lap';
 export type Phase = 'free' | 'approaching' | 'aligning' | 'seated' | 'exiting';
 export type ClipRequest = { name: string; loop: boolean };
@@ -17,7 +20,7 @@ export const APPEAR_TIME = 0.15;
 export const LID_TIME = 0.3;
 const ARRIVED = 0.03;
 const TURN_RATE = 9;
-const seatName = (seat: Seat) => t(seat === 'chair' ? 'seat.chair' : seat === 'office' ? 'seat.office' : 'seat.bed');
+const seatName = (seat: Seat) => t(`seat.${seat}`);
 
 const distance = (a: Point2, b: Point2) => Math.hypot(a.x - b.x, a.z - b.z);
 const wrap = (angle: number) => Math.atan2(Math.sin(angle), Math.cos(angle));
@@ -27,7 +30,7 @@ const wrap = (angle: number) => Math.atan2(Math.sin(angle), Math.cos(angle));
  * seat) → aligning (short scripted step onto the seat's stand point and turn) → seated (clips driven
  * by InteractionState, advanced on clip end) → exiting (back out by the side used to sit down, or the
  * other one if that side is blocked) → free.
- * The laptop is never carried: on the chair the desk laptop opens; on the bed one appears on the lap.
+ * The laptop is never carried: on the chair the desk laptop opens; on the bed or a bench one appears on the lap.
  */
 export class InteractionController {
   readonly state = new InteractionState();
@@ -59,7 +62,7 @@ export class InteractionController {
 
   /** Add or replace a seat that moves (the office chair): its spot is kept up to date by the caller. */
   setSeat(spot: SeatSpot): void {
-    this.seats = [...this.seats.filter((seat) => seat.seat !== spot.seat), spot];
+    this.seats = [...this.seats.filter((seat) => seat.seat !== spot.seat || seat.id !== spot.id), spot];
   }
 
   /** The seat and approach point the character can use from here: close enough and with a clear straight path. */
@@ -99,13 +102,13 @@ export class InteractionController {
     return this.state.command('stand');
   }
 
-  /** L: open the laptop (it appears on the lap on the bed) or close it while seated. */
+  /** L: open the laptop (it appears on the lap on the bed or a bench) or close it while seated. */
   laptopPress(): boolean {
     this.message = '';
     if (this.phase !== 'seated' || !this.state.can('laptop')) {
       return this.refuse(this.phase === 'free' ? t('refuse.sit') : t('refuse.wait'));
     }
-    if (this.state.stage === 'seated') this.laptop = this.seat!.seat === 'bed' ? 'lap' : 'desk';
+    if (this.state.stage === 'seated') this.laptop = this.seat!.seat === 'chair' ? 'desk' : 'lap';
     return this.state.command('laptop');
   }
 
