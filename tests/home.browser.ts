@@ -426,7 +426,7 @@ test('playground: laptops thrown from the line score on the targets, the tech to
   await expect(host(page)).toHaveAttribute('data-score', '0');
   await expect(host(page)).toHaveAttribute('data-throws', '0');
   await expect(host(page)).toHaveAttribute('data-thrown', '0');
-  // The tech tower: a charged punch from in front brings cubes down and their labels show; its zone stacks it again.
+  // The tech tower: a charged punch from in front brings cubes down without any labels; its zone stacks it again.
   await page.keyboard.press('Shift');
   for (const point of [{ x: 6, z: 40.5 }, { x: 41, z: 40.5 }, { x: 39, z: 34.4 }]) await walkTo(page, point);
   await page.keyboard.press('Shift');
@@ -435,8 +435,7 @@ test('playground: laptops thrown from the line score on the targets, the tech to
   await page.waitForTimeout(1300);
   await page.keyboard.up('KeyJ');
   await expect.poll(async () => Number(await host(page).getAttribute('data-tech')), { timeout: 6000 }).toBeGreaterThan(0);
-  await expect(host(page)).not.toHaveAttribute('data-tech-labels', 'none');
-  await expect(page.locator('.tech-label-body').first()).toBeVisible();
+  await expect(page.locator('.tech-label')).toHaveCount(0);
   await page.screenshot({ path: shot('home-tech.png') });
   await walkTo(page, { x: 39, z: 36.2 }, async () => (await host(page).getAttribute('data-sign')) === 'reset-tech');
   await page.keyboard.press('Enter');

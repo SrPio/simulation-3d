@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import * as cannon from 'cannon-es';
 import { Texture } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { MESSAGES, type MessageKey } from '../src/core/i18n.ts';
+import { MESSAGES } from '../src/core/i18n.ts';
 import { readOutside, type OutsideData } from '../src/scene/outsideData.ts';
 import { PropPhysics } from '../src/world/PropPhysics.ts';
 
@@ -19,7 +19,7 @@ async function outside(): Promise<OutsideData> {
 const TOOLS = ['typescript', 'node', 'pnpm', 'vite', 'three', 'github', 'playwright', 'blender', 'gltf', 'openvdb'];
 const far = { x: 100, y: -0.12, z: 100 };
 
-test('the tech tower: ten logo cubes in a 4-3-2-1 pyramid, each tool with its label in both languages', async () => {
+test('the tech tower: ten logo cubes in a 4-3-2-1 pyramid, and the painted note pointing at it', async () => {
   const data = await outside();
   const cubes = data.props.filter((piece) => piece.group === 'tech');
   assert.deepEqual(cubes.map((cube) => cube.tech), TOOLS);
@@ -27,9 +27,16 @@ test('the tech tower: ten logo cubes in a 4-3-2-1 pyramid, each tool with its la
   assert.deepEqual(Object.values(rows).map((row) => row!.length).sort().reverse(), [4, 3, 2, 1]);
   for (const cube of cubes) {
     assert.ok(cube.parts.every((part) => part.map && part.geometry.getAttribute('uv')), `${cube.name} shows its logo`);
-    for (const language of ['es', 'en'] as const) assert.ok(MESSAGES[language][`tech.${cube.tech}` as MessageKey], `${language} label for ${cube.tech}`);
   }
   assert.ok(data.zones.some((zone) => zone.target === 'tech'), 'a reset zone');
+  const note = data.floors.find((floor) => floor.id === 'technote');
+  assert.ok(note, 'the note on the ground');
+  for (const language of ['es', 'en'] as const) assert.equal(MESSAGES[language]['floor.techNote'].split('\n').length, 2, `${language} note in two lines`);
+  // The arrow's tip stops just right of the bottom row, off the cubes.
+  const tip = note.targets[0];
+  const right = Math.max(...cubes.map((cube) => cube.position.x)) + 0.3;
+  assert.ok(tip.x > right && tip.x < right + 1, `tip x ${tip.x}`);
+  assert.ok(Math.abs(tip.z - cubes[0].position.z) < 0.5, `tip z ${tip.z}`);
 });
 
 test('the tower stands still until struck; a full punch brings cubes down and the reset stacks it again', async () => {

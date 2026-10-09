@@ -30,7 +30,6 @@ import { BlobShadows } from '../scene/BlobShadows.ts';
 import { PieceMeshes } from '../scene/PieceMeshes.ts';
 import { AboutPlaza } from '../scene/AboutPlaza.ts';
 import { TargetsView } from '../scene/TargetsView.ts';
-import { TechLabels } from '../scene/TechLabels.ts';
 import { CircuitView } from '../scene/CircuitView.ts';
 import { chairAt, driveStep, forwardSpeed, type ChairState } from '../world/chairDrive.ts';
 import type { SeatSpot } from '../interactions/InteractionController.ts';
@@ -194,8 +193,6 @@ export class CharacterViewer {
   /** Thrown laptops whose throw counts for the targets round (thrown from behind the line). */
   private countedThrows = new WeakSet<ThrownLaptop>();
   /** Labels over the tech tower's cubes as they fall; the cubes (piece indices) already labelled since the last reset. */
-  private techLabels?: TechLabels;
-  private readonly techDown = new Set<number>();
   /** The see-through window in the room while it hides the character, and the room's bounds it is tested against. */
   private reveal?: RoomReveal;
   private roomBounds?: Bounds3;
@@ -638,7 +635,6 @@ export class CharacterViewer {
       // Throws count from behind the painted line, between the lane's sides (the lane keeps the block yaw, 0).
       if (lane) this.targetLane = { minX: lane.position.x - lane.size[0] / 2, maxX: lane.position.x + lane.size[0] / 2, lineZ: lane.position.z + lane.line, depth: 3 };
     }
-    this.techLabels = new TechLabels(this.host);
     this.bubble = new SeatBubble(this.host);
     this.host.dataset.sign = 'none';
     this.host.dataset.signArea = 'none';
@@ -1144,17 +1140,10 @@ export class CharacterViewer {
     this.host.dataset.targetsHit = String(hits);
   }
 
-  /** Cubes of the tech tower that fell since the last reset: each shows what its tool does here (data-tech counts them). */
+  /** data-tech counts the tech tower's cubes that are down. */
   private checkTech(): void {
     const physics = this.physics;
-    if (!physics || !this.techLabels) return;
-    const now = performance.now();
-    for (const [index, piece] of this.pieceList.entries()) {
-      if (piece.group !== 'tech' || !piece.tech || this.techDown.has(index) || index >= physics.bodies.length || !physics.toppled(index)) continue;
-      this.techDown.add(index);
-      const body = physics.bodies[index];
-      this.techLabels.show(piece.tech, () => body.position, now);
-    }
+    if (!physics) return;
     const value = String(physics.fallen(['tech']));
     if (this.host.dataset.tech !== value) this.host.dataset.tech = value;
   }
@@ -1194,11 +1183,6 @@ export class CharacterViewer {
     this.reportTargets();
   }
 
-  private resetTech(): void {
-    this.techDown.clear();
-    this.techLabels?.clear();
-  }
-
   private clearThrown(): void {
     for (const entry of this.thrown) {
       entry.base.removeFromParent();
@@ -1230,7 +1214,6 @@ export class CharacterViewer {
     this.targetGame.reset();
     this.targetsView?.reset();
     this.reportTargets();
-    this.resetTech();
     this.checkTech();
     for (const key of this.floorKeys) key.depth = 0;
     this.resetCircuit();
@@ -1451,10 +1434,7 @@ export class CharacterViewer {
       if (sign.target === 'targets') this.resetTargets();
       else if (sign.target) this.physics?.reset(sign.target);
       if (sign.target === 'circuit') this.resetCircuit();
-      if (sign.target === 'tech') {
-        this.resetTech();
-        this.checkTech();
-      }
+      if (sign.target === 'tech') this.checkTech();
       if (this.physics) this.pieces?.sync(this.physics.bodies, true);
       this.syncFlaps(true);
       this.reportLetters();
@@ -1471,7 +1451,6 @@ export class CharacterViewer {
     this.about?.paint();
     this.graffiti?.setLanguage(getLanguage());
     this.targetsView?.paint();
-    this.techLabels?.setLanguage();
     this.bubble?.setLanguage();
     this.notice = { text: '', until: 0 };
     if (this.sign) this.emitSign();
@@ -1518,7 +1497,6 @@ export class CharacterViewer {
     }
     this.targetsView?.update(delta, this.reducedMotion);
     this.updateReveal(delta);
-    if (this.techLabels) this.techLabels.update(this.camera, this.host.clientWidth, this.host.clientHeight, performance.now());
     if (this.thrown.length || this.physics?.retired.length) this.syncThrown(delta);
     if (this.chickRain && this.physics) {
       this.chickRain.update(delta, this.physics);
@@ -2061,7 +2039,6 @@ export class CharacterViewer {
     this.about?.dispose();
     this.graffiti?.dispose();
     this.targetsView?.dispose();
-    this.techLabels?.dispose();
     this.bubble?.dispose();
     this.chargeMeter?.dispose();
     this.clearThrown();

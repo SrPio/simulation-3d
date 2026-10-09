@@ -15,6 +15,8 @@ const VIOLET = new Color(0xb79bff);
 const CIRCUIT_PPM = 16;
 /** The sketched arrow to the office chair: thin strokes over a wide block. */
 const SKETCH_PPM = 70;
+/** The note by the tech tower: two lines of text and a sketched arrow. */
+const NOTE_PPM = 100;
 /** How strongly a zone's own ground is filled (the plaza, the playground and the circuit share it). */
 const ZONE_FILL = 0.1;
 
@@ -23,7 +25,7 @@ type Rect = { x: number; y: number; w: number; h: number; ppm: number };
 type Local = { x: number; z: number };
 
 /** Pixels per metre of a block: PPM, or less so a wide area (the plaza, the playground) still fits the atlas whole. */
-const ppmOf = (block: FloorBlock) => Math.min(block.id === 'circuit' ? CIRCUIT_PPM : block.id === 'chairhint' ? SKETCH_PPM : PPM, (ATLAS_WIDTH - 2) / block.size[0]);
+const ppmOf = (block: FloorBlock) => Math.min(block.id === 'circuit' ? CIRCUIT_PPM : block.id === 'chairhint' ? SKETCH_PPM : block.id === 'technote' ? NOTE_PPM : PPM, (ATLAS_WIDTH - 2) / block.size[0]);
 
 /** Shelf packing of the blocks into one atlas row after row. */
 function pack(blocks: readonly FloorBlock[]): { rects: Rect[]; height: number } {
@@ -422,6 +424,42 @@ export class FloorTexts {
       for (const [k, line] of lines.entries()) {
         scaled(() => text({ words: line }, label.x * 100, (label.z + (k - (lines.length - 1) / 2) * 0.32) * 100, 24, 'center', 600, 2.6 * 100));
       }
+    } else if (block.id === 'technote') {
+      // Two lines at the back of the block, and under them a hand-drawn arrow that drops towards the camera and curls
+      // round to the tower (its tip in `targets`), coming in from the right as seen from the default view.
+      const target = block.targets[0];
+      const { x: ax, z: az } = axes(block.yaw);
+      const dx = target ? target.x - block.position.x : -w / 4;
+      const dz = target ? target.z - block.position.z : d / 2 - 0.2;
+      const end = { x: dx * ax.x + dz * ax.z, z: dx * az.x + dz * az.z };
+      const lines = t('floor.techNote').split('\n');
+      for (const [k, line] of lines.entries()) {
+        scaled(() => text({ words: line }, 0.2 * 100, (-d / 2 + 0.4 + k * 0.44) * 100, 34, 'center', 600, (w - 0.4) * 100));
+      }
+      const start = { x: 0.3, z: -d / 2 + 0.4 + lines.length * 0.44 };
+      const c1 = { x: start.x + 0.85, z: start.z + 0.85 };
+      const c2 = { x: end.x + 1.0, z: end.z - 0.65 };
+      context.save();
+      context.lineCap = 'round';
+      context.lineJoin = 'round';
+      for (const [offset, width, alpha] of [[0, 0.07, 1], [0.035, 0.03, 0.55]] as const) {
+        context.globalAlpha = alpha;
+        context.lineWidth = width;
+        context.beginPath();
+        context.moveTo(start.x + offset, start.z);
+        context.bezierCurveTo(c1.x + offset, c1.z - offset, c2.x, c2.z + offset, end.x, end.z + offset);
+        context.stroke();
+      }
+      context.globalAlpha = 1;
+      context.lineWidth = 0.07;
+      const heading = Math.atan2(end.z - c2.z, end.x - c2.x);
+      context.beginPath();
+      for (const turn of [-0.5, 0.5]) {
+        context.moveTo(end.x, end.z);
+        context.lineTo(end.x - Math.cos(heading + turn) * 0.4, end.z - Math.sin(heading + turn) * 0.4);
+      }
+      context.stroke();
+      context.restore();
     } else if (block.id === 'prints') {
       // A few prints where they were marked on the map, the same shoe as the ones leaving the room, fading as they go.
       const { x: ax, z: az } = axes(block.yaw);

@@ -41,7 +41,8 @@ the room floor, so the room reads as a raised platform) and uses the walkable `b
   their `points`), facing the throw line painted by `Floor_Targets` (`line`: its distance ahead of the block centre);
   `Scoreboard` (`board` [width, height, bottom]) where the viewer paints the score.
 - `Tech`: `Tech_<i>_<name>` cubes in a 4-3-2-1 pyramid (group 'tech', `tech` name) with the tools' logos from
-  assets/textures/outside/tech-atlas.png (scripts/tech_atlas.ts) on their +Z and +X faces.
+  assets/textures/outside/tech-atlas.png (scripts/tech_atlas.ts) on their +Z and +X faces; `Floor_TechNote` (floor
+  `technote`) paints a note saying this world was built with them and a curved arrow to the tower (`targets`).
 Everything keeps the block perspective: axis aligned, fronts facing three.js +Z, rows along +X (see BLOCK_YAW).
 Layout positions are written in three.js ground coordinates (x, z); Blender Y is three.js -Z.
 The room itself (room.glb) is not modified.
@@ -1215,6 +1216,10 @@ def tech_cube_mesh(name, cell, atlas_mat):
 def build_tech(root):
     """Tower of cubes with the logos of the tools this project is made with, knocked down like the bricks."""
     room.anchor('Floor_Tech', at((TECH[0], TECH[1] + 1.4)), root, BLOCK_YAW, floor='tech', size=[4.2, 3.6])
+    # Behind and to the right of the tower (as seen from the default view) a painted note on what these tools are, with a
+    # curved arrow under it whose tip (`targets`) stops just right of the bottom row.
+    room.anchor('Floor_TechNote', at((TECH[0] + 3.2, TECH[1] - 1.7)), root, BLOCK_YAW, floor='technote', size=[5.6, 3.8],
+                targets=[TECH[0] + 1.75, TECH[1] - 0.1])
     atlas = room.material('TechAtlas', (1, 1, 1), 0.55, image=TECH_ATLAS)
     group = room.anchor('Tech', (0, 0, 0), root)
     pitch = TECH_CUBE + TECH_GAP
