@@ -44,3 +44,27 @@ test('the crossroads is a round bed of grass round the lamppost, with nothing pa
   assert.deepEqual(crossroads.labels, ['about', 'playground']);
   assert.ok(!data.floors.some((floor) => floor.id === 'playground'), 'no floor sign');
 });
+
+test('a car circuit runs round the zones as one flat band of the zones\' fill, inside the walkable ground', async () => {
+  const gltf = await parse();
+  const data = readOutside(gltf.scene);
+  const circuits = data.floors.filter((floor) => floor.id === 'circuit');
+  assert.equal(circuits.length, 1);
+  const [circuit] = circuits;
+  assert.equal(circuit.gap, 3.5);
+  assert.ok(circuit.targets.length > 50, `${circuit.targets.length} points`);
+  const half = circuit.gap / 2;
+  for (const [i, point] of circuit.targets.entries()) {
+    assert.ok(Math.abs(point.x - circuit.position.x) + half <= circuit.size[0] / 2 && Math.abs(point.z - circuit.position.z) + half <= circuit.size[1] / 2, 'inside its block');
+    assert.ok(point.x - half >= data.bounds.minX && point.x + half <= data.bounds.maxX && point.z - half >= data.bounds.minZ && point.z + half <= data.bounds.maxZ, `walkable at ${point.x}, ${point.z}`);
+    if (i > 0) {
+      const previous = circuit.targets[i - 1];
+      assert.ok(Math.hypot(point.x - previous.x, point.z - previous.z) < 2, 'continuous');
+    }
+    // It goes round the plaza and the playground, never across them.
+    for (const zone of data.floors.filter((floor) => floor.id === 'about' || floor.id === 'playarea')) {
+      const inside = Math.abs(point.x - zone.position.x) < zone.size[0] / 2 + half && Math.abs(point.z - zone.position.z) < zone.size[1] / 2 + half;
+      assert.ok(!inside, `${zone.id} at ${point.x}, ${point.z}`);
+    }
+  }
+});

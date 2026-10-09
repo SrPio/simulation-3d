@@ -42,7 +42,7 @@ test('the playground: four arrow keys, ten pins in a triangle, a ball in front o
   // Every piece of a kind shares one geometry.
   assert.equal(new Set(triangle.map((pin) => pin.parts[0].geometry)).size, 1);
   assert.equal(data.zones.map((zone) => zone.target).sort().join(), 'bowling,bricks,targets,tech');
-  assert.deepEqual([...new Set(data.floors.map((floor) => floor.id))].sort(), ['about', 'bowling', 'controls', 'crossroads', 'footprints', 'intro', 'playarea', 'prints', 'targets', 'tech']);
+  assert.deepEqual([...new Set(data.floors.map((floor) => floor.id))].sort(), ['about', 'bowling', 'circuit', 'controls', 'crossroads', 'footprints', 'intro', 'playarea', 'prints', 'targets', 'tech']);
 });
 
 test('pins and bricks stand still and asleep until something touches them', async () => {

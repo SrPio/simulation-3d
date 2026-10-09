@@ -66,7 +66,7 @@ HALF, WALL_T = room.HALF, room.WALL_T
 GROUND_Z = -0.12    # outside ground, below the room floor (plank tops at 0)
 FAR = 24.0          # walkable ground from the room centre, further on the +X side and in front (BOUNDS)
 # Blender XY rectangle of the walkable ground: the crossroads and the playground lie towards +X and -Y.
-BOUNDS = [-30.0, 52.0, -46.0, FAR]
+BOUNDS = [-30.0, 54.0, -48.0, FAR]
 # Room platform footprint in Blender XY (create_room.build_shell): the floor is at 0 inside it.
 PLATFORM = [-HALF - WALL_T, HALF + 0.1, -HALF - 0.1, HALF + WALL_T]
 BOARD_W, BOARD_H, BOARD_BOTTOM, BOARD_T, BORDER, POST = 2.4, 1.5, 0.6, 0.06, 0.07, 0.08
@@ -229,6 +229,32 @@ PRINT_TRAILS = {
 }
 # The crossroads is a round bed of grass with low bushes and a few flowers round the lamppost (nothing painted on it).
 CROSSROADS_GREEN = 4.0
+# A circuit for cars, drawn by the user on the canvas: three.js x, z of its middle line every metre or so, from beside the
+# crossroads round the back of the plaza, behind the room, down past the park to the work site. Painted flat in the
+# zones' own fill colour, CIRCUIT_WIDTH wide, with no border or dashes.
+CIRCUIT = [
+    (21.35, 18.27), (22.51, 18.58), (23.89, 18.51), (25.3, 18.44), (26.71, 18.4), (28.09, 18.43), (29.43, 18.56), (30.68, 18.82),
+    (31.9, 19.15), (33.41, 19.38), (34.64, 19.47), (35.99, 19.53), (37.42, 19.56), (38.89, 19.53), (40.37, 19.45), (41.82, 19.29),
+    (43.21, 19.06), (44.49, 18.74), (45.64, 18.32), (46.72, 17.72), (47.74, 16.81), (48.53, 15.72), (49.14, 14.52), (49.67, 13.24),
+    (50.2, 11.78), (50.58, 10.64), (51.02, 8.97), (51.35, 7.34), (51.57, 5.73), (51.71, 4.13), (51.79, 2.52), (51.81, 0.89),
+    (51.81, -0.79), (51.79, -2.53), (51.78, -3.73), (51.78, -5.2), (51.73, -6.44), (51.62, -7.74), (51.4, -9.06), (51.04, -10.32),
+    (50.52, -11.47), (49.79, -12.45), (48.7, -13.26), (47.51, -13.64), (46.12, -13.8), (44.64, -13.77), (43.19, -13.6), (41.9, -13.33),
+    (40.71, -12.9), (39.56, -12.35), (38.37, -11.85), (36.95, -11.49), (35.62, -11.23), (34.28, -11.05), (32.94, -10.93), (31.59, -10.86),
+    (30.22, -10.83), (28.88, -10.87), (27.48, -11.05), (26.11, -11.35), (24.77, -11.75), (23.45, -12.23), (22.15, -12.79), (20.88, -13.4),
+    (19.78, -13.96), (18.68, -14.56), (17.56, -15.18), (16.42, -15.72), (15.23, -16.13), (13.93, -16.33), (12.62, -16.4), (11.25, -16.34),
+    (9.97, -16.16), (8.57, -15.67), (7.26, -14.92), (6.03, -14.04), (4.84, -13.11), (3.64, -12.2), (2.4, -11.39), (1.08, -10.74),
+    (-0.37, -10.32), (-1.95, -10.2), (-3.26, -10.23), (-4.65, -10.33), (-6.08, -10.47), (-7.53, -10.59), (-8.96, -10.67), (-10.34, -10.67),
+    (-11.64, -10.55), (-12.82, -10.27), (-14.14, -9.59), (-15.02, -8.46), (-15.18, -7.15), (-14.98, -5.73), (-14.81, -4.53), (-14.81, -3.33),
+    (-15.16, -2.15), (-16.03, -1.03), (-17.11, -0.25), (-18.27, 0.24), (-19.46, 0.61), (-20.63, 1.02), (-21.73, 1.64), (-22.72, 2.64),
+    (-23.35, 3.73), (-23.76, 4.89), (-23.92, 6.34), (-23.78, 7.79), (-23.47, 9.22), (-23.11, 10.63), (-22.81, 11.99), (-22.7, 13.29),
+    (-22.89, 14.51), (-23.49, 15.69), (-24.31, 16.77), (-25.18, 17.82), (-25.87, 18.92), (-26.2, 20.16), (-25.96, 21.6), (-25.39, 22.68),
+    (-24.33, 23.79), (-23.04, 24.64), (-21.65, 25.36), (-20.29, 26.1), (-19.08, 26.99), (-18.16, 28.17), (-17.73, 29.33), (-17.64, 30.54),
+    (-18.06, 32.06), (-18.64, 33.14), (-19.34, 34.21), (-20.08, 35.26), (-20.75, 36.31), (-21.37, 37.74), (-21.48, 39.25), (-21.08, 40.44),
+    (-20.42, 41.5), (-19.57, 42.52), (-18.59, 43.45), (-17.52, 44.24), (-16.43, 44.83), (-15.22, 45.21), (-13.71, 45.43), (-12.46, 45.48),
+    (-11.16, 45.43), (-9.87, 45.29), (-8.62, 45.04), (-7.13, 44.55), (-5.94, 43.86), (-5.09, 42.92), (-4.49, 41.73), (-4.13, 40.39),
+    (-3.94, 38.96), (-3.89, 37.48), (-3.91, 36), (-3.96, 34.58), (-3.99, 33.27),
+]
+CIRCUIT_WIDTH = 3.5
 # Bowling (playground axes): the ball near the camera, the pins up the lane in a 4-3-2-1 triangle.
 LANE_X, BALL_Z, HEAD_PIN_Z = -3.6, 3.6, -1.2
 PIN_SPACING, PIN_ROW = 0.56, 0.485
@@ -417,6 +443,10 @@ def build_playground(root):
         room.anchor(f'Floor_Prints_{name}', at(centre), root, BLOCK_YAW, floor='prints',
                     size=[round(max(xs) - min(xs) + 0.8, 3), round(max(zs) - min(zs) + 0.8, 3)],
                     steps=[value for step in steps for value in step])
+    xs, zs = [x for x, _ in CIRCUIT], [z for _, z in CIRCUIT]
+    room.anchor('Floor_Circuit', at(((min(xs) + max(xs)) / 2, (min(zs) + max(zs)) / 2)), root, BLOCK_YAW, floor='circuit',
+                size=[round(max(xs) - min(xs) + CIRCUIT_WIDTH + 0.4, 3), round(max(zs) - min(zs) + CIRCUIT_WIDTH + 0.4, 3)],
+                targets=[value for point in CIRCUIT for value in point], gap=CIRCUIT_WIDTH)
 
     play = frame(PLAYGROUND)
     room.anchor('Floor_Bowling', at(play(LANE_X, (BALL_Z + HEAD_PIN_Z) / 2 - 0.4)), root, BLOCK_YAW, floor='bowling',

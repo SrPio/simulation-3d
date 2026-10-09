@@ -65,7 +65,7 @@ export type Letter = Piece & {
 
 /** Where the viewer paints on the ground: a block in its own axes (local +X along the text, +Z towards the camera). */
 export type FloorBlock = {
-  id: 'intro' | 'crossroads' | 'controls' | 'playground' | 'bowling' | 'footprints' | 'about' | 'targets' | 'tech' | 'playarea' | 'prints';
+  id: 'intro' | 'crossroads' | 'controls' | 'playground' | 'bowling' | 'footprints' | 'about' | 'targets' | 'tech' | 'playarea' | 'prints' | 'circuit';
   position: Vector3;
   yaw: number;
   size: [number, number];

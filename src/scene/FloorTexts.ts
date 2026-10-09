@@ -11,13 +11,17 @@ const ATLAS_WIDTH = 2048;
 const PAD = 8;
 const OPACITY = 0.6;
 const VIOLET = new Color(0xb79bff);
+/** The circuit is one flat colour with soft edges: a few pixels per metre are enough for its long block. */
+const CIRCUIT_PPM = 16;
+/** How strongly a zone's own ground is filled (the plaza, the playground and the circuit share it). */
+const ZONE_FILL = 0.1;
 
 /** A block's region of the atlas and its pixels per metre (lower for blocks wider than the atlas). */
 type Rect = { x: number; y: number; w: number; h: number; ppm: number };
 type Local = { x: number; z: number };
 
 /** Pixels per metre of a block: PPM, or less so a wide area (the plaza, the playground) still fits the atlas whole. */
-const ppmOf = (block: FloorBlock) => Math.min(PPM, (ATLAS_WIDTH - 2) / block.size[0]);
+const ppmOf = (block: FloorBlock) => Math.min(block.id === 'circuit' ? CIRCUIT_PPM : PPM, (ATLAS_WIDTH - 2) / block.size[0]);
 
 /** Shelf packing of the blocks into one atlas row after row. */
 function pack(blocks: readonly FloorBlock[]): { rects: Rect[]; height: number } {
@@ -232,7 +236,7 @@ export class FloorTexts {
       // A zone's own ground (the plaza around the signs, the playground): a faint floor, a dashed border and its name
       // at the front left.
       context.save();
-      context.globalAlpha = 0.1;
+      context.globalAlpha = ZONE_FILL;
       context.beginPath();
       context.roundRect(-w / 2 + 0.1, -d / 2 + 0.1, w - 0.2, d - 0.2, 0.5);
       context.fill();
@@ -300,6 +304,30 @@ export class FloorTexts {
         const slope = Math.cos(f * Math.PI * 2) * 0.16 * Math.PI * 2 / length;
         const heading = Math.atan2(along.z, along.x) + Math.atan(slope) + foot * 0.08;
         drawPrint(context, x, z, heading, foot, 1 - 0.6 * f);
+      }
+    } else if (block.id === 'circuit') {
+      // The car circuit: its middle line (`targets`) stroked `gap` wide in the zones' fill, no border or dashes. The
+      // corners are rounded through the midpoints so the road bends smoothly.
+      const { x: ax, z: az } = axes(block.yaw);
+      const local = block.targets.map((p) => {
+        const dx = p.x - block.position.x;
+        const dz = p.z - block.position.z;
+        return { x: dx * ax.x + dz * ax.z, z: dx * az.x + dz * az.z };
+      });
+      if (local.length > 1) {
+        context.save();
+        context.globalAlpha = ZONE_FILL;
+        context.lineWidth = block.gap;
+        context.lineCap = 'round';
+        context.lineJoin = 'round';
+        context.beginPath();
+        context.moveTo(local[0].x, local[0].z);
+        for (let k = 1; k < local.length - 1; k++) {
+          context.quadraticCurveTo(local[k].x, local[k].z, (local[k].x + local[k + 1].x) / 2, (local[k].z + local[k + 1].z) / 2);
+        }
+        context.lineTo(local[local.length - 1].x, local[local.length - 1].z);
+        context.stroke();
+        context.restore();
       }
     } else if (block.id === 'prints') {
       // A few prints where they were marked on the map, the same shoe as the ones leaving the room, fading as they go.
