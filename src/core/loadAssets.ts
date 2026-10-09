@@ -116,6 +116,13 @@ export function loadCircuit(signal: AbortSignal): Promise<GLTF> {
   return loadGlb(circuitFile, 'ROOM', signal);
 }
 
+export const chickFile = 'models/chick.glb';
+
+/** The chick in sunglasses that rains down with the Konami code: fetched only the first time the code is typed. */
+export function loadChick(signal: AbortSignal): Promise<GLTF> {
+  return loadGlb(chickFile, 'ROOM', signal);
+}
+
 async function loadGlb(file: string, kind: 'MODEL' | 'ROOM', signal: AbortSignal): Promise<GLTF> {
   signal.throwIfAborted();
   const url = new URL(`${import.meta.env.BASE_URL}${file}`, window.location.href);

@@ -188,6 +188,15 @@ export class FloorTexts {
         const after = text('floor.introAfter', edge * 100, 34, 58, 'left', 600, room);
         const middle = (edge * 100 + after - (edge * 100 + before)) / 2;
         text('floor.introNext', middle, 128, 58, 'center', 600, (w - 0.2) * 100);
+        // Under it the Shift key with the controls panel's own label, centred on the same line.
+        const keyHeight = 46;
+        context.font = `700 ${Math.round(keyHeight * 0.46)}px ${FONT}`;
+        const keyWidth = Math.max(keyHeight, context.measureText('SHIFT').width + keyHeight * 0.62);
+        context.font = `500 40px ${FONT}`;
+        const label = Math.min(context.measureText(t('controls.run')).width, room);
+        const start = middle - (keyWidth + 18 + label) / 2;
+        drawKey(context, 'SHIFT', start, 226 - keyHeight / 2, keyHeight);
+        text('controls.run', start + keyWidth + 18, 226, 40, 'left', 500, room);
       });
     } else if (block.id === 'controls') {
       const left = -w / 2 + 0.25;

@@ -115,6 +115,46 @@ function turnedEllipse(cx: number, cy: number, rx: number, ry: number, angle: nu
 /** A badge shield (HTML5, CSS3): flat top, sides tapering into a point. */
 const shield = (): Stroke => closed([0.06, 0.02], [0.94, 0.02], [0.86, 0.86], [0.5, 1.0], [0.14, 0.86]);
 
+/**
+ * An arrow `length` long through (cx, cy), pointing up turned by `angle` (clockwise on screen, y points down):
+ * the shaft, then the head in one go.
+ */
+function arrowStrokes(cx: number, cy: number, length: number, angle: number): Stroke[] {
+  const turn = ([x, y]: Point): Point => [cx + x * Math.cos(angle) - y * Math.sin(angle), cy + x * Math.sin(angle) + y * Math.cos(angle)];
+  const half = length / 2;
+  const head = length * 0.32;
+  return [[[0, half], [0, -half]].map((p) => turn(p as Point)), [[-head, -half + head], [0, -half], [head, -half + head]].map((p) => turn(p as Point))];
+}
+
+/**
+ * The Konami code as a gamepad would print it, after the «Grafitis · Pollito y Konami» canvas (option B): up, up,
+ * down, down on the first row; left, right, left, right and the B and A buttons, each in a loose ring, on the second.
+ */
+function konami(): Stroke[] {
+  const up = 0;
+  const down = PI;
+  const left = -PI / 2;
+  const right = PI / 2;
+  // Each arrow a touch off straight, like a hand in a hurry.
+  const rows: [number, number, number, number[]][] = [
+    [0.66, 0.445, 0.77, [up - 0.05, up + 0.07, down - 0.05, down + 0.05]],
+    [1.646, 0.418, 0.7, [left - 0.02, right - 0.05, left + 0.03, right + 0.03]],
+  ];
+  const starts = [1.12, 0.49];
+  const strokes: Stroke[] = [];
+  for (const [row, [y, length, step, angles]] of rows.entries()) {
+    for (const [k, angle] of angles.entries()) strokes.push(...arrowStrokes(starts[row] + k * step - 0.2, y - 0.35, length, angle));
+  }
+  for (const [char, cx] of [['B', 3.3], ['A', 4.1]] as const) {
+    const size = 0.366;
+    const glyph = LETTERS[char];
+    strokes.push(...lettering(char, cx - 0.2 - (glyph.width * size) / 2, 1.646 - 0.35 - size / 2, size));
+    // The ring runs a little past where it started.
+    strokes.push(arc(cx - 0.2 + 0.01, 1.646 - 0.35 + 0.01, 0.36, 0.34, -0.62 * PI, 1.48 * PI, 22));
+  }
+  return strokes;
+}
+
 /** Accents laid over the capital's top. */
 const ACCENTED: Record<string, [string, Stroke[]]> = {
   Á: ['A', [[[0.28, -0.12], [0.42, -0.26]]]],
@@ -151,7 +191,7 @@ export const SPRAY_CHARACTERS = [...Object.keys(LETTERS), ...Object.keys(ACCENTE
 export type SpraySymbol = { width: number; strokes: Stroke[]; blobs?: [number, number, number][] };
 export type SpraySymbolName =
   | 'crownline' | 'swoosh' | 'stitched' | 'cross' | 'zigzag' | 'arrowdown' | 'heartline' | 'splat' | 'dot'
-  | 'react' | 'js' | 'ts' | 'node' | 'git' | 'three' | 'vite' | 'html' | 'css' | 'terminal';
+  | 'react' | 'js' | 'ts' | 'node' | 'git' | 'three' | 'vite' | 'html' | 'css' | 'terminal' | 'konami';
 export const SPRAY_SYMBOLS: Record<SpraySymbolName, SpraySymbol> = {
   crownline: {
     width: 1,
@@ -220,4 +260,6 @@ export const SPRAY_SYMBOLS: Record<SpraySymbolName, SpraySymbol> = {
     width: 1.2,
     strokes: [closed([0.02, 0.06], [1.18, 0.06], [1.18, 0.94], [0.02, 0.94]), [[0.2, 0.32], [0.42, 0.52], [0.2, 0.72]], [[0.52, 0.74], [0.86, 0.74]]],
   },
+  // ↑ ↑ ↓ ↓ / ← → ← → (B) (A): the hint for the chick rain, painted on the ground near the intro's arrow keys.
+  konami: { width: 4.2, strokes: konami() },
 };

@@ -344,15 +344,76 @@ function paintSprayed(drawing: SprayDrawing, color: string, face: GraffitiFace, 
 
 const isSpraySymbol = (symbol: GraffitiSymbol): symbol is keyof typeof SPRAY_SYMBOLS => symbol in SPRAY_SYMBOLS;
 
-/** A symbol drawn as quick thick strokes and fills on a transparent mask. */
-function symbolMask(symbol: GraffitiSymbol, spot: GraffitiSpot, random: () => number): Canvas {
+/**
+ * The chick in sunglasses, as drawn on the «Grafitis · Pollito y Konami» canvas (option B): SVG paths in a 360 px box
+ * round (180, 176), drawn at CHICK_SCALE of the symbol's half size per box pixel.
+ */
+const CHICK = {
+  body: 'M180 72 C 240 70 282 118 280 178 C 278 238 236 272 180 272 C 122 272 80 236 82 176 C 84 118 124 74 180 72 Z',
+  tuft: 'M174 74 C 166 54 170 44 182 38 M184 72 C 188 54 198 48 208 52',
+  wings: 'M90 196 C 72 208 76 228 100 230 M270 196 C 288 208 284 228 260 230',
+  lenses: 'M108 136 L172 136 C172 168 164 186 142 186 C 116 186 106 166 108 136 Z M188 136 L252 136 C254 166 244 186 218 186 C 196 186 188 168 188 136 Z',
+  bar: 'M98 138 L262 138',
+  glints: 'M122 148 L140 166 M134 146 L142 154 M200 148 L218 166 M212 146 L220 154',
+  beak: 'M160 196 L200 196 L180 224 Z',
+  feet: 'M158 272 L154 300 L142 310 M154 300 L156 314 M154 300 L168 310 M202 272 L206 300 L194 310 M206 300 L208 314 M206 300 L220 310',
+};
+const CHICK_SCALE = 1 / 150;
+
+/** Into the chick's drawing box: centred on the symbol (already turned by the caller). */
+function chickBox(ctx: Context, half: number): void {
+  ctx.scale(half * CHICK_SCALE, half * CHICK_SCALE);
+  ctx.translate(-180, -176);
+}
+
+/** What the chick has in other colours than its feathers, over the painted piece: wings' creases, cheeks, shades, beak, feet. */
+function chickDetails(ctx: Context, centre: number, angle: number, outline: string): void {
+  ctx.save();
+  ctx.translate(centre, centre);
+  ctx.rotate(angle);
+  chickBox(ctx, SYMBOL_SIZE / 2);
+  ctx.lineCap = ctx.lineJoin = 'round';
+  ctx.filter = 'blur(0.8px)';
+  ctx.strokeStyle = outline;
+  ctx.lineWidth = 7;
+  ctx.stroke(new Path2D(CHICK.wings));
+  ctx.fillStyle = 'rgba(255, 128, 140, 0.6)';
+  for (const x of [118, 242]) {
+    ctx.beginPath();
+    ctx.arc(x, 206, 12, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = ctx.strokeStyle = '#111014';
+  ctx.fill(new Path2D(CHICK.lenses));
+  ctx.lineWidth = 8;
+  ctx.stroke(new Path2D(CHICK.lenses));
+  ctx.stroke(new Path2D(CHICK.bar));
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.lineWidth = 4;
+  ctx.stroke(new Path2D(CHICK.glints));
+  ctx.fillStyle = '#f08a1c';
+  ctx.strokeStyle = outline;
+  ctx.lineWidth = 3;
+  ctx.fill(new Path2D(CHICK.beak));
+  ctx.stroke(new Path2D(CHICK.beak));
+  ctx.lineWidth = 12;
+  ctx.stroke(new Path2D(CHICK.feet));
+  ctx.strokeStyle = '#f08a1c';
+  ctx.lineWidth = 7;
+  ctx.stroke(new Path2D(CHICK.feet));
+  ctx.restore();
+}
+
+/** A symbol drawn as quick thick strokes and fills on a transparent mask, and the turn it was drawn at. */
+function symbolMask(symbol: GraffitiSymbol, spot: GraffitiSpot, random: () => number): { mask: Canvas; angle: number } {
   const size = SYMBOL_SIZE;
   const pad = size * 0.3;
   const mask = canvas(size + pad * 2, size + pad * 2);
   const ctx = context(mask);
   const shake = () => (random() - 0.5) * size * 0.04;
   ctx.translate(pad + size / 2, pad + size / 2);
-  ctx.rotate((random() - 0.5) * 0.2);
+  const angle = (random() - 0.5) * 0.2;
+  ctx.rotate(angle);
   ctx.fillStyle = ctx.strokeStyle = '#fff';
   ctx.lineCap = ctx.lineJoin = 'round';
   ctx.lineWidth = size * 0.11;
@@ -431,8 +492,18 @@ function symbolMask(symbol: GraffitiSymbol, spot: GraffitiSpot, random: () => nu
       ctx.lineTo(-s * 0.22 + shake(), s * 0.75);
       ctx.stroke();
       break;
+    case 'chick':
+      // The feathers only: body, tuft and the wings sticking out; chickDetails adds the rest over the paint.
+      chickBox(ctx, s);
+      ctx.fill(new Path2D(CHICK.body));
+      ctx.lineWidth = 13;
+      ctx.stroke(new Path2D(CHICK.tuft));
+      ctx.lineWidth = 20;
+      ctx.stroke(new Path2D(CHICK.wings));
+      break;
   }
-  return wobbled(mask, spot.style === 'tag' ? 4 : 3, random);
+  // The chick keeps its lines: its glasses and beak are drawn over it where the drawing says.
+  return { mask: symbol === 'chick' ? mask : wobbled(mask, spot.style === 'tag' ? 4 : 3, random), angle };
 }
 
 /** Alpha of every pixel of a canvas. */
@@ -453,7 +524,7 @@ export function paintSpot(spot: GraffitiSpot, language: Language = 'es'): Canvas
   const random = seeded(spot.seed * 7919 + 13);
   if (!spot.symbol) return paintSprayed(sprayWords(textFor(spot, language), spot, random), spot.color, spot.face, random);
   if (isSpraySymbol(spot.symbol)) return paintSprayed(spraySymbol(spot.symbol, random), spot.color, spot.face, random);
-  const mask = symbolMask(spot.symbol, spot, random);
+  const { mask, angle } = symbolMask(spot.symbol, spot, random);
   const top = spot.color;
   const bottom = spot.fade ?? spot.color;
   const ink = spot.outline ?? top;
@@ -511,6 +582,7 @@ export function paintSpot(spot: GraffitiSpot, language: Language = 'es'): Canvas
     }
     ctx.drawImage(shine, 0, 0);
   }
+  if (spot.symbol === 'chick') chickDetails(ctx, mask.width / 2, angle, ink);
   // Speckles where the mist thins out round the strokes.
   const haze = canvas(out.width, out.height);
   const hazy = context(haze);

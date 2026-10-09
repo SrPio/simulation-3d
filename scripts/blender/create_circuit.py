@@ -17,7 +17,7 @@ outside.glb and reads it the same way (src/scene/outsideData.ts), so the extras 
 - `Floor_StartLine`/`Floor_FinishLine` (floor `checker`) and `Floor_ChairHint` (floor `chairhint`: an arrow towards the
   chair and "How did that get here?"), `Zone_Circuit` (reset zone, target 'circuit').
 - The end wall: `Wall_Brick_<i>` loose bricks of group 'wall' (a wall across the end of the road and a stepped one beside it)
-  and `Zone_Wall` (reset zone, target 'wall').
+  (no reset zone: Restablecer puts them back).
 Everything is placed by its index along create_outside.CIRCUIT, a side offset and an advance, turned to the road's
 heading rounded to a quarter turn (the perspective rule: axis aligned, fronts facing three.js +Z where it matters).
 """
@@ -56,9 +56,8 @@ JUMP = (2.6, 2.6, 0.9)
 BUMP = (0.3, 4.4, 0.07)
 # Past the end of the road (it ends heading -Z at about z 33): a brick wall across it and a stepped one beside it, where
 # the user drew them; three.js ground x, z of their middles.
-END_WALL, END_WALL_BRICKS, END_WALL_LAYERS = (-5.8, 29.0), 12, 7
+END_WALL, END_WALL_BRICKS, END_WALL_LAYERS = (-3.95, 29.0), 12, 7   # centred on the road's last point
 STEP_WALL, STEP_WALL_ROWS = (-9.6, 31.0), (5, 4, 3, 2, 1)
-WALL_ZONE = (-1.0, 30.3)
 
 
 # ------------------------------------------------------------------ placing along the road
@@ -196,6 +195,8 @@ def palette():
         'black': m('SiteBlack', (0.03, 0.03, 0.035), 0.6),
         'steel': m('Steel', (0.6, 0.6, 0.66), 0.35, 0.8),
         'sand': m('Sand', (0.78, 0.66, 0.43), 0.95),
+        'burlap': m('Burlap', (0.42, 0.3, 0.16), 0.95),
+        'tie': m('BurlapTie', (0.25, 0.16, 0.08), 0.9),
         'rubber': m('Rubber', (0.04, 0.04, 0.045), 0.9),
         'green': m('BarrowGreen', (0.1, 0.45, 0.25), 0.55),
         'brick': m('CircuitBrick', (0.72, 0.3, 0.2), 0.85),
@@ -264,6 +265,65 @@ def build_chair(m, root):
     return chair
 
 
+# ------------------------------------------------------------------ sandbags
+
+# One sack (half length along X, half width, half height) and how much a sack of the top row sags into the gap
+# between the two it rests on. Two shared meshes, placed as children of each sandbag wall (the GLB keeps one copy).
+SACK = (0.25, 0.16, 0.12)
+SACK_SAG = 0.03
+
+
+def sack_mesh(name, mats, sag):
+    """A filled burlap sack: a plump pillow body (squarish in plan, lens-shaped across, pinched to a seam round its
+    middle), thinner towards its ends, the +X end gathered and tied into a little tuft (material 1), a flattened
+    underside where it rests and, for the top row, a sag in the middle. Smooth shaded, about 200 triangles."""
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=18, v_segments=10, radius=1.0)
+    signed = lambda value, exponent: math.copysign(abs(value) ** exponent, value)
+    a, b, h = SACK
+    for v in bm.verts:
+        lat = math.atan2(v.co.z, math.hypot(v.co.x, v.co.y))
+        lon = math.atan2(v.co.y, v.co.x)
+        x = signed(math.cos(lat), 0.9) * signed(math.cos(lon), 0.4)
+        y = signed(math.cos(lat), 0.9) * signed(math.sin(lon), 0.55)
+        z = signed(math.sin(lat), 1.1)
+        z *= 1 - 0.4 * abs(x) ** 4          # the filling slumps towards the ends
+        y *= 1 - 0.12 * abs(x) ** 6
+        if x > 0.72:                         # gathered and tied at +X
+            t = (x - 0.72) / 0.28
+            y *= 1 - 0.75 * t
+            z *= 1 - 0.7 * t
+            x += 0.22 * t * t
+        co = Vector((x * a, y * b, z * h))
+        if co.z < -0.6 * h:                  # flattened where it rests
+            co.z = -0.6 * h + (co.z + 0.6 * h) * 0.25
+        co.z -= sag * (1 - min(1.0, abs(x)) ** 2)
+        v.co = co
+    for face in bm.faces:
+        face.smooth = True
+        face.material_index = 1 if all(v.co.x > a * 0.97 for v in face.verts) else 0
+    return proto_mesh(name, bm, mats)
+
+
+def sandbag_wall(wall, meshes, seed=0):
+    """Five sacks side by side along the wall's X with four on top over the gaps, each turned a little, the end ones
+    with their tied ends outwards; children of the decor object `wall`."""
+    rng = random.Random(seed)
+    h = SACK[2]
+    # A bottom sack's flattened underside is 0.7 h below its centre; a top sack's slimmer ends rest on the middles of
+    # the two below it (their tops h above their centres), its sagging middle dipping into the gap between them.
+    rows = ((5, 0.7 * h, 'sack'), (4, 0.7 * h + h + 0.6 * h + 0.004, 'sack_top'))
+    k = 0
+    for count, z, kind in rows:
+        for i in range(count):
+            x = (i - (count - 1) / 2) * 0.5 + rng.uniform(-0.02, 0.02)
+            # The end sacks show their tied ends outwards; the others alternate (tucked against a neighbour).
+            outwards = 0.0 if i == count - 1 else (math.pi if i == 0 or (i + k) % 2 else 0.0)
+            bag = obj(f'{wall.name}_Bag{k}', meshes[kind], wall, (x, rng.uniform(-0.025, 0.025), z), outwards + rng.uniform(-0.08, 0.08))
+            bag.rotation_euler.x = rng.uniform(-0.03, 0.03)
+            k += 1
+
+
 # ------------------------------------------------------------------ the pieces and fixed things
 
 def build_meshes(m):
@@ -290,15 +350,8 @@ def build_meshes(m):
     meshes['bump'] = mesh('Circuit_Bump', lambda bm: bm_prism(bm, [(BUMP[0] / 2, 0), (-BUMP[0] / 2, 0), (-0.05, BUMP[2]), (0.05, BUMP[2])], -BUMP[1] / 2, BUMP[1] / 2, 0), [m['wood']])
     meshes['jersey'] = mesh('Circuit_Jersey', lambda bm: bm_prism(bm, [(0.3, 0), (0.3, 0.08), (0.12, 0.3), (0.08, 0.8), (-0.08, 0.8), (-0.12, 0.3), (-0.3, 0.08), (-0.3, 0)], -1.0, 1.0, 0), [m['concrete']])
 
-    def sandbags(bm):
-        rng = random.Random(4)
-        for row, (count, z) in enumerate(((5, 0.1), (4, 0.27))):
-            for k in range(count):
-                geom = bmesh.ops.create_icosphere(bm, subdivisions=1, radius=1.0)
-                cx = (k - (count - 1) / 2) * 0.5
-                for v in geom['verts']:
-                    v.co = Vector((v.co.x * 0.27 * rng.uniform(0.95, 1.05) + cx, v.co.y * 0.19, v.co.z * 0.1 + z))
-    meshes['sandbags'] = mesh('Circuit_Sandbags', sandbags, [m['sand']])
+    meshes['sack'] = sack_mesh('Circuit_Sandbag', [m['burlap'], m['tie']], sag=0.0)
+    meshes['sack_top'] = sack_mesh('Circuit_SandbagTop', [m['burlap'], m['tie']], sag=SACK_SAG)
 
     def pallet(bm):
         for k in range(5):
@@ -548,7 +601,8 @@ def build(root):
     for k, i in enumerate(range(76, 88, 2)):
         fixed_thing('jersey', meshes['jersey'], road(i, 1.3 if k % 2 else -1.3), yaw_along(i, QUARTER), (2.2, 0.8), (2.0, 0.8, 0.6))
     for i in (92, 106):
-        fixed_thing('sandbags', meshes['sandbags'], road(i, outer(i) * (HALF + 0.6)), yaw_along(i, QUARTER), (2.8, 0.8), (2.6, 0.4, 0.45))
+        wall = fixed_thing('sandbags', None, road(i, outer(i) * (HALF + 0.6)), yaw_along(i, QUARTER), (2.8, 0.8), (2.6, 0.4, 0.45))
+        sandbag_wall(wall, meshes, seed=i)
     for i, side, layers in ((46, -1, 3), (50, 1, 2), (140, -1, 2), (144, -1, 3)):
         point = road(i, side * (HALF + 0.8))
         for layer in range(layers):
@@ -620,8 +674,8 @@ def build(root):
 
 def build_end_wall(m, meshes, parent, root):
     """Past the end of the road: a running-bond brick wall across it (STOP is sprayed on it, src/scene/graffitiData.ts)
-    and a small stepped wall beside it along the road, both loose bricks of group 'wall' that can be knocked down;
-    `Zone_Wall` puts them back."""
+    and a small stepped wall beside it along the road, both loose bricks of group 'wall' that can be knocked down
+    (Restablecer puts them back; there is no reset zone)."""
     dark = mesh('Prop_CircuitBrickDark', lambda bm: bm_box(bm, (-out.BRICK_W / 2, -out.BRICK_D / 2, -out.BRICK_H / 2),
                                                           (out.BRICK_W / 2, out.BRICK_D / 2, out.BRICK_H / 2), 0),
                 [room.material('CircuitBrickDark', (0.55, 0.22, 0.16), 0.9)])
@@ -647,7 +701,6 @@ def build_end_wall(m, meshes, parent, root):
     for layer, row in enumerate(STEP_WALL_ROWS):
         for b in range(row):
             brick((x0, z0 + (b - (row - 1) / 2) * pitch), layer, QUARTER)
-    room.anchor('Zone_Wall', at(WALL_ZONE), root, 0.0, zone='reset', target='wall', area=list(out.RESET_AREA))
 
 
 def export_glb(root):

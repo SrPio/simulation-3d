@@ -72,9 +72,11 @@ def main():
     picks, seen = [], set()
     for obj in sorted(objects, key=lambda o: o.name):
         parent = obj.parent.name if obj.parent else ''
-        if obj.type != 'MESH' or parent not in ('CircuitPieces', 'CircuitDecor') or obj.data.name in seen:
+        # A decor empty made of shared child meshes (a sandbag wall) counts by its first child's mesh.
+        data = obj.data if obj.type == 'MESH' else (obj.children[0].data if obj.type == 'EMPTY' and obj.children and obj.children[0].type == 'MESH' else None)
+        if data is None or parent not in ('CircuitPieces', 'CircuitDecor') or data.name in seen:
             continue
-        seen.add(obj.data.name)
+        seen.add(data.name)
         picks.append(obj)
     picks += [objects['Tape_0']]
     scene = setup_scene('Catalog')

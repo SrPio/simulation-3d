@@ -1,6 +1,6 @@
 import type { MoveIntent } from '../character/CharacterController';
 
-export type PressAction = 'interact' | 'laptop' | 'jump' | 'open' | 'throw' | 'punch' | 'kick';
+export type PressAction = 'interact' | 'laptop' | 'jump' | 'open' | 'throw' | 'punch' | 'kick' | 'konami';
 const PRESSES: Record<string, PressAction> = {
   KeyE: 'interact', KeyL: 'laptop', Space: 'jump', Enter: 'open', NumpadEnter: 'open', KeyF: 'throw', KeyJ: 'punch', KeyK: 'kick',
 };
@@ -12,6 +12,18 @@ const BINDINGS: Record<string, 'forward' | 'back' | 'left' | 'right'> = {
   KeyW: 'forward', ArrowUp: 'forward', KeyS: 'back', ArrowDown: 'back',
   KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
 };
+
+/** The Konami code: ↑ ↑ ↓ ↓ ← → ← → B A (key codes, so it works on any keyboard layout). */
+export const KONAMI = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'KeyB', 'KeyA'] as const;
+
+/** Add a pressed key to the recent ones (kept as long as the code); true when they now spell the Konami code, which empties them. */
+export function pushKonami(recent: string[], code: string): boolean {
+  recent.push(code);
+  if (recent.length > KONAMI.length) recent.splice(0, recent.length - KONAMI.length);
+  if (recent.length < KONAMI.length || recent.some((key, i) => key !== KONAMI[i])) return false;
+  recent.length = 0;
+  return true;
+}
 
 /** Whether a key event belongs to a control that uses the keyboard itself (fields, selects, sliders). */
 function ownsKeyboard(target: EventTarget | null): boolean {
@@ -36,6 +48,8 @@ export class KeyboardInput {
   onRunChange?: (running: boolean) => void;
   /** One call per physical press of E (sit/stand), L (laptop), Space (jump), F (throw) or Enter (open); key repeat is ignored. */
   onPress?: (action: PressAction) => void;
+  /** The last keys pressed, for the Konami code (it calls onPress with 'konami'). */
+  private readonly recent: string[] = [];
   /** Called when a held strike or throw key (J, K, F) is released, or the window loses focus while it is down. */
   onRelease?: (action: HoldAction) => void;
 
@@ -71,6 +85,9 @@ export class KeyboardInput {
   }
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (!event.repeat && this.enabled && !event.ctrlKey && !event.altKey && !event.metaKey && !ownsKeyboard(event.target) && pushKonami(this.recent, event.code)) {
+      this.onPress?.('konami');
+    }
     if (event.key === 'Shift') {
       if (!event.repeat && this.enabled && !event.ctrlKey && !event.altKey && !event.metaKey && !ownsKeyboard(event.target)) {
         this.running = !this.running;

@@ -48,6 +48,13 @@ export const FLAP_LIMIT = 2.6;
 export type Flap = { body: BodyType; hinge: HingeType; at: { position: Vec; quaternion: Quat } };
 /** Collision groups: flaps only meet the ground, the static boxes, laptops and the character, not the loose pieces. */
 const GROUP = { world: 1, piece: 2, flap: 4 } as const;
+/**
+ * A raining chick (the Konami code): a ball round its body (`centre` above its feet) whose weight sits `low` below
+ * that centre, so like a roly-poly toy it rocks back onto its feet wherever it lands.
+ */
+export const CHICK = { radius: 0.16, centre: 0.16, low: 0.07, mass: 0.5 } as const;
+/** At most this many chicks at once: a new shower retires the oldest. */
+export const MAX_CHICKS = 30;
 /** At most this many thrown laptops at once: the next throw retires the oldest. */
 export const MAX_THROWN = 3;
 
@@ -65,7 +72,7 @@ export const STRIKE_SPEED = { min: 1.5, max: 9 };
 const STRIKE_LIFT = 0.35;
 
 type Settings = { material: string; sleepSpeed: number; angularDamping: number; linearDamping: number };
-const SETTINGS: Record<PieceGroup | 'laptop', Settings> = {
+const SETTINGS: Record<PieceGroup | 'laptop' | 'chick', Settings> = {
   // Generous sleep limits: a letter resting against another keeps a faint rocking that must still count as asleep.
   name: { material: 'letter', sleepSpeed: 0.2, angularDamping: 0.5, linearDamping: 0.1 },
   tag: { material: 'letter', sleepSpeed: 0.2, angularDamping: 0.5, linearDamping: 0.1 },
@@ -77,6 +84,7 @@ const SETTINGS: Record<PieceGroup | 'laptop', Settings> = {
   circuit: { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.3, linearDamping: 0.08 },
   wall: { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.4, linearDamping: 0.1 },
   laptop: { material: 'laptop', sleepSpeed: 0.15, angularDamping: 0.3, linearDamping: 0.05 },
+  chick: { material: 'chick', sleepSpeed: 0.12, angularDamping: 0.9, linearDamping: 0.2 },
 };
 /** The ball rolls: it keeps less damping than the pins but still comes to rest on the flat ground. */
 const BALL: Settings = { material: 'ball', sleepSpeed: 0.12, angularDamping: 0.12, linearDamping: 0.05 };
@@ -85,6 +93,8 @@ const CONTACTS: [string, string, number, number][] = [
   ['brick', 'ground', 0.7, 0.02], ['brick', 'brick', 0.65, 0.02],
   ['pin', 'ground', 0.3, 0.1], ['pin', 'pin', 0.2, 0.4], ['pin', 'ball', 0.1, 0.55],
   ['ball', 'ground', 0.4, 0.15], ['laptop', 'ground', 0.5, 0.15],
+  // Chicks bounce a little off the ground and off each other.
+  ['chick', 'ground', 0.6, 0.35], ['chick', 'chick', 0.4, 0.3],
 ];
 
 /**
@@ -100,6 +110,9 @@ export class PropPhysics {
   readonly laptops: ThrownLaptop[] = [];
   /** Laptops taken out of the world (the oldest past MAX_THROWN, or fallen off) for the viewer to fade away; it empties the list. */
   readonly retired: ThrownLaptop[] = [];
+  /** Chicks in the world, oldest first, and the ones taken out (past MAX_CHICKS) for the viewer to shrink away; it empties the list. */
+  readonly chicks: BodyType[] = [];
+  readonly retiredChicks: BodyType[] = [];
   private readonly cannon: Cannon;
   private readonly rest: PieceBody[];
   private readonly groups: PieceGroup[];
@@ -141,7 +154,7 @@ export class PropPhysics {
     this.world.broadphase = new SAPBroadphase(this.world);
     // More solver passes: thin pieces resting on an edge and stacked bricks settle and sleep instead of rocking forever.
     (this.world.solver as unknown as { iterations: number }).iterations = 20;
-    for (const name of ['ground', 'letter', 'brick', 'pin', 'ball', 'laptop']) this.materials.set(name, new Material(name));
+    for (const name of ['ground', 'letter', 'brick', 'pin', 'ball', 'laptop', 'chick']) this.materials.set(name, new Material(name));
     this.world.defaultContactMaterial.friction = 0.4;
     this.world.defaultContactMaterial.restitution = 0.1;
     for (const [a, b, friction, restitution] of CONTACTS) {
@@ -349,6 +362,9 @@ export class PropPhysics {
     if (!group) {
       for (const laptop of [...this.laptops]) this.removeLaptop(laptop);
       this.retired.length = 0;
+      for (const chick of this.chicks) this.world.removeBody(chick);
+      this.chicks.length = 0;
+      this.retiredChicks.length = 0;
       // The character is put back too: its pusher jumps there on the next step instead of sweeping across the pieces
       // just put back (at the speed of that jump it would fling them away).
       this.idle = true;
@@ -419,7 +435,7 @@ export class PropPhysics {
     const along = { x: direction.x / length, z: direction.z / length };
     const speed = STRIKE_SPEED.min + (STRIKE_SPEED.max - STRIKE_SPEED.min) * Math.min(Math.max(power, 0), 1);
     let hits = 0;
-    for (const body of [...this.bodies, ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid])]) {
+    for (const body of [...this.bodies, ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid]), ...this.chicks]) {
       // Only what is in front of the character: a fist or foot can reach past a piece it is pressed against.
       if ((body.position.x - from.x) * along.x + (body.position.z - from.z) * along.z <= 0) continue;
       // Distance to the body's bounds, not its centre: a kick at hip height reaches the top of a short letter.
@@ -439,6 +455,31 @@ export class PropPhysics {
     if (hits) this.idle = false;
     this.breakJoints();
     return hits;
+  }
+
+  /**
+   * A chick falling from the sky: its feet at `feet`, turned by `yaw`, with a velocity and a spin. Past MAX_CHICKS the
+   * oldest one is retired.
+   */
+  dropChick(feet: Vec, yaw: number, velocity: Vec, spin: Vec): BodyType {
+    const { Body, Sphere, Vec3 } = this.cannon;
+    while (this.chicks.length >= MAX_CHICKS) {
+      const old = this.chicks.shift()!;
+      this.world.removeBody(old);
+      this.retiredChicks.push(old);
+    }
+    const body = new Body({ mass: CHICK.mass, material: this.materials.get('chick') });
+    // The body's origin is its centre of mass, below the ball's centre: it always rolls back upright.
+    body.addShape(new Sphere(CHICK.radius), new Vec3(0, CHICK.low, 0));
+    this.configure(body, SETTINGS.chick);
+    body.position.set(feet.x, feet.y + CHICK.centre - CHICK.low, feet.z);
+    body.quaternion.setFromEuler(0, yaw, 0);
+    body.velocity.set(velocity.x, velocity.y, velocity.z);
+    body.angularVelocity.set(spin.x, spin.y, spin.z);
+    this.world.addBody(body);
+    this.chicks.push(body);
+    this.idle = false;
+    return body;
   }
 
   /** Take every thrown laptop away (they shrink out in the viewer like retired ones); the pieces stay as they are. */
@@ -508,13 +549,14 @@ export class PropPhysics {
     const asleep = this.cannon.Body.SLEEPING;
     return this.bodies.some((body) => body.sleepState !== asleep)
       || this.flaps.some((flaps) => flaps.some((flap) => flap.body.sleepState !== asleep))
-      || this.laptops.some((laptop) => laptop.base.sleepState !== asleep || laptop.lid.sleepState !== asleep);
+      || this.laptops.some((laptop) => laptop.base.sleepState !== asleep || laptop.lid.sleepState !== asleep)
+      || this.chicks.some((chick) => chick.sleepState !== asleep);
   }
 
   private near(pusher: Pusher): boolean {
     const close = (body: BodyType) => Math.abs(body.position.x - pusher.x) < WAKE_DISTANCE && Math.abs(body.position.z - pusher.z) < WAKE_DISTANCE
       && Math.hypot(body.position.x - pusher.x, body.position.z - pusher.z) < WAKE_DISTANCE;
-    return this.bodies.some(close) || this.laptops.some((laptop) => close(laptop.base));
+    return this.bodies.some(close) || this.laptops.some((laptop) => close(laptop.base)) || this.chicks.some(close);
   }
 
   /**
@@ -527,7 +569,7 @@ export class PropPhysics {
     const movers: { x: number; z: number; reach: number }[] = [];
     // The character only wakes what it walks into: standing still next to a piece lets it sleep.
     if (pusher && !this.idle && Math.hypot(pusher.x - this.pusher.position.x, pusher.z - this.pusher.position.z) > 0.002) movers.push({ x: pusher.x, z: pusher.z, reach: 0.8 });
-    const moving = [...this.bodies, ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid])];
+    const moving = [...this.bodies, ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid]), ...this.chicks];
     for (const body of moving) {
       if (body.sleepState === asleep) continue;
       const speed = body.velocity.length();
@@ -549,7 +591,7 @@ export class PropPhysics {
         leg.wakeUp();
       }
     }
-    for (const body of this.bodies) {
+    for (const body of [...this.bodies, ...this.chicks]) {
       if (body.sleepState !== asleep) continue;
       for (const mover of movers) {
         if (Math.abs(body.position.x - mover.x) < mover.reach && Math.abs(body.position.z - mover.z) < mover.reach) {
@@ -618,6 +660,12 @@ export class PropPhysics {
       if (body.position.y < this.groundY - 2 || Math.hypot(body.position.x - rest.position.x, body.position.z - rest.position.z) > STRAY_DISTANCE) this.place(body, rest);
     }
     for (const laptop of [...this.laptops]) if (laptop.base.position.y < this.groundY - 2) this.retire(laptop);
+    for (const chick of [...this.chicks]) {
+      if (chick.position.y > this.groundY - 2) continue;
+      this.chicks.splice(this.chicks.indexOf(chick), 1);
+      this.world.removeBody(chick);
+      this.retiredChicks.push(chick);
+    }
     return true;
   }
 

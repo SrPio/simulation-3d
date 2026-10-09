@@ -150,6 +150,17 @@ def letter_object(name, polygons, scale, offset, mat, depth=LETTER_DEPTH, standi
     return obj
 
 
+def share_glyph(obj, key, shared):
+    """Repeated glyphs (the name's A, R and L, the tagline's e) use the first copy's mesh: the GLB stores it once."""
+    if key in shared:
+        old = obj.data
+        obj.data = shared[key]
+        bpy.data.meshes.remove(old)
+        shared[key].name = key
+    else:
+        shared[key] = obj.data
+
+
 def build_letters(root):
     glyphs = json.loads(GLYPHS.read_text(encoding='utf8'))
     scale = CAP_HEIGHT / glyphs['capHeight']
@@ -164,6 +175,7 @@ def build_letters(root):
             pen += glyph['advance'] * scale + WORD_SPACE
     width = pen - TRACKING
     letters = room.anchor('Letters', (NAME_END_X - width / 2, NAME_Y, GROUND_Z), root, 0.0)
+    shared = {}
     for index, (char, polygons, x) in enumerate(placed):
         obj = letter_object(f'Letter_{index:02d}_{char}', polygons, scale, x - width / 2, mat)
         obj.data.name = obj.name
@@ -174,6 +186,7 @@ def build_letters(root):
         obj.location = (location.x, location.y, dz / 2)   # every glyph stands on the ground
         obj.data.shade_smooth()
         obj.data.set_sharp_from_angle(angle=math.radians(35))
+        share_glyph(obj, f'Letter_{char}', shared)
     return letters
 
 
@@ -181,7 +194,7 @@ def build_tagline(root, glyphs, mat):
     tag = glyphs['tag']
     scale = TAG_CAP / glyphs['capHeight']
     group = room.anchor('Tagline', (TAG_START_X, TAG_Y, GROUND_Z), root, 0.0)
-    pen, index = 0.0, 0
+    pen, index, shared = 0.0, 0, {}
     for glyph in tag['letters']:
         if not glyph['polygons']:
             pen += glyph['advance'] * scale + WORD_SPACE
@@ -197,6 +210,7 @@ def build_tagline(root, glyphs, mat):
         obj.location = (location.x, location.y, dz / 2)
         obj.data.shade_smooth()
         obj.data.set_sharp_from_angle(angle=math.radians(35))
+        share_glyph(obj, f'Tag_{glyph["char"]}', shared)
         pen += glyph['advance'] * scale + TAG_TRACKING
         index += 1
     return group
@@ -209,7 +223,7 @@ def build_tagline(root, glyphs, mat):
 # points towards the front (three.js yaw about +Y, the same angle as a Blender rotation about Z).
 BLOCK_YAW = 0.0
 INTRO = (9.0, -1.3)            # centre of the arrow keys, in the gap of the intro sentence
-INTRO_SIZE, INTRO_GAP = (12.4, 3.6), 2.4
+INTRO_SIZE, INTRO_GAP = (12.4, 5.0), 2.4   # deep enough for the Shift line under the sentence
 KEY_SIZE, KEY_HEIGHT, KEY_PITCH = 0.6, 0.3, 0.68
 CROSSROADS = (10.1, 12.3)      # where the footprints out of the room lead
 # Lamppost in the crossroads circle: pole top, pole radius, and the arrow boards from ARROWS_TOP down by ARROW_STEP.
@@ -533,8 +547,8 @@ TREES = [(-15.5, 10.5, 0), (-11.5, 12.0, 1), (-16.0, 15.0, 0), (-12.5, 19.5, 1),
 ROCKS = [(-11.0, 16.5, 0.9), (46.0, 10.6, 0.75)]
 BENCHES = [(point, 0.0) for point in ABOUT_BENCHES] + [((-13.5, 14.0), 0.0),
            ((3.9, 12.3), math.pi / 2)]   # the last one at the crossroads' left side, off the paths to the zones
-CRATES = [(-10.5, 20.5, 0.0), (-10.0, 21.2, 0.0), (-7.6, 30.0, 0.0), (-7.08, 30.0, 0.0), (-7.34, 30.0, 1.0), (-4.5, 29.5, 0.0)]   # in front of the circuit's end wall
-CONES = [(-7.5, 31.0), (-6.3, 31.4), (-5.1, 31.0), (-3.9, 31.4), (15.5, 4.0), (16.6, 4.6)]
+CRATES = [(-10.5, 20.5, 0.0), (-10.0, 21.2, 0.0), (-5.75, 30.0, 0.0), (-5.23, 30.0, 0.0), (-5.49, 30.0, 1.0), (-2.65, 29.5, 0.0)]   # in front of the circuit's end wall
+CONES = [(-5.65, 31.0), (-4.45, 31.4), (-3.25, 31.0), (-2.05, 31.4), (15.5, 4.0), (16.6, 4.6)]
 CONE_ORIGIN = 0.15
 CONE_CYLINDERS = [(0.18, 0.04, 0.02), (0.13, 0.2, 0.14), (0.085, 0.2, 0.34), (0.045, 0.1, 0.49)]
 
@@ -550,31 +564,250 @@ def bm_box(bm, lo, hi, material=0):
     return geom
 
 
-def tree_mesh(name, variant, trunk_mat, leaf_mat):
-    """Low-poly tree: a six-sided trunk and two or three faceted crown blobs (about 200 triangles)."""
+# Soft "toy" look for the round decor: trees, bushes and rocks are smooth-shaded shapes built once per variant and
+# shared by every copy (the GLB stores one mesh per variant). Puffy shapes are clusters of overlapping soft spheres, each
+# toned by its height (light on top, shade underneath); faces buried inside another puff are dropped.
+LEAF_TONES = [('LeavesLight', (0.15, 0.56, 0.06)), ('Leaves', (0.09, 0.42, 0.045)), ('LeavesShade', (0.035, 0.2, 0.03))]
+TRUNK_FACES, ROCK_FACES = 500, 520             # triangles (outside.glb size budget)
+
+
+def leaf_materials():
+    return [bpy.data.materials.get(name) or room.material(name, color, 0.8) for name, color in LEAF_TONES]
+
+
+def set_material(geom, index):
+    for face in {f for v in geom['verts'] for f in v.link_faces}:
+        face.material_index = index
+
+
+def temporary(name, data):
+    obj = bpy.data.objects.new(name, data)
+    bpy.context.collection.objects.link(obj)
+    return obj
+
+
+def apply_modifiers(obj):
+    bpy.ops.object.select_all(action='DESELECT')
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    for mod in list(obj.modifiers):
+        bpy.ops.object.modifier_apply(modifier=mod.name)
+
+
+def reduce_to(obj, triangles):
+    """Collapse-decimate a temporary object to about `triangles` triangles (the modifier counts triangles)."""
     bm = bmesh.new()
-    trunk = bmesh.ops.create_cone(bm, cap_ends=True, segments=6, radius1=0.13, radius2=0.09, depth=1.2)
-    for v in trunk['verts']:
-        v.co.z += 0.6
+    bm.from_mesh(obj.data)
+    bmesh.ops.triangulate(bm, faces=bm.faces)
+    bm.to_mesh(obj.data)
+    bm.free()
+    if len(obj.data.polygons) > triangles:
+        mod = obj.modifiers.new('Reduce', 'DECIMATE')
+        mod.ratio = triangles / len(obj.data.polygons)
+        apply_modifiers(obj)
+
+
+def puffs(rng, centre, radii, count, size, squash_bottom=0.45):
+    """Puff balls spread over an ellipsoid shell (Fibonacci points, jittered), fewer underneath, plus a core."""
+    cx, cy, cz = centre
+    rx, ry, rz = radii
+    balls = [(cx, cy, cz, min(rx, ry, rz) * 0.95)]
+    golden = math.pi * (3 - math.sqrt(5))
+    for k in range(count):
+        z = 1 - 2 * (k + 0.5) / count
+        if z < -0.55:
+            continue
+        ring = math.sqrt(1 - z * z)
+        a = k * golden + rng.uniform(-0.3, 0.3)
+        s = size * rng.uniform(0.8, 1.2) * (0.85 if z < -0.1 else 1.0)
+        zz = z * (squash_bottom if z < 0 else 1.0)
+        balls.append((cx + math.cos(a) * ring * rx * 0.8, cy + math.sin(a) * ring * ry * 0.8, cz + zz * rz * 0.8, s))
+    return balls
+
+
+def skeleton_object(name, chains, subdiv=1):
+    """Smooth tubes round skeleton chains [(point, radius), ...] (skin + subdivision). Each chain is its own tube, so
+    branches and roots simply grow out of the trunk instead of meeting in a lumpy skin junction."""
+    points, radii, edges, roots = [], [], [], set()
+    for chain in chains:
+        roots.add(len(points))
+        for k, (co, r) in enumerate(chain):
+            if k:
+                edges.append((len(points) - 1, len(points)))
+            points.append(co)
+            radii.append(r)
+    data = bpy.data.meshes.new(name)
+    data.from_pydata(points, edges, [])
+    obj = temporary(name, data)
+    skin = obj.modifiers.new('Skin', 'SKIN')
+    skin.use_smooth_shade = True
+    if not data.skin_vertices:
+        data.skin_vertices.new()
+    for i, r in enumerate(radii):
+        data.skin_vertices[0].data[i].radius = (r, r)
+        data.skin_vertices[0].data[i].use_root = i in roots
+    sub = obj.modifiers.new('Smooth', 'SUBSURF')
+    sub.levels = sub.render_levels = subdiv
+    apply_modifiers(obj)
+    return obj
+
+
+# Tree variants: fork height, branch directions (angle, spread, rise), canopy centre height and radii, puff count/size.
+TREE_VARIANTS = [
+    dict(fork=1.05, lean=(0.05, 0.0), branches=[(0.3, 0.62, 0.75), (2.0, 0.66, 0.7), (3.5, 0.6, 0.8), (5.0, 0.62, 0.72)],
+         canopy=(0.0, 0.0, 2.2), radii=(0.88, 0.88, 0.68), count=30, size=0.37),
+    dict(fork=1.2, lean=(-0.06, 0.04), branches=[(1.0, 0.5, 0.9), (3.1, 0.52, 0.85), (5.1, 0.48, 0.95)],
+         canopy=(0.0, 0.0, 2.4), radii=(0.7, 0.7, 0.9), count=27, size=0.34),
+]
+
+
+def tree_mesh(name, variant, trunk_mat, leaf_mats):
+    """Cartoon tree: a smooth tapering trunk flaring into five roots, splitting into curving branches under a canopy of
+    overlapping soft puffs (lighter on top, shaded underneath), smooth shaded."""
+    spec = TREE_VARIANTS[variant]
     rng = random.Random(10 + variant)
-    blobs = [(0.0, 0.0, 1.75, 0.85), (0.25, -0.1, 2.35, 0.6)] if variant == 0 else \
-            [(0.0, 0.0, 1.6, 0.7), (-0.3, 0.15, 2.05, 0.6), (0.2, 0.0, 2.5, 0.45)]
-    for x, y, z, r in blobs:
-        crown = bmesh.ops.create_icosphere(bm, subdivisions=1, radius=r)
-        for v in crown['verts']:
-            v.co = Vector((v.co.x * rng.uniform(0.9, 1.1) + x, v.co.y * rng.uniform(0.9, 1.1) + y, v.co.z * 0.85 + z))
-        for face in {f for v in crown['verts'] for f in v.link_faces}:
-            face.material_index = 1
-    return proto_mesh(name, bm, [trunk_mat, leaf_mat])
-
-
-def rock_mesh(name, seed, mat):
+    lx, ly = spec['lean']
+    fork = spec['fork']
+    # Skeleton: the trunk up to the fork and on as a leader into the canopy, roots splaying out and down from inside
+    # its foot, and branches curving out of it just below the fork.
+    top = spec['canopy'][2] + 0.2
+    chains = [[((0, 0, -0.02), 0.2), ((lx * 0.3, ly * 0.3, 0.45), 0.155), ((lx * 0.7, ly * 0.7, 0.85), 0.13),
+               ((lx, ly, fork), 0.115), ((lx * 1.2, ly * 1.2, fork + 0.5), 0.08), ((lx * 1.3, ly * 1.3, top), 0.05)]]
+    for k in range(5):
+        a = k / 5 * math.tau + rng.uniform(-0.25, 0.25) + 0.4
+        reach = rng.uniform(0.42, 0.52)
+        dx, dy = math.cos(a), math.sin(a)
+        chains.append([((dx * 0.05, dy * 0.05, 0.32), 0.1), ((dx * reach * 0.5, dy * reach * 0.5, 0.06), 0.08),
+                       ((dx * reach, dy * reach, -0.03), 0.045)])
+    for a, spread, rise in spec['branches']:
+        dx, dy = math.cos(a), math.sin(a)
+        chains.append([((lx * 0.9, ly * 0.9, fork - 0.2), 0.09),
+                       ((lx + dx * spread * 0.4, ly + dy * spread * 0.4, fork + rise * 0.45), 0.07),
+                       ((lx + dx * spread, ly + dy * spread, fork + rise), 0.042)])
+    trunk = skeleton_object(f'{name}_Trunk', chains)
+    reduce_to(trunk, TRUNK_FACES)
     bm = bmesh.new()
-    bmesh.ops.create_icosphere(bm, subdivisions=1, radius=0.5)
+    bm.from_mesh(trunk.data)
+    for face in bm.faces:
+        face.material_index = 0
+    data = trunk.data
+    bpy.data.objects.remove(trunk, do_unlink=True)
+    bpy.data.meshes.remove(data)
+    # Canopy: puffs over an ellipsoid round the branch tips, each a soft sphere toned by its height.
+    puff_cluster(bm, puffs(rng, spec['canopy'], spec['radii'], spec['count'], spec['size']), 1, len(leaf_mats), rng)
+    for face in bm.faces:
+        face.smooth = True
+    return proto_mesh(name, bm, [trunk_mat, *leaf_mats])
+
+
+def puff_cluster(bm, balls, first, tones, rng, subdivisions=2):
+    """Overlapping soft spheres (x, y, z, radius), the highest lightest and the lowest in the shade tone. Faces buried
+    inside another puff are dropped, so only the visible caps cost triangles."""
+    top = max(b[2] for b in balls)
+    low = min(b[2] for b in balls)
+    made = []
+    for x, y, z, r in balls:
+        geom = bmesh.ops.create_icosphere(bm, subdivisions=subdivisions, radius=1.0)
+        squash = rng.uniform(0.85, 0.95)
+        for v in geom['verts']:
+            v.co = Vector((v.co.x * r + x, v.co.y * r + y, v.co.z * r * squash + z))
+        share = (z - low) / max(top - low, 1e-6)
+        tone = 0 if share > 0.62 else (1 if share > 0.25 else 2)
+        faces = {f for v in geom['verts'] for f in v.link_faces}
+        for face in faces:
+            face.material_index = first + min(tone, tones - 1)
+        made.append((faces, (x, y, z, r * 0.97)))
+    buried = []
+    for k, (faces, _) in enumerate(made):
+        for face in faces:
+            if all(any(j != k and (v.co - Vector(b[:3])).length < b[3] for j, (_, b) in enumerate(made)) for v in face.verts):
+                buried.append(face)
+    bmesh.ops.delete(bm, geom=buried, context='FACES')
+
+
+def bush_mesh(name, leaf_mats, seed=5):
+    """A small puffy bush of seven soft puffs about a unit sphere (scaled per plant), flat underneath."""
     rng = random.Random(seed)
+    balls = [(0, 0, -0.1, 0.6)] + [(math.cos(a) * 0.48, math.sin(a) * 0.48, rng.uniform(-0.2, 0.05), rng.uniform(0.42, 0.5))
+                                   for a in (k / 5 * math.tau + rng.uniform(-0.3, 0.3) for k in range(5))] + [(0.05, -0.05, 0.3, 0.5)]
+    bm = bmesh.new()
+    puff_cluster(bm, balls, 0, len(leaf_mats), rng)
     for v in bm.verts:
-        v.co = Vector((v.co.x * rng.uniform(0.85, 1.15) * 1.2, v.co.y * rng.uniform(0.85, 1.15), max(v.co.z, -0.1) * 0.7 + 0.07))
+        v.co.z = max(v.co.z, -0.6)
+    for face in bm.faces:
+        face.smooth = True
+    return proto_mesh(name, bm, leaf_mats)
+
+
+def flower_mesh(name, mat):
+    """A tiny round blossom (scaled per flower)."""
+    bm = bmesh.new()
+    bmesh.ops.create_icosphere(bm, subdivisions=2, radius=1.0)
+    for face in bm.faces:
+        face.smooth = True
     return proto_mesh(name, bm, [mat])
+
+
+def plant_meshes():
+    """The puffy bush and the blossom shared by the planters and the crossroads green (built on first use)."""
+    if 'Decor_Bush' not in bpy.data.meshes:
+        bush_mesh('Decor_Bush', leaf_materials())
+        flower_mesh('Decor_Flower', room.material('Flower', (0.95, 0.55, 0.75), 0.6))
+    return bpy.data.meshes['Decor_Bush'], bpy.data.meshes['Decor_Flower']
+
+
+def plant(name, data, location, scale, yaw, parent):
+    obj = bpy.data.objects.new(name, data)
+    bpy.context.collection.objects.link(obj)
+    obj.parent = parent
+    obj.location = location
+    obj.scale = scale
+    obj.rotation_euler.z = yaw
+    return obj
+
+
+def rock_mesh(name, seed, mats):
+    """A rounded boulder: a subdivided sphere with a few broad flattened facets softly rounded into each other, gentle
+    noise on the surface and a flat underside a little below the ground, plus a pebble or two in the other grey tone at
+    its foot. About ROCK_FACES triangles, smooth shaded."""
+    from mathutils import noise
+    rng = random.Random(seed)
+    offset = Vector((rng.uniform(-50, 50), rng.uniform(-50, 50), rng.uniform(-50, 50)))
+    planes = []
+    for _ in range(6):
+        n = Vector((rng.uniform(-1, 1), rng.uniform(-1, 1), rng.uniform(-0.2, 1))).normalized()
+        planes.append((n, rng.uniform(0.62, 0.8)))
+    bm = bmesh.new()
+    def stone(centre, size, squash, facets, material):
+        geom = bmesh.ops.create_icosphere(bm, subdivisions=3, radius=1.0)
+        set_material(geom, material)
+        for v in geom['verts']:
+            p = v.co.copy()
+            p *= 1 + 0.16 * noise.noise(p * 1.3 + offset) + 0.04 * noise.noise(p * 3.2 + offset)
+            for n, d in planes[:facets]:
+                over = p.dot(n) - d
+                if over > 0:
+                    p -= n * over * 0.9   # a flattened facet, its rim still rounded
+            v.co = Vector((p.x * size[0], p.y * size[1], p.z * size[2] * squash)) + Vector(centre)
+            if v.co.z < 0:
+                v.co.z *= 0.2   # flat underside sitting just under the ground
+        return geom
+    stone((0, 0, 0.15), (0.62, 0.52, 0.5), 0.8, 6, 0)
+    for k in range(1 + seed % 2):
+        a = rng.uniform(0, math.tau)
+        stone((math.cos(a) * 0.72, math.sin(a) * 0.62, 0.03), (0.14, 0.12, 0.11), 0.8, 2, 1)
+    obj = temporary(name, bpy.data.meshes.new(name))
+    bm.to_mesh(obj.data)
+    bm.free()
+    reduce_to(obj, ROCK_FACES)
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    for face in bm.faces:
+        face.smooth = True
+    data = obj.data
+    bpy.data.objects.remove(obj, do_unlink=True)
+    bpy.data.meshes.remove(data)
+    return proto_mesh(name, bm, mats)
 
 
 # Park bench (Blender axes, front -Y = three.js +Z): the seat is as high as the bed's duvet, so the character sits on it
@@ -738,15 +971,6 @@ def stone_image():
     return STONE
 
 
-def ico(name, center, scale, mat, parent):
-    """A small faceted blob (bush, flower): a once-subdivided icosphere, far lighter than a UV sphere."""
-    bm = bmesh.new()
-    bmesh.ops.create_icosphere(bm, subdivisions=1, radius=1.0)
-    for v in bm.verts:
-        v.co = Vector((v.co.x * scale[0] + center[0], v.co.y * scale[1] + center[1], v.co.z * scale[2] + center[2]))
-    return room.finish(name, bm, mat, parent)
-
-
 def decimate(obj, faces):
     if len(obj.data.polygons) <= faces:
         return
@@ -855,16 +1079,15 @@ def build_about(root, frame_mat, glow):
     room.collider('Globe', (x - 0.3, y - 0.3, GROUND_Z), (x + 0.3, y + 0.3, GROUND_Z + GLOBE_HEIGHT + GLOBE_RADIUS), group)
     # Planters with low bushes and flowers, and two park lamps, like a small park round the bust.
     soil = room.material('Soil', (0.24, 0.17, 0.12), 0.95)
-    leaves = room.material('Bush', (0.07, 0.27, 0.13), 0.85)
-    bloom = room.material('Flower', (0.95, 0.55, 0.75), 0.6)
+    bush, flower = plant_meshes()
     l, d, h = PLANTER_SIZE
     for index, point in enumerate(PLANTERS):
         bed = room.anchor(f'Planter_{index}', at(point), group, BLOCK_YAW, decor='planter', shadow=[l + 0.4, d + 0.4], solid=[l, h, d])
         room.box(f'Planter_{index}_Box', (-l / 2, -d / 2, 0), (l / 2, d / 2, h), stone, bed)
         room.box(f'Planter_{index}_Soil', (-l / 2 + 0.06, -d / 2 + 0.06, h - 0.04), (l / 2 - 0.06, d / 2 - 0.06, h - 0.01), soil, bed)
         for k in range(4):
-            ico(f'Planter_{index}_Bush{k}', ((k - 1.5) * 0.52, 0, h + 0.12), (0.26, 0.24, 0.2), leaves, bed)
-            ico(f'Planter_{index}_Flower{k}', ((k - 1.5) * 0.52 + 0.12, -0.12, h + 0.3), (0.06, 0.06, 0.06), bloom, bed)
+            plant(f'Planter_{index}_Bush{k}', bush, ((k - 1.5) * 0.52, 0, h + 0.12), (0.28, 0.26, 0.22), (index * 4 + k) * 1.3, bed)
+            plant(f'Planter_{index}_Flower{k}', flower, ((k - 1.5) * 0.52 + 0.12, -0.12, h + 0.3), (0.06, 0.06, 0.06), 0.0, bed)
         x, y, _ = at(point)
         room.collider(f'Planter_{index}', (x - l / 2, y - d / 2, GROUND_Z), (x + l / 2, y + d / 2, GROUND_Z + h), group)
     lamp_glow = room.material('ParkLampGlass', (1.0, 0.9, 0.72), 0.3, emission=(1.0, 0.82, 0.6), strength=3.5)
@@ -881,15 +1104,14 @@ def build_about(root, frame_mat, glow):
 def build_decor(root, frame_mat):
     """Park, forest and benches (fixed), and cardboard boxes and cones the character can knock about."""
     group = room.anchor('Decor', (0, 0, 0), root)
-    trunk = room.material('Trunk', (0.33, 0.22, 0.16), 0.85)
-    leaves = room.material('Leaves', (0.06, 0.24, 0.12), 0.85)
-    trees = [tree_mesh(f'Decor_Tree{variant}', variant, trunk, leaves) for variant in (0, 1)]
+    trunk = room.material('Trunk', (0.3, 0.17, 0.09), 0.85)
+    trees = [tree_mesh(f'Decor_Tree{variant}', variant, trunk, leaf_materials()) for variant in (0, 1)]
     rng = random.Random(21)
     for index, (x, z, variant) in enumerate(TREES):
         decor(f'Tree_{index:02d}', trees[variant], (x, z), rng.uniform(0, math.tau), group, 'tree', (1.9, 1.9), (0.36, 1.2, 0.36))
-    rock = room.material('Rock', (0.42, 0.41, 0.47), 0.9)
+    rocks = [room.material('Rock', (0.42, 0.41, 0.45), 0.9), room.material('RockDark', (0.3, 0.29, 0.32), 0.9)]
     for index, (x, z, size) in enumerate(ROCKS):
-        obj = decor(f'Rock_{index}', rock_mesh(f'Decor_Rock{index}', index, rock), (x, z), rng.uniform(0, math.tau), group, 'rock',
+        obj = decor(f'Rock_{index}', rock_mesh(f'Decor_Rock{index}', index, rocks[index % 2:] + rocks[:index % 2]), (x, z), rng.uniform(0, math.tau), group, 'rock',
                     (1.3 * size, 1.1 * size), (1.0 * size, 0.5 * size, 0.85 * size))
         obj.scale = (size, size, size)
     wood = room.material('BenchWood', (0.55, 0.37, 0.24), 0.75)
@@ -1011,17 +1233,12 @@ def build_crossroads_green(root):
     """A round bed of grass at the crossroads, a hand high, with low bushes and a few flowers round the lamppost."""
     grass = room.material('CrossroadsGrass', (0.05, 0.2, 0.09), 0.95)
     edge = room.material('CrossroadsEdge', (0.04, 0.15, 0.07), 0.95)
-    bush = room.material('CrossroadsBush', (0.07, 0.27, 0.13), 0.85)
-    bloom = room.material('CrossroadsFlower', (0.95, 0.55, 0.75), 0.6)
     green = room.anchor('CrossroadsGreen', at(CROSSROADS), root, BLOCK_YAW)
     room.cylinder('CrossroadsGreen_Edge', (0, 0, 0.03), CROSSROADS_GREEN, 0.06, edge, green, segments=40)
     room.cylinder('CrossroadsGreen_Grass', (0, 0, 0.07), CROSSROADS_GREEN - 0.15, 0.04, grass, green, segments=40)
-    # One shared bush and one shared flower mesh, placed and scaled per plant (the GLB keeps one copy of each).
-    shapes = {}
-    for name, mat in (('Bush', bush), ('Flower', bloom)):
-        bm = bmesh.new()
-        bmesh.ops.create_icosphere(bm, subdivisions=1, radius=1.0)
-        shapes[name] = proto_mesh(f'Crossroads{name}', bm, [mat])
+    # The planters' shared puffy bush and blossom, placed and scaled per plant (the GLB keeps one copy of each).
+    bush, flower = plant_meshes()
+    shapes = {'Bush': bush, 'Flower': flower}
     rng = random.Random(31)
     for k in range(9):
         angle = k / 9 * math.tau + rng.uniform(-0.2, 0.2)
@@ -1032,11 +1249,7 @@ def build_crossroads_green(root):
         if k % 2 == 0:
             plants.append(('Flower', (x + 0.15, y - 0.1, 0.09 + size * 1.3), (0.06, 0.06, 0.06)))
         for kind, location, scale in plants:
-            obj = bpy.data.objects.new(f'CrossroadsGreen_{kind}{k}', shapes[kind])
-            bpy.context.collection.objects.link(obj)
-            obj.parent = green
-            obj.location = location
-            obj.scale = scale
+            plant(f'CrossroadsGreen_{kind}{k}', shapes[kind], location, scale, rng.uniform(0, math.tau), green)
 
 
 def build_lamppost(root, iron, glow):

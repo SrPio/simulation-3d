@@ -17,15 +17,15 @@ import { SPRAY_SYMBOLS, type SpraySymbolName } from './sprayFont.ts';
 
 /** Face the paint lies on: the +Z side, the +X side, or facing up (the ground, a ramp, a top). */
 export type GraffitiFace = 'z' | 'x' | 'up';
-/** Symbols drawn filled ('piece' or 'tag'). */
-export type FilledSymbol = 'heart' | 'star' | 'crown' | 'arrow' | 'smiley' | 'bolt' | 'code';
+/** Symbols drawn filled ('piece' or 'tag'); the chick also gets its sunglasses, beak, cheeks and feet in their own colours. */
+export type FilledSymbol = 'heart' | 'star' | 'crown' | 'arrow' | 'smiley' | 'bolt' | 'code' | 'chick';
 /**
  * Symbols the painter knows; words are any text instead. The filled ones, and the quick one-colour can strokes
  * ('spray', SPRAY_SYMBOLS: the reference set and technology logos such as react, js or git).
  */
 export type GraffitiSymbol = FilledSymbol | SpraySymbolName;
 export const GRAFFITI_SYMBOLS: readonly GraffitiSymbol[] = [
-  'heart', 'star', 'crown', 'arrow', 'smiley', 'bolt', 'code',
+  'heart', 'star', 'crown', 'arrow', 'smiley', 'bolt', 'code', 'chick',
   ...(Object.keys(SPRAY_SYMBOLS) as SpraySymbolName[]),
 ];
 /**
@@ -85,7 +85,11 @@ export const GRAFFITI: readonly GraffitiSpot[] = [
   { id: 'park-code', symbol: 'code', style: 'piece', at: [-6.5, 'ground', 22.5], face: 'up', width: 2.4, tilt: -6, color: C.cyan, fade: C.lime, seed: 97 },
   { id: 'works-friday', text: { es: 'VIERNES:\nNO DEPLOY', en: 'FRIDAY:\nNO DEPLOY' }, style: 'spray', at: [-2.5, 'ground', 33.5], face: 'up', width: 2.6, tilt: 8, color: C.lime, seed: 413 },
   // The brick wall at the end of the circuit: it scatters with the bricks like the playground's.
-  { id: 'wall-stop', text: 'STOP', loose: 'wall', style: 'spray', at: [-5.8, 0.72, 29.13], face: 'z', width: 3.4, tilt: -3, color: C.white, seed: 211 },
+  { id: 'wall-stop', text: 'STOP', loose: 'wall', style: 'spray', at: [-3.95, 0.72, 29.13], face: 'z', width: 3.4, tilt: -3, color: C.white, seed: 211 },
+  // The chick in sunglasses (canvas «Grafitis · Pollito y Konami», option B) on the free barrier right behind the room,
+  // and the Konami code on the ground by the park, beside the road to the work site: typing it makes chicks rain.
+  { id: 'barrier-chick', symbol: 'chick', style: 'piece', at: [-0.14, 0.28, -8.74], face: 'z', width: 1.35, tilt: 4, color: '#ffe14a', fade: '#e8a012', outline: '#2e2108', seed: 509 },
+  { id: 'ground-konami', symbol: 'konami', style: 'spray', at: [-14.15, 'ground', 26.25], face: 'up', width: 4, tilt: -13, color: C.yellow, seed: 517 },
 ];
 
 /** The words of a text spot in a language. */

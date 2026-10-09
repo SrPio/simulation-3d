@@ -15,7 +15,7 @@ import {
 import { getLanguage, onLanguage, t } from '../core/i18n.ts';
 import { KeyboardInput, type HoldAction, type PressAction } from '../input/KeyboardInput';
 import {
-  disposeObjects, laptopFile, loadCharacter, loadCircuit, loadLaptop, loadOutside, loadRoom, modelVersions, outsideFile, roomFile, type ModelVersionId, type SceneId,
+  disposeObjects, laptopFile, loadCharacter, loadChick, loadCircuit, loadLaptop, loadOutside, loadRoom, modelVersions, outsideFile, roomFile, type ModelVersionId, type SceneId,
 } from '../core/loadAssets';
 import { InteractionController } from '../interactions/InteractionController.ts';
 import { readRoom, type RoomData } from '../scene/roomData.ts';
@@ -42,7 +42,8 @@ import { hiddenBehind, revealStep, type Bounds3 } from '../world/reveal.ts';
 import { TargetGame, type Lane } from '../world/targets.ts';
 import { signAt } from '../world/signs.ts';
 import { KEY_SINK, onKey, pressStep, type FloorKey } from '../world/keyPress.ts';
-import { LAPTOP, PropPhysics, type ChairPusher, type StaticBox, type TargetDisc, type TargetHit, type ThrownLaptop } from '../world/PropPhysics.ts';
+import { ChickRain } from '../scene/ChickRain.ts';
+import { LAPTOP, MAX_CHICKS, PropPhysics, type ChairPusher, type StaticBox, type TargetDisc, type TargetHit, type ThrownLaptop } from '../world/PropPhysics.ts';
 
 export type ViewPreset = 'front' | 'left' | 'right' | 'back' | 'three-quarter';
 export type LightPreset = 'neutral' | 'violet';
@@ -210,6 +211,9 @@ export class CharacterViewer {
   private nearSeat = false;
   /** Thrown laptops on screen: base and lid follow their bodies; retired ones shrink away. */
   private thrown: { laptop: ThrownLaptop; base: Group; lid: Object3D; shrink: number }[] = [];
+  /** The Konami code's chick shower (the chick model is fetched the first time the code is typed). */
+  private chickRain?: ChickRain;
+  private chickLoading = false;
   private fallenLetters = -1;
   /** Height of the character's feet: 0 on the room floor, the outside ground elsewhere. */
   private elevation = 0;
@@ -592,7 +596,8 @@ export class CharacterViewer {
     this.staticShadows = pieceShadows;
     // The last slot is the office chair's.
     this.chairShadow = pieceShadows + this.pieceList.length + THROWN_SHADOWS;
-    this.shadows = new BlobShadows(this.chairShadow + 1, data.groundY);
+    // Then one slot per raining chick.
+    this.shadows = new BlobShadows(this.chairShadow + 1 + MAX_CHICKS, data.groundY);
     for (const [index, sign] of data.signs.entries()) {
       this.shadows.set(1 + index, sign.position.x, sign.position.z, sign.yaw, (sign.board?.width ?? 2) + 0.5, 0.55, 0.45);
     }
@@ -767,6 +772,10 @@ export class CharacterViewer {
   }
 
   private readonly onPress = (action: PressAction): void => {
+    if (action === 'konami') {
+      void this.rainChicks();
+      return;
+    }
     if (action === 'open') {
       if (this.ready) this.openSign(this.sign);
       return;
@@ -1045,6 +1054,27 @@ export class CharacterViewer {
     this.syncThrown(0);
   }
 
+  /** ↑ ↑ ↓ ↓ ← → ← → B A: chicks in sunglasses rain round the character (outside, once the physics is ready). */
+  private async rainChicks(): Promise<void> {
+    if (!this.ready || !this.physics || !this.model || !this.outsideData || this.chickLoading) return;
+    if (!this.chickRain) {
+      this.chickLoading = true;
+      try {
+        const gltf = await loadChick(this.abort.signal);
+        if (this.disposed) return;
+        this.assetRoots.push(gltf.scene);
+        this.chickRain = new ChickRain(gltf.scene, this.shadows, this.chairShadow + 1, this.outsideData.groundY);
+        this.scene.add(this.chickRain.root);
+      } catch {
+        return;
+      } finally {
+        this.chickLoading = false;
+      }
+    }
+    this.chickRain.start({ x: this.model.position.x, z: this.model.position.z });
+    this.host.dataset.konami = String(Number(this.host.dataset.konami ?? 0) + 1);
+  }
+
   /** Thrown laptops follow their bodies; ones the physics retired shrink away, then leave the scene. */
   private syncThrown(delta: number): void {
     const physics = this.physics;
@@ -1194,6 +1224,7 @@ export class CharacterViewer {
     this.placeForClip(this.activeClip);
     this.host.dataset.locomotion = 'idle';
     this.physics?.reset();
+    this.chickRain?.clear();
     this.pieces?.reset();
     this.syncFlaps(true);
     this.targetGame.reset();
@@ -1489,6 +1520,11 @@ export class CharacterViewer {
     this.updateReveal(delta);
     if (this.techLabels) this.techLabels.update(this.camera, this.host.clientWidth, this.host.clientHeight, performance.now());
     if (this.thrown.length || this.physics?.retired.length) this.syncThrown(delta);
+    if (this.chickRain && this.physics) {
+      this.chickRain.update(delta, this.physics);
+      const chicks = String(this.chickRain.count);
+      if (this.host.dataset.chicks !== chicks) this.host.dataset.chicks = chicks;
+    }
     if (this.elevation < -1e-3 || groundAt({ x, z }, this.outsideData) < 0) {
       const fade = 1 - lift / 0.8;
       this.shadows.set(CHARACTER_SHADOW, x, z, 0, 0.8 * (1 - lift * 0.4), 0.8 * (1 - lift * 0.4), 0.5 * fade);
@@ -2029,6 +2065,7 @@ export class CharacterViewer {
     this.bubble?.dispose();
     this.chargeMeter?.dispose();
     this.clearThrown();
+    this.chickRain?.dispose();
     this.ground?.dispose();
     this.shadows?.dispose();
     this.pieces?.dispose();
