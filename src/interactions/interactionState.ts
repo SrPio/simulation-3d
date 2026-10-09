@@ -1,4 +1,5 @@
-export type Seat = 'chair' | 'bed';
+/** The room's chair and bed, and the office chair outside (it plays the chair's clips: its seat is as high). */
+export type Seat = 'chair' | 'bed' | 'office';
 export type Stage = 'idle' | 'sitting' | 'seated' | 'opening' | 'typing' | 'closing' | 'standing';
 export type Intent = 'sit' | 'laptop' | 'stand';
 
@@ -13,16 +14,17 @@ export class InteractionState {
   stage: Stage = 'idle';
   private standAfterClose = false;
 
-  get clip(): string { return this.stage === 'idle' ? 'idle' : `${prefixes[this.stage]}_${this.seat}`; }
+  get clip(): string { return this.stage === 'idle' ? 'idle' : `${prefixes[this.stage]}_${this.seat === 'office' ? 'chair' : this.seat}`; }
   get looping(): boolean { return !['sitting', 'standing'].includes(this.stage); }
 
   setSeat(seat: Seat): boolean {
-    if (this.stage !== 'idle' || !['chair', 'bed'].includes(seat)) return false;
+    if (this.stage !== 'idle' || !['chair', 'bed', 'office'].includes(seat)) return false;
     this.seat = seat;
     return true;
   }
 
   can(intent: Intent): boolean {
+    if (intent === 'laptop' && this.seat === 'office') return false;
     return intent === 'sit' ? this.stage === 'idle' : ['seated', 'typing'].includes(this.stage);
   }
 

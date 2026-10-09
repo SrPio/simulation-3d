@@ -13,6 +13,8 @@ const OPACITY = 0.6;
 const VIOLET = new Color(0xb79bff);
 /** The circuit is one flat colour with soft edges: a few pixels per metre are enough for its long block. */
 const CIRCUIT_PPM = 16;
+/** The sketched arrow to the office chair: thin strokes over a wide block. */
+const SKETCH_PPM = 70;
 /** How strongly a zone's own ground is filled (the plaza, the playground and the circuit share it). */
 const ZONE_FILL = 0.1;
 
@@ -21,7 +23,7 @@ type Rect = { x: number; y: number; w: number; h: number; ppm: number };
 type Local = { x: number; z: number };
 
 /** Pixels per metre of a block: PPM, or less so a wide area (the plaza, the playground) still fits the atlas whole. */
-const ppmOf = (block: FloorBlock) => Math.min(block.id === 'circuit' ? CIRCUIT_PPM : PPM, (ATLAS_WIDTH - 2) / block.size[0]);
+const ppmOf = (block: FloorBlock) => Math.min(block.id === 'circuit' ? CIRCUIT_PPM : block.id === 'chairhint' ? SKETCH_PPM : PPM, (ATLAS_WIDTH - 2) / block.size[0]);
 
 /** Shelf packing of the blocks into one atlas row after row. */
 function pack(blocks: readonly FloorBlock[]): { rects: Rect[]; height: number } {
@@ -328,6 +330,69 @@ export class FloorTexts {
         context.lineTo(local[local.length - 1].x, local[local.length - 1].z);
         context.stroke();
         context.restore();
+      }
+    } else if (block.id === 'checker') {
+      // Start and finish: two rows of squares across the road.
+      const cells = 10;
+      const cell = w / cells;
+      for (let c = 0; c < cells; c++) {
+        for (let r = 0; r < 2; r++) if ((c + r) % 2 === 0) context.fillRect(-w / 2 + c * cell, -d / 2 + r * (d / 2), cell, d / 2);
+      }
+    } else if (block.id === 'chairhint') {
+      // A hand-drawn arrow curling over to the office chair (`targets`), a small question under its start, and short
+      // strokes round the chair as if it had just popped up there.
+      const target = block.targets[0];
+      const { x: ax, z: az } = axes(block.yaw);
+      const dx = target ? target.x - block.position.x : w / 4;
+      const dz = target ? target.z - block.position.z : 0;
+      const chair = { x: dx * ax.x + dz * ax.z, z: dx * az.x + dz * az.z };
+      // Screen directions from the default corner view: up is towards -X and -Z, right towards +X and -Z.
+      const at = (from: { x: number; z: number }, up: number, right: number) => ({
+        x: from.x + (-up + right) * Math.SQRT1_2, z: from.z + (-up - right) * Math.SQRT1_2,
+      });
+      // It starts above the question, rises in an arc and comes down onto the chair from the left, its tip far enough
+      // up the ground to meet the seat from the corner view.
+      const end = at(chair, 1.2, -0.8);
+      const start = at(chair, 0.75, -4.55);
+      const c1 = at(start, 3.6, 0.9);
+      const c2 = at(end, 2.0, -1.6);
+      context.save();
+      context.lineCap = 'round';
+      context.lineJoin = 'round';
+      // Drawn twice, the second stroke a little off the first, like a pen going over it.
+      for (const [offset, width, alpha] of [[0, 0.06, 1], [0.035, 0.028, 0.55]] as const) {
+        context.globalAlpha = alpha;
+        context.lineWidth = width;
+        context.beginPath();
+        context.moveTo(start.x + offset, start.z);
+        context.bezierCurveTo(c1.x + offset, c1.z - offset, c2.x, c2.z + offset, end.x, end.z + offset);
+        context.stroke();
+      }
+      context.globalAlpha = 1;
+      context.lineWidth = 0.06;
+      const heading = Math.atan2(end.z - c2.z, end.x - c2.x);
+      context.beginPath();
+      for (const turn of [-0.5, 0.5]) {
+        context.moveTo(end.x, end.z);
+        context.lineTo(end.x - Math.cos(heading + turn) * 0.38, end.z - Math.sin(heading + turn) * 0.38);
+      }
+      context.stroke();
+      // Short strokes round the chair, leaving a gap where the arrow comes in.
+      context.lineWidth = 0.05;
+      context.beginPath();
+      for (const degrees of [250, 300, 345, 30, 80, 128]) {
+        const angle = (degrees * Math.PI) / 180;
+        const inner = degrees % 2 ? 0.95 : 1.05;
+        context.moveTo(chair.x + Math.cos(angle) * inner, chair.z + Math.sin(angle) * inner);
+        context.lineTo(chair.x + Math.cos(angle) * (inner + 0.45), chair.z + Math.sin(angle) * (inner + 0.45));
+      }
+      context.stroke();
+      context.restore();
+      // Two lines under the arrow's start, in the floor's own axes like every painted text.
+      const label = at(chair, -0.35, -4.6);
+      const lines = t('floor.chairHint').split('\n');
+      for (const [k, line] of lines.entries()) {
+        scaled(() => text({ words: line }, label.x * 100, (label.z + (k - (lines.length - 1) / 2) * 0.32) * 100, 24, 'center', 600, 2.6 * 100));
       }
     } else if (block.id === 'prints') {
       // A few prints where they were marked on the map, the same shoe as the ones leaving the room, fading as they go.

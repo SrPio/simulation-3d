@@ -109,6 +109,13 @@ export function loadOutside(signal: AbortSignal): Promise<GLTF> {
   return loadGlb(outsideFile, 'ROOM', signal);
 }
 
+export const circuitFile = 'models/circuit.glb';
+
+/** The circuit's office chair, ramps, obstacles and fences, read together with the outside. Failures count as room failures. */
+export function loadCircuit(signal: AbortSignal): Promise<GLTF> {
+  return loadGlb(circuitFile, 'ROOM', signal);
+}
+
 async function loadGlb(file: string, kind: 'MODEL' | 'ROOM', signal: AbortSignal): Promise<GLTF> {
   signal.throwIfAborted();
   const url = new URL(`${import.meta.env.BASE_URL}${file}`, window.location.href);

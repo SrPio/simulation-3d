@@ -51,7 +51,7 @@ test('a car circuit runs round the zones as one flat band of the zones\' fill, i
   const circuits = data.floors.filter((floor) => floor.id === 'circuit');
   assert.equal(circuits.length, 1);
   const [circuit] = circuits;
-  assert.equal(circuit.gap, 3.5);
+  assert.equal(circuit.gap, 5);
   assert.ok(circuit.targets.length > 50, `${circuit.targets.length} points`);
   const half = circuit.gap / 2;
   for (const [i, point] of circuit.targets.entries()) {

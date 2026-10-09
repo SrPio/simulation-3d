@@ -4,7 +4,7 @@ import type { Bounds, Box2, Point2 } from '../world/collisions.ts';
 /** Floor zone in front of a sign: an oriented rectangle on the ground. */
 export type SignArea = { center: Point2; axisX: Point2; axisZ: Point2; halfX: number; halfZ: number };
 
-export type PieceGroup = 'name' | 'tag' | 'keys' | 'bowling' | 'bricks' | 'decor' | 'tech';
+export type PieceGroup = 'name' | 'tag' | 'keys' | 'bowling' | 'bricks' | 'decor' | 'tech' | 'circuit';
 /** What a reset zone puts back: a group of pieces, or the targets lane (its thrown laptops and score). */
 export type ResetTarget = PieceGroup | 'targets';
 
@@ -51,6 +51,8 @@ export type Piece = {
   mass: number;
   /** The tool a tech cube shows ('typescript', 'node', …). */
   tech?: string;
+  /** Pieces sharing a joint are held together until a hard knock breaks them apart (a wooden fence's legs and planks). */
+  joint?: string;
   /** A cardboard box's flaps: each part at its hinge on the rim (`matrix`, in the piece's own axes), opening about its local X. */
   flaps?: (PiecePart & { matrix: Matrix4; position: Vector3; quaternion: Quaternion })[];
 };
@@ -65,7 +67,7 @@ export type Letter = Piece & {
 
 /** Where the viewer paints on the ground: a block in its own axes (local +X along the text, +Z towards the camera). */
 export type FloorBlock = {
-  id: 'intro' | 'crossroads' | 'controls' | 'playground' | 'bowling' | 'footprints' | 'about' | 'targets' | 'tech' | 'playarea' | 'prints' | 'circuit';
+  id: 'intro' | 'crossroads' | 'controls' | 'playground' | 'bowling' | 'footprints' | 'about' | 'targets' | 'tech' | 'playarea' | 'prints' | 'circuit' | 'checker' | 'chairhint';
   position: Vector3;
   yaw: number;
   size: [number, number];
@@ -80,6 +82,15 @@ export type FloorBlock = {
   /** A trail of footprints: where each foot lands on the ground and the heading it points along (atan2(dz, dx)). */
   steps: { x: number; z: number; heading: number }[];
 };
+
+/** A wooden ramp or plank bump on the circuit: the ground rises along its local +Z (`profile` 'up'), or up and down again ('bump'). */
+export type Ramp = { position: Vector3; yaw: number; length: number; width: number; height: number; profile: 'up' | 'bump' };
+
+/** A safety tape across the road: its anchor between the posts, the length between them and the two halves pivoting at the posts. */
+export type Tape = { name: string; object: Object3D; position: Vector3; yaw: number; length: number };
+
+/** The office chair the character rides: its root on the ground, facing local +Z. */
+export type OfficeChair = { object: Object3D; position: Vector3; yaw: number };
 
 /** Street lamp in the crossroads circle; it carries one arrow board per crossroads arrow. */
 export type Lamppost = {
@@ -137,6 +148,12 @@ export type OutsideData = {
   targets: Target[];
   scoreboard?: Scoreboard;
   globe?: Globe;
+  /** The circuit (circuit.glb, read together with the outside): ramps, tapes, the chair, the lap board and the traffic light. */
+  ramps: Ramp[];
+  tapes: Tape[];
+  chair?: OfficeChair;
+  lapBoard?: Scoreboard;
+  trafficLight?: Object3D;
 };
 
 export const LETTER_MASS = 1.5;
@@ -163,7 +180,7 @@ function areaOf(position: Vector3, quaternion: Quaternion, size: number[], offse
   };
 }
 
-const PROP_GROUPS = new Set<string>(['keys', 'bowling', 'bricks', 'decor', 'tech']);
+const PROP_GROUPS = new Set<string>(['keys', 'bowling', 'bricks', 'decor', 'tech', 'circuit']);
 const RESET_TARGETS = new Set<string>([...PROP_GROUPS, 'targets']);
 
 function shapeOf(data: { radius?: number; cylinders?: number[] }): PieceShape {
@@ -201,6 +218,7 @@ type Extras = {
   plaque?: number[]; text?: string; centre?: number; rings?: number[]; points?: number[]; tech?: string; gap?: number; targets?: number[]; labels?: string;
   height?: number; pole_radius?: number; arrows_top?: number; arrow_step?: number;
   prop?: string; group?: string; mass?: number; radius?: number; cylinders?: number[];
+  joint?: string; ramp?: number[]; profile?: string; tape?: number[]; chair?: string;
 };
 
 /** Read what the outside GLB exports (see scripts/blender/create_outside.py). */
@@ -221,6 +239,11 @@ export function readOutside(root: Object3D): OutsideData {
   const targets: Target[] = [];
   let scoreboard: Scoreboard | undefined;
   let globe: Globe | undefined;
+  const ramps: Ramp[] = [];
+  const tapes: Tape[] = [];
+  let chair: OfficeChair | undefined;
+  let lapBoard: Scoreboard | undefined;
+  let trafficLight: Object3D | undefined;
   root.traverse((object) => {
     const data = object.userData as Extras;
     if (data.bounds?.length === 4) {
@@ -244,6 +267,17 @@ export function readOutside(root: Object3D): OutsideData {
       if (object.name === 'Scoreboard' && data.board?.length === 3) {
         scoreboard = { position, yaw, width: data.board[0], height: data.board[1], bottom: data.board[2] };
       }
+      if (object.name === 'LapBoard' && data.board?.length === 3) {
+        lapBoard = { position, yaw, width: data.board[0], height: data.board[1], bottom: data.board[2] };
+      }
+      if (object.name === 'TrafficLight') trafficLight = object;
+      if (data.ramp?.length === 3) {
+        ramps.push({ position, yaw, length: data.ramp[0], width: data.ramp[1], height: data.ramp[2], profile: data.profile === 'bump' ? 'bump' : 'up' });
+      }
+    } else if (/^Tape_\d+$/.test(object.name) && data.tape?.length === 1) {
+      tapes.push({ name: object.name, object, position, yaw, length: data.tape[0] });
+    } else if (object.name === 'OfficeChair' && data.chair) {
+      chair = { object, position, yaw };
     } else if (object.name.startsWith('Plaque_') && data.plaque?.length === 2 && data.text) {
       plaques.push({ id: data.text, position, yaw, size: [data.plaque[0], data.plaque[1]] });
     } else if (/^Target_\d+$/.test(object.name) && typeof data.target === 'number' && data.radius && data.centre && data.rings && data.points) {
@@ -285,6 +319,7 @@ export function readOutside(root: Object3D): OutsideData {
         shape: shapeOf(data),
         mass: data.mass ?? 1,
         ...(data.tech ? { tech: data.tech } : {}),
+        ...(data.joint ? { joint: data.joint } : {}),
         ...flapsOf(object),
       });
     } else if (object instanceof Mesh && /^(Letter|Tag)_/.test(object.name) && data.box?.length === 3) {
@@ -311,12 +346,30 @@ export function readOutside(root: Object3D): OutsideData {
   const crossroads = floors.find((floor) => floor.id === 'crossroads');
   if (lamppost && crossroads) lamppost.arrows = crossroads.targets.map((target, i) => ({ id: crossroads.labels[i] ?? '', target }));
   targets.sort((a, b) => a.index - b.index);
-  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost, decor, plaques, targets, scoreboard, globe };
+  tapes.sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }));
+  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost, decor, plaques, targets, scoreboard, globe, ramps, tapes, chair, lapBoard, trafficLight };
+}
+
+/** Height of a ramp's surface above the ground at a point, 0 off it. */
+export function rampHeight(point: Point2, ramp: Ramp): number {
+  const dx = point.x - ramp.position.x;
+  const dz = point.z - ramp.position.z;
+  const c = Math.cos(ramp.yaw);
+  const s = Math.sin(ramp.yaw);
+  // Local axes: +X is (cos, -sin), +Z is (sin, cos) on the ground.
+  const lx = dx * c - dz * s;
+  const lz = dx * s + dz * c;
+  if (Math.abs(lx) > ramp.width / 2 || Math.abs(lz) > ramp.length / 2) return 0;
+  const t = (lz + ramp.length / 2) / ramp.length;
+  return ramp.profile === 'bump' ? ramp.height * Math.sin(Math.PI * t) : ramp.height * t;
 }
 
 /** Floor height under a point: the room floor on its platform, the outside ground elsewhere. */
-export function groundAt(point: Point2, outside: Pick<OutsideData, 'groundY' | 'platform'>): number {
+export function groundAt(point: Point2, outside: Pick<OutsideData, 'groundY' | 'platform'> & { ramps?: readonly Ramp[] }): number {
   const { platform } = outside;
   const onPlatform = point.x >= platform.minX && point.x <= platform.maxX && point.z >= platform.minZ && point.z <= platform.maxZ;
-  return onPlatform ? 0 : outside.groundY;
+  if (onPlatform) return 0;
+  let rise = 0;
+  for (const ramp of outside.ramps ?? []) rise = Math.max(rise, rampHeight(point, ramp));
+  return outside.groundY + rise;
 }

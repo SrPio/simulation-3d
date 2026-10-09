@@ -15,7 +15,7 @@ import {
 import { onLanguage, t } from '../core/i18n.ts';
 import { KeyboardInput, type HoldAction, type PressAction } from '../input/KeyboardInput';
 import {
-  disposeObjects, laptopFile, loadCharacter, loadLaptop, loadOutside, loadRoom, modelVersions, outsideFile, roomFile, type ModelVersionId, type SceneId,
+  disposeObjects, laptopFile, loadCharacter, loadCircuit, loadLaptop, loadOutside, loadRoom, modelVersions, outsideFile, roomFile, type ModelVersionId, type SceneId,
 } from '../core/loadAssets';
 import { InteractionController } from '../interactions/InteractionController.ts';
 import { readRoom, type RoomData } from '../scene/roomData.ts';
@@ -31,12 +31,16 @@ import { PieceMeshes } from '../scene/PieceMeshes.ts';
 import { AboutPlaza } from '../scene/AboutPlaza.ts';
 import { TargetsView } from '../scene/TargetsView.ts';
 import { TechLabels } from '../scene/TechLabels.ts';
+import { CircuitView } from '../scene/CircuitView.ts';
+import { chairAt, driveStep, forwardSpeed, type ChairState } from '../world/chairDrive.ts';
+import type { SeatSpot } from '../interactions/InteractionController.ts';
+import type { FloorBlock } from '../scene/outsideData.ts';
 import { RoomReveal } from '../scene/RoomReveal.ts';
 import { hiddenBehind, revealStep, type Bounds3 } from '../world/reveal.ts';
 import { TargetGame, type Lane } from '../world/targets.ts';
 import { signAt } from '../world/signs.ts';
 import { KEY_SINK, onKey, pressStep, type FloorKey } from '../world/keyPress.ts';
-import { LAPTOP, PropPhysics, type StaticBox, type TargetDisc, type TargetHit, type ThrownLaptop } from '../world/PropPhysics.ts';
+import { LAPTOP, PropPhysics, type ChairPusher, type StaticBox, type TargetDisc, type TargetHit, type ThrownLaptop } from '../world/PropPhysics.ts';
 
 export type ViewPreset = 'front' | 'left' | 'right' | 'back' | 'three-quarter';
 export type LightPreset = 'neutral' | 'violet';
@@ -96,6 +100,8 @@ const FOLLOW_RATE = 4;
 const SHADOWLESS = /^(FloorPlank|Platform|Wall|Baseboard|Poster|NightCity|WindowGlass)/;
 /** How quickly the character steps down to the outside ground or back up onto the room floor (1/s). */
 const STEP_RATE = 25;
+/** How far ahead of the office chair's seat centre the rider sits (m). */
+const RIDER_FORWARD = 0.15;
 /** Blob shadow slots: the character first, then the signs, then the loose pieces, then the thrown laptops. */
 const CHARACTER_SHADOW = 0;
 /** cannon-es sleepState of a sleeping body. */
@@ -161,6 +167,23 @@ export class CharacterViewer {
   private about?: AboutPlaza;
   /** The standing targets and their scoreboard, and the round being played on their lane. */
   private targetsView?: TargetsView;
+  private circuit?: CircuitView;
+  /** The office chair: its driving state, where it stood at first, the seat spot offered to the character and the rider's root. */
+  private chairDrive?: ChairState;
+  private chairRest?: { x: number; z: number; yaw: number };
+  private chairSpot?: SeatSpot;
+  private chairRider?: Group;
+  private chairPusher?: ChairPusher;
+  private circuitClock = 0;
+  private chairShadow = -1;
+  /** The traffic light's sequence starts when the rider sits down. */
+  private lightsAt = -Infinity;
+  private wasRiding = false;
+  /** Start and finish lines (the painted checker blocks), the lap in progress and the best one. */
+  private lines?: { start: FloorBlock; finish: FloorBlock };
+  private lap: { start?: number; time?: number; best?: number } = {};
+  /** Where the chair or the character was last frame, for the tapes and the lines. */
+  private circuitLast?: { x: number; z: number };
   private readonly targetGame = new TargetGame();
   private targetLane?: Lane;
   /** Thrown laptops whose throw counts for the targets round (thrown from behind the line). */
@@ -322,13 +345,14 @@ export class CharacterViewer {
 
   private async load(): Promise<void> {
     try {
-      const [gltf, roomGltf, laptopGltf, outsideGltf] = await Promise.all([
+      const [gltf, roomGltf, laptopGltf, outsideGltf, circuitGltf] = await Promise.all([
         loadCharacter(this.options.modelId, this.abort.signal),
         this.inRoom ? loadRoom(this.abort.signal) : Promise.resolve(undefined),
         this.inRoom ? loadLaptop(this.abort.signal) : Promise.resolve(undefined),
         this.inRoom ? loadOutside(this.abort.signal) : Promise.resolve(undefined),
+        this.inRoom ? loadCircuit(this.abort.signal) : Promise.resolve(undefined),
       ]);
-      const scenes = [...gltf.scenes, ...(roomGltf?.scenes ?? []), ...(laptopGltf?.scenes ?? []), ...(outsideGltf?.scenes ?? [])];
+      const scenes = [...gltf.scenes, ...(roomGltf?.scenes ?? []), ...(laptopGltf?.scenes ?? []), ...(outsideGltf?.scenes ?? []), ...(circuitGltf?.scenes ?? [])];
       if (this.disposed) {
         disposeObjects(scenes);
         return;
@@ -336,6 +360,8 @@ export class CharacterViewer {
       this.assetRoots = scenes;
       this.model = gltf.scene;
       if (roomGltf) {
+        // The circuit is read as part of the outside: its pieces, decor, floors and zones join the outside's.
+        if (outsideGltf && circuitGltf) outsideGltf.scene.add(circuitGltf.scene);
         if (outsideGltf) this.addOutside(outsideGltf.scene);
         this.placeInRoom(roomGltf.scene);
         // Everything receives shadows; only furniture casts them. Floor, walls, posters and the
@@ -402,7 +428,7 @@ export class CharacterViewer {
       this.scene.add(this.model);
       if (this.room) this.scene.add(this.room);
       if (this.outside) this.scene.add(this.outside);
-      for (const object of [this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.targetsView?.root]) if (object) this.scene.add(object);
+      for (const object of [this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.targetsView?.root, this.circuit?.root]) if (object) this.scene.add(object);
       if (!this.ground) this.createFloor(this.mixer ? 0 : box.min.y);
       this.frameLights();
       this.cameraDistance = Math.max(this.bounds.length() * 2.5, 1);
@@ -461,6 +487,7 @@ export class CharacterViewer {
     const boxes = [...data.boxes, ...(this.outsideData?.boxes ?? [])];
     this.controller = new CharacterController(spawn, boxes, floor);
     this.interaction = new InteractionController(data.seats, boxes, floor, CHARACTER_RADIUS);
+    this.setupChair();
     if (this.keyboard) {
       this.keyboard.onPress = this.onPress;
       this.keyboard.onRelease = this.onRelease;
@@ -486,7 +513,8 @@ export class CharacterViewer {
 
   private placeForClip(clip: string): void {
     if (!this.room || !this.model) return;
-    const seat = clip.endsWith('_chair') ? 'chair' : clip.endsWith('_bed') ? 'bed' : 'spawn';
+    const office = this.interaction?.seat?.seat === 'office';
+    const seat = clip.endsWith('_chair') ? (office ? 'office' : 'chair') : clip.endsWith('_bed') ? 'bed' : 'spawn';
     const point = this.standPoints.get(seat) ?? this.standPoints.get('spawn');
     if (seat === 'spawn' && this.controller) {
       this.applyController();
@@ -511,7 +539,9 @@ export class CharacterViewer {
     const data = readOutside(outside);
     this.outsideData = data;
     // The loose pieces move on their own: they leave the static GLB before it is merged.
-    for (const group of ['Letters', 'Tagline', 'Keys', 'Bowling', 'Bricks', 'Clutter', 'Tech']) outside.getObjectByName(group)?.removeFromParent();
+    for (const group of ['Letters', 'Tagline', 'Keys', 'Bowling', 'Bricks', 'Clutter', 'Tech', 'CircuitPieces']) outside.getObjectByName(group)?.removeFromParent();
+    // The chair, the tapes and the traffic light's lenses move or change: the circuit view keeps them out of the merge.
+    this.circuit = new CircuitView(data);
     // The targets rock when hit: they leave the static scene too, drawn by their own view.
     const targets = outside.getObjectByName('Targets');
     targets?.removeFromParent();
@@ -534,7 +564,9 @@ export class CharacterViewer {
     }));
     const pieceShadows = 1 + data.signs.length + data.decor.length + (data.lamppost ? 1 : 0);
     this.staticShadows = pieceShadows;
-    this.shadows = new BlobShadows(pieceShadows + this.pieceList.length + THROWN_SHADOWS, data.groundY);
+    // The last slot is the office chair's.
+    this.chairShadow = pieceShadows + this.pieceList.length + THROWN_SHADOWS;
+    this.shadows = new BlobShadows(this.chairShadow + 1, data.groundY);
     for (const [index, sign] of data.signs.entries()) {
       this.shadows.set(1 + index, sign.position.x, sign.position.z, sign.yaw, (sign.board?.width ?? 2) + 0.5, 0.55, 0.45);
     }
@@ -613,6 +645,13 @@ export class CharacterViewer {
       if (!item.solid) continue;
       const [w, h, d] = item.solid;
       statics.push({ center: { x: item.position.x, y: item.position.y + h / 2, z: item.position.z }, half: [w / 2, h / 2, d / 2], yaw: item.yaw });
+    }
+    // The circuit's ramps: a sloped board each, rising along the ramp's local +Z.
+    for (const ramp of data.ramps) {
+      if (ramp.profile !== 'up') continue;
+      const slope = Math.atan2(ramp.height, ramp.length);
+      const length = Math.hypot(ramp.height, ramp.length);
+      statics.push({ center: { x: ramp.position.x, y: ramp.position.y + ramp.height / 2 - 0.05, z: ramp.position.z }, half: [ramp.width / 2, 0.05, length / 2], yaw: ramp.yaw, pitch: -slope });
     }
     // The targets' posts; their discs are reported when a thrown laptop hits them.
     const discs: TargetDisc[] = [];
@@ -1123,6 +1162,7 @@ export class CharacterViewer {
     this.resetTech();
     this.checkTech();
     for (const key of this.floorKeys) key.depth = 0;
+    this.resetCircuit();
     this.syncThrown(0);
     this.reportLetters();
   }
@@ -1161,6 +1201,159 @@ export class CharacterViewer {
     if (!keys && mode === 'idle') this.driving = false;
   }
 
+  /** Whether the character sits on the office chair (sitting down, riding or getting up). */
+  private get riding(): boolean {
+    return this.interaction?.phase === 'seated' && this.interaction.seat?.seat === 'office';
+  }
+
+  /** The office chair: its driving state, the rider's root on its seat and the seat offered to the character. */
+  private setupChair(): void {
+    const rig = this.circuit?.chair;
+    const data = this.outsideData;
+    if (!rig || !data?.chair || !this.interaction) return;
+    const { position, yaw } = data.chair;
+    this.chairRest = { x: position.x, z: position.z, yaw };
+    this.chairDrive = chairAt(position.x, position.z, yaw);
+    // The seat clips start from the stand point: on the ground, stand_offset in front of the seat.
+    const rider = new Group();
+    rider.name = 'OfficeChair_Rider';
+    const offset = Number(rig.seat.userData.stand_offset ?? 0.2);
+    // A little forward of the seat's middle: on the larger chair the legs would otherwise sink into the cushion and arms.
+    rider.position.set(rig.seat.position.x, -rig.upper.position.y, rig.seat.position.z + offset + RIDER_FORWARD);
+    rider.quaternion.copy(rig.seat.quaternion);
+    rig.upper.add(rider);
+    this.chairRider = rider;
+    this.chairSpot = { seat: 'office', approaches: [], stand: { x: 0, z: 0 }, yaw };
+    this.lap = { best: readBestLap() };
+    this.interaction.setSeat(this.chairSpot);
+    const checkers = data.floors.filter((floor) => floor.id === 'checker');
+    if (checkers.length === 2) {
+      const near = (floor: FloorBlock) => Math.hypot(floor.position.x - position.x, floor.position.z - position.z);
+      const [start, finish] = [...checkers].sort((a, b) => near(a) - near(b));
+      this.lines = { start, finish };
+    }
+    this.poseChair();
+  }
+
+  /** Put the chair's parts where its state says, and keep its seat spot and the rider's stand point up to date. */
+  private poseChair(): void {
+    const rig = this.circuit?.chair;
+    const state = this.chairDrive;
+    if (!rig || !state || !this.outsideData) return;
+    rig.root.position.set(state.x, this.outsideData.groundY + state.y, state.z);
+    rig.root.rotation.set(0, state.yaw, 0);
+    rig.upper.rotation.set(state.pitch, 0, state.roll);
+    for (const caster of rig.casters) caster.rotation.y = state.casterYaw - state.yaw;
+    for (const wheel of rig.wheels) wheel.rotation.x = state.rolled / 0.05;
+    rig.root.updateMatrixWorld(true);
+    if (this.shadows && this.chairShadow >= 0) {
+      const lift = Math.min(state.y, 1.5);
+      this.shadows.set(this.chairShadow, state.x, state.z, state.yaw, 1.2 - lift * 0.3, 1.2 - lift * 0.3, 0.5 * (1 - lift * 0.4));
+    }
+    const rider = this.chairRider;
+    const spot = this.chairSpot;
+    if (!rider || !spot) return;
+    const position = rider.getWorldPosition(new Vector3());
+    this.standPoints.set('office', { position, quaternion: rider.getWorldQuaternion(new Quaternion()) });
+    const forward = { x: Math.sin(state.yaw), z: Math.cos(state.yaw) };
+    const left = { x: Math.cos(state.yaw), z: -Math.sin(state.yaw) };
+    spot.stand = { x: position.x, z: position.z };
+    spot.yaw = state.yaw;
+    // Its sides first (where the character steps off to), then the front.
+    spot.approaches = [
+      { x: position.x + left.x * 0.85 + forward.x * 0.15, z: position.z + left.z * 0.85 + forward.z * 0.15 },
+      { x: position.x - left.x * 0.85 + forward.x * 0.15, z: position.z - left.z * 0.85 + forward.z * 0.15 },
+      { x: position.x + forward.x * 0.75, z: position.z + forward.z * 0.75 },
+    ];
+  }
+
+  /**
+   * The circuit each frame: drive the office chair while it is ridden (W/S, A/D), let the tapes drop when something fast
+   * goes through, run the traffic light when the rider sits down, and time a lap from the start line to the finish.
+   */
+  private updateCircuit(delta: number): void {
+    const state = this.chairDrive;
+    const data = this.outsideData;
+    if (!state || !data || !this.circuit) return;
+    this.circuitClock += delta;
+    const riding = this.riding;
+    const driving = riding && this.interaction!.state.stage === 'seated';
+    if (riding && !this.wasRiding) this.lightsAt = this.circuitClock;
+    this.wasRiding = riding;
+    const world = {
+      boxes: [...(this.roomData?.boxes ?? []), ...data.boxes],
+      floor: data.bounds,
+      ground: (x: number, z: number) => groundAt({ x, z }, data) - data.groundY,
+    };
+    if (driving) {
+      const intent = this.keyboard?.intent ?? { forward: 0, right: 0, run: false };
+      driveStep(state, { throttle: intent.forward, steer: -intent.right }, delta, world);
+      this.setMovement('interacting', t('prompt.driving'));
+    } else if (Math.hypot(state.vx, state.vz) > 0.01 || state.airborne || Math.abs(state.pitch) > 1e-3) {
+      // Nobody pedalling: it rolls to a stop (quickly once the rider gets up) and the seat settles.
+      const damping = Math.exp(-delta * (riding ? 6 : 2.5));
+      state.vx *= damping;
+      state.vz *= damping;
+      driveStep(state, { throttle: 0, steer: 0 }, delta, world);
+    }
+    this.poseChair();
+    this.chairPusher = driving ? { x: state.x, y: data.groundY + state.y, z: state.z, yaw: state.yaw } : undefined;
+    // What goes through a tape or a line: the chair while ridden, otherwise the character.
+    const mover = riding ? { x: state.x, z: state.z } : this.model ? { x: this.model.position.x, z: this.model.position.z } : undefined;
+    const speed = riding ? Math.hypot(state.vx, state.vz) : this.controller?.speed ?? 0;
+    const last = this.circuitLast;
+    if (mover && last) {
+      for (const [index, tape] of this.circuit.tapes.entries()) {
+        if (tape.cut !== undefined || speed < 1.2) continue;
+        const half = tape.length / 2;
+        const ax = { x: Math.cos(tape.yaw), z: -Math.sin(tape.yaw) };
+        const a = { x: tape.position.x - ax.x * half, z: tape.position.z - ax.z * half };
+        const b = { x: tape.position.x + ax.x * half, z: tape.position.z + ax.z * half };
+        if (crosses(last, mover, a, b)) this.circuit.cut(index);
+      }
+      if (driving && this.lines) {
+        const across = (line: FloorBlock) => {
+          const half = line.size[0] / 2;
+          const ax = { x: Math.cos(line.yaw), z: -Math.sin(line.yaw) };
+          return crosses(last, mover, { x: line.position.x - ax.x * half, z: line.position.z - ax.z * half }, { x: line.position.x + ax.x * half, z: line.position.z + ax.z * half });
+        };
+        if (across(this.lines.start) && forwardSpeed(state) > 0) this.lap = { start: this.circuitClock, best: this.lap.best };
+        else if (this.lap.start !== undefined && across(this.lines.finish)) {
+          const time = this.circuitClock - this.lap.start;
+          const best = Math.min(time, this.lap.best ?? Infinity);
+          if (best === time) saveBestLap(time);
+          this.lap = { time, best };
+        }
+      }
+    }
+    this.circuitLast = mover;
+    const running = this.lap.start !== undefined;
+    this.circuit.setLap(running ? this.circuitClock - this.lap.start! : this.lap.time, this.lap.best, running);
+    const lit = this.circuitClock - this.lightsAt;
+    this.circuit.setLights(!riding ? -1 : lit < 0.8 ? 0 : lit < 1.6 ? 1 : lit < 4 ? 2 : -1);
+    this.circuit.update(delta, this.reducedMotion);
+    const host = this.host.dataset;
+    const drive = driving ? 'driving' : riding ? 'seated' : 'none';
+    if (host.drive !== drive) host.drive = drive;
+    host.chair = `${state.x.toFixed(2)},${state.z.toFixed(2)},${state.yaw.toFixed(2)},${forwardSpeed(state).toFixed(2)},${state.pitch.toFixed(3)}`;
+    const tapes = String(this.circuit.cutCount);
+    if (host.tapes !== tapes) host.tapes = tapes;
+    const broken = String(this.physics?.broken ?? 0);
+    if (host.broken !== broken) host.broken = broken;
+    const lap = this.lap.time === undefined ? (running ? 'running' : 'none') : this.lap.time.toFixed(1);
+    if (host.lap !== lap) host.lap = lap;
+  }
+
+  /** The circuit's tapes whole again and, unless someone rides it, the chair back by the start. */
+  private resetCircuit(): void {
+    this.circuit?.reset();
+    if (!this.riding && this.chairRest) {
+      this.chairDrive = chairAt(this.chairRest.x, this.chairRest.z, this.chairRest.yaw);
+      this.poseChair();
+    }
+    this.lap = { best: this.lap.best };
+  }
+
   /** Sign zones: the fence of the zone the character walks into rises; leaving it (or jumping out) lowers it. */
   private checkSign(): void {
     if (!this.outsideData || !this.areas || !this.model || this.controller?.airborne) return;
@@ -1186,6 +1379,7 @@ export class CharacterViewer {
     if (sign.kind === 'reset') {
       if (sign.target === 'targets') this.resetTargets();
       else if (sign.target) this.physics?.reset(sign.target);
+      if (sign.target === 'circuit') this.resetCircuit();
       if (sign.target === 'tech') {
         this.resetTech();
         this.checkTech();
@@ -1226,6 +1420,11 @@ export class CharacterViewer {
   /** Feet step down onto the outside ground or up onto the room floor over a few frames, not in one jump. */
   private updateElevation(delta: number): void {
     if (!this.model || !this.outsideData) return;
+    if (this.riding) {
+      // On the office chair the seat carries the character (over ramps and through the air).
+      this.elevation = this.model.position.y;
+      return;
+    }
     const target = groundAt({ x: this.model.position.x, z: this.model.position.z }, this.outsideData);
     if (this.reducedMotion || Math.abs(target - this.elevation) < 1e-3) this.elevation = target;
     else this.elevation += (target - this.elevation) * (1 - Math.exp(-delta * STEP_RATE));
@@ -1239,7 +1438,7 @@ export class CharacterViewer {
     if (!this.model || !this.outsideData || !this.shadows) return;
     const lift = this.controller?.lift ?? 0;
     const { x, z } = this.model.position;
-    if (this.physics && this.physics.step(delta, { x, y: this.elevation + lift, z })) {
+    if (this.physics && this.physics.step(delta, { x, y: this.elevation + lift, z }, this.chairPusher)) {
       this.pieces?.sync(this.physics.bodies);
       this.syncFlaps();
       this.reportLetters();
@@ -1668,6 +1867,7 @@ export class CharacterViewer {
     if (this.ready && this.room) {
       if (this.interaction && this.interaction.phase !== 'free') this.driveInteraction(delta);
       else this.drive(delta);
+      this.updateCircuit(delta);
       this.syncLaptop(delta);
       this.updateElevation(delta);
       this.updateOutside(delta);
@@ -1805,5 +2005,35 @@ export class CharacterViewer {
       this.renderer.forceContextLoss();
       canvas.remove();
     }
+  }
+}
+
+/** Whether the step from `from` to `to` crosses the segment a–b. */
+function crosses(from: { x: number; z: number }, to: { x: number; z: number }, a: { x: number; z: number }, b: { x: number; z: number }): boolean {
+  const side = (p: { x: number; z: number }, q: { x: number; z: number }, r: { x: number; z: number }) => (q.x - p.x) * (r.z - p.z) - (q.z - p.z) * (r.x - p.x);
+  const d1 = side(a, b, from);
+  const d2 = side(a, b, to);
+  const d3 = side(from, to, a);
+  const d4 = side(from, to, b);
+  return d1 * d2 < 0 && d3 * d4 < 0;
+}
+
+/** The best lap is kept in this browser (blocked storage just forgets it). */
+const BEST_LAP_KEY = 'simulation-3d:best-lap';
+
+function readBestLap(): number | undefined {
+  try {
+    const value = Number(window.localStorage.getItem(BEST_LAP_KEY));
+    return Number.isFinite(value) && value > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function saveBestLap(seconds: number): void {
+  try {
+    window.localStorage.setItem(BEST_LAP_KEY, seconds.toFixed(2));
+  } catch {
+    // Storage unavailable: the best lap lasts for this visit only.
   }
 }

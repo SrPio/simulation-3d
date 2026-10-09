@@ -94,7 +94,7 @@ test('the root shows only the room with V4, neutral light, a fixed following cam
   await expect(motion).toHaveAttribute('aria-pressed', 'true');
   await expect(host(page)).toHaveAttribute('data-reduced-motion', 'true');
   await expect(page.locator('html')).toHaveAttribute('data-reduced-motion', 'true');
-  assert.deepEqual(models.sort(), ['developer-v4-interactions.glb', 'laptop.glb', 'outside.glb', 'room.glb']);
+  assert.deepEqual(models.sort(), ['circuit.glb', 'developer-v4-interactions.glb', 'laptop.glb', 'outside.glb', 'room.glb']);
   await expect(host(page)).toHaveAttribute('data-letters', '0');
   await expect(page.locator('.sidebar, .version-selector, #animation-controls')).toHaveCount(0);
   await expect(page.locator('canvas')).toHaveCount(1);
@@ -419,6 +419,55 @@ test('playground: laptops thrown from the line score on the targets, the tech to
   await walkTo(page, { x: 39, z: 36.2 }, async () => (await host(page).getAttribute('data-sign')) === 'reset-tech');
   await page.keyboard.press('Enter');
   await expect(host(page)).toHaveAttribute('data-tech', '0');
+  assert.deepEqual(errors, []);
+});
+
+test('the office chair: E sits on it, W/A/D drive it like a little car into a wooden fence that breaks, E gets off', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, ...spanish });
+  t.after(() => page.close());
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await ready(page);
+  await expect(host(page)).toHaveAttribute('data-physics', 'ready', { timeout: 10000 });
+  await expect(host(page)).toHaveAttribute('data-drive', 'none');
+  await page.keyboard.press('Shift');
+  for (const point of [{ x: 6.5, z: 7.5 }, { x: 14, z: 17 }, { x: 22.4, z: 19.4 }]) await walkTo(page, point);
+  await page.keyboard.press('Shift');
+  await expect(host(page)).toHaveAttribute('data-prompt', 'office');
+  await page.keyboard.press('KeyE');
+  await expect(host(page)).toHaveAttribute('data-drive', 'driving', { timeout: 15000 });
+  const chair = async () => (await host(page).getAttribute('data-chair'))!.split(',').map(Number);
+  // Steer towards each point with W held and A/D by the heading error, round the first bend to the first wooden fence.
+  await page.keyboard.down('KeyW');
+  let steering = '';
+  for (const target of [{ x: 30, z: 18.6 }, { x: 42, z: 19.3 }, { x: 48, z: 15 }, { x: 51.5, z: 6 }, { x: 51.6, z: -5 }]) {
+    for (let step = 0; step < 300; step++) {
+      const [x, z, yaw] = await chair();
+      if (Math.hypot(target.x - x, target.z - z) < 1.6) break;
+      const error = Math.atan2(Math.sin(Math.atan2(target.x - x, target.z - z) - yaw), Math.cos(Math.atan2(target.x - x, target.z - z) - yaw));
+      const want = error > 0.08 ? 'KeyA' : error < -0.08 ? 'KeyD' : '';
+      if (want !== steering) {
+        if (steering) await page.keyboard.up(steering);
+        if (want) await page.keyboard.down(want);
+        steering = want;
+      }
+      await page.waitForTimeout(50);
+    }
+  }
+  if (steering) await page.keyboard.up(steering);
+  assert.ok((await chair())[3] > 4, 'rolling fast');
+  await page.keyboard.up('KeyW');
+  await expect.poll(async () => Number(await host(page).getAttribute('data-broken')), { timeout: 4000 }).toBeGreaterThan(0);
+  await expect(host(page)).toHaveAttribute('data-lap', 'running');
+  await page.screenshot({ path: shot('home-chair.png') });
+  await expect.poll(async () => Math.abs((await chair())[3]), { timeout: 6000 }).toBeLessThan(0.05);
+  await page.keyboard.press('KeyE');
+  await expect(host(page)).toHaveAttribute('data-drive', 'none', { timeout: 8000 });
+  await expect(host(page)).toHaveAttribute('data-interaction', 'free', { timeout: 8000 });
+  // Restablecer puts the fences together and the chair back by the start.
+  await page.getByRole('button', { name: 'Restablecer posición' }).click();
+  await expect(host(page)).toHaveAttribute('data-broken', '0');
+  await expect.poll(async () => (await chair())[0], { timeout: 3000 }).toBeLessThan(23);
   assert.deepEqual(errors, []);
 });
 

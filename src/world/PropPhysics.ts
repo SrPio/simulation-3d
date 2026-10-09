@@ -1,4 +1,4 @@
-import type { Body as BodyType, HingeConstraint as HingeType, Material as MaterialType, World as WorldType } from 'cannon-es';
+import type { Body as BodyType, Constraint as ConstraintType, HingeConstraint as HingeType, Material as MaterialType, World as WorldType } from 'cannon-es';
 import { LETTER_MASS, type PieceGroup, type PieceShape } from '../scene/outsideData.ts';
 import { FLAP_CENTRE } from '../scene/PieceMeshes.ts';
 
@@ -9,17 +9,30 @@ type Quat = Vec & { w: number };
 /** A piece at rest: where it stands, the half sizes of its box (width, height, depth) and, optionally, another shape, its mass and group. */
 export type PieceBody = {
   position: Vec; quaternion: Quat; half: [number, number, number]; shape?: PieceShape; mass?: number; group?: PieceGroup;
+  /** Pieces sharing a joint are locked together until a hard knock breaks them apart (a wooden fence's legs and planks). */
+  joint?: string;
   /** A cardboard box's flaps: each hinge on its rim, in the box's own axes (the hinge runs along its local X). */
   flaps?: { position: Vec; quaternion: Quat }[];
 };
 /** Something pieces bounce off: a box turned about +Y (sign boards, the room platform, furniture, walls). */
-export type StaticBox = { center: Vec; half: [number, number, number]; yaw: number };
+export type StaticBox = { center: Vec; half: [number, number, number]; yaw: number; /** Tilt about its own X after the yaw (a ramp's slope). */ pitch?: number };
 /** A standing target's disc: its centre, radius and the yaw of its face (local +Z). Thrown laptops that hit it are reported. */
 export type TargetDisc = { center: Vec; radius: number; yaw: number };
 /** A thrown laptop hitting a target disc: which target, how far from its centre (in the disc's plane) and the laptop. */
 export type TargetHit = { target: number; distance: number; laptop: ThrownLaptop };
 /** Character feet; a kinematic capsule of spheres above them pushes the pieces. */
 export type Pusher = { x: number; y: number; z: number };
+/** The office chair while it is ridden: where its base stands on the ground and its heading (yaw about +Y). */
+export type ChairPusher = Pusher & { yaw: number };
+/** A wooden fence's plank locked to one of its legs. */
+type Joint = { key: string; plank: number; leg: number; constraint: ConstraintType | undefined };
+/**
+ * A fence breaks apart when something hits it this fast (m/s): the ridden chair, a thrown laptop, or a charged blow (its
+ * launch speed). The character walking or running into it only pushes it over whole: the locks hold whatever force.
+ */
+export const BREAK_SPEED = 3;
+/** The ridden chair's body for the pieces: a box round its base and seat (half sizes) with its bottom on the ground. */
+export const CHAIR_HALF = [0.45, 0.55, 0.45] as const;
 
 /** Thrown laptop: a base and a lid joined by a hinge along the base's back edge. */
 export const LAPTOP = { width: 0.48, depth: 0.32, base: 0.022, lid: 0.012, baseMass: 1, lidMass: 0.4 } as const;
@@ -61,6 +74,7 @@ const SETTINGS: Record<PieceGroup | 'laptop', Settings> = {
   bowling: { material: 'pin', sleepSpeed: 0.15, angularDamping: 0.4, linearDamping: 0.1 },
   decor: { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.4, linearDamping: 0.1 },
   tech: { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.4, linearDamping: 0.1 },
+  circuit: { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.3, linearDamping: 0.08 },
   laptop: { material: 'laptop', sleepSpeed: 0.15, angularDamping: 0.3, linearDamping: 0.05 },
 };
 /** The ball rolls: it keeps less damping than the pins but still comes to rest on the flat ground. */
@@ -101,6 +115,11 @@ export class PropPhysics {
   /** Each piece's flaps (none for most). */
   readonly flaps: Flap[][] = [];
   private readonly scored = new WeakMap<ThrownLaptop, Set<number>>();
+  /** Fence planks locked to their legs; a broken one has no constraint until the next reset. */
+  readonly joints: Joint[] = [];
+  /** The ridden office chair: a kinematic box that only meets the pieces while someone drives it. */
+  private readonly chair: BodyType;
+  private chairActive = false;
 
   static async load(pieces: readonly PieceBody[], statics: readonly StaticBox[], groundY: number, targets: readonly TargetDisc[] = []): Promise<PropPhysics> {
     return new PropPhysics(await import('cannon-es'), pieces, statics, groundY, targets);
@@ -110,8 +129,8 @@ export class PropPhysics {
     const { Body, Box, ContactMaterial, Cylinder, Material, Plane, SAPBroadphase, Sphere, Vec3, World } = cannon;
     this.cannon = cannon;
     // Copied field by field: three.js vectors and quaternions keep their values in accessors.
-    this.rest = pieces.map(({ position: p, quaternion: q, half, shape, mass, group, flaps }) => ({
-      position: { x: p.x, y: p.y, z: p.z }, quaternion: { x: q.x, y: q.y, z: q.z, w: q.w }, half, shape, mass, group,
+    this.rest = pieces.map(({ position: p, quaternion: q, half, shape, mass, group, flaps, joint }) => ({
+      position: { x: p.x, y: p.y, z: p.z }, quaternion: { x: q.x, y: q.y, z: q.z, w: q.w }, half, shape, mass, group, joint,
       flaps: flaps?.map(({ position: h, quaternion: r }) => ({ position: { x: h.x, y: h.y, z: h.z }, quaternion: { x: r.x, y: r.y, z: r.z, w: r.w } })),
     }));
     this.groups = this.rest.map((piece) => piece.group ?? 'name');
@@ -136,6 +155,7 @@ export class PropPhysics {
       const body = new Body({ type: Body.STATIC, shape: new Box(new Vec3(...box.half)), material: groundMaterial });
       body.position.set(box.center.x, box.center.y, box.center.z);
       body.quaternion.setFromEuler(0, box.yaw, 0);
+      if (box.pitch) body.quaternion = body.quaternion.mult(new cannon.Quaternion().setFromAxisAngle(new Vec3(1, 0, 0), box.pitch));
       this.world.addBody(body);
     }
     // Target discs: thin static boxes facing their local +Z; a laptop touching one reports where it hit.
@@ -180,10 +200,65 @@ export class PropPhysics {
     for (const y of PUSHER_SPHERES) this.pusher.addShape(new Sphere(PUSHER_RADIUS), new Vec3(0, y, 0));
     this.pusher.allowSleep = false;
     this.world.addBody(this.pusher);
+    this.chair = new Body({ type: Body.KINEMATIC, shape: new Box(new Vec3(...CHAIR_HALF)) });
+    this.chair.allowSleep = false;
+    this.chair.collisionResponse = false;
+    this.chair.position.set(0, groundY - 10, 0);
+    this.chair.addEventListener('collide', (event: { body: BodyType }) => this.knock(event.body, this.chair.velocity.length()));
+    this.world.addBody(this.chair);
+    // Planks and legs of one fence: each plank is locked to each leg (the joints are made at rest, in reset).
+    const byJoint = new Map<string, number[]>();
+    for (const [index, piece] of this.rest.entries()) if (piece.joint) byJoint.set(piece.joint, [...(byJoint.get(piece.joint) ?? []), index]);
+    for (const [key, indices] of byJoint) {
+      const legs = indices.filter((index) => this.rest[index].half[1] >= 0.3);
+      for (const plank of indices.filter((index) => !legs.includes(index))) for (const leg of legs) this.joints.push({ key, plank, leg, constraint: undefined });
+    }
     this.world.addEventListener('postStep', this.limitLids);
     this.world.addEventListener('postStep', this.limitFlaps);
+    this.world.addEventListener('postStep', this.breakJoints);
     this.reset();
   }
+
+  /** How many fence planks have broken loose from a leg. */
+  get broken(): number {
+    return this.joints.filter((joint) => !joint.constraint).length;
+  }
+
+  /** Lock a plank to its leg where they stand now (both at rest after a reset). */
+  private lock(joint: Joint): void {
+    if (joint.constraint) this.world.removeConstraint(joint.constraint);
+    joint.constraint = new this.cannon.LockConstraint(this.bodies[joint.plank], this.bodies[joint.leg]);
+    // The plank ends sit in the legs: touching each other they would fight the lock (the option is not passed on by LockConstraint).
+    joint.constraint.collideConnected = false;
+    this.world.addConstraint(joint.constraint);
+  }
+
+  /** Fences hit hard this step, broken apart after it (constraints are not removed in the middle of a step). */
+  private readonly toBreak = new Set<string>();
+
+  /** The fence piece `body` belongs to, if any. */
+  private jointOf(body: BodyType): string | undefined {
+    const index = this.bodies.indexOf(body);
+    return index >= 0 ? this.rest[index].joint : undefined;
+  }
+
+  /** Something hit `body` at `speed`: a fence piece hit hard enough breaks its whole fence apart. */
+  private knock(body: BodyType, speed: number): void {
+    const key = this.jointOf(body);
+    if (key && speed >= BREAK_SPEED) this.toBreak.add(key);
+  }
+
+  /** The fences hit hard during the step let go of their planks, which fly on their own until the next reset. */
+  private readonly breakJoints = (): void => {
+    if (!this.toBreak.size) return;
+    for (const joint of this.joints) {
+      if (!joint.constraint || !this.toBreak.has(joint.key)) continue;
+      this.world.removeConstraint(joint.constraint);
+      joint.constraint = undefined;
+      this.bodies[joint.plank].wakeUp();
+    }
+    this.toBreak.clear();
+  };
 
   /**
    * A flap hinged on box `box` at `at`: its body sits at the flap's centre (so gravity swings it), and the hinge joins
@@ -269,6 +344,7 @@ export class PropPhysics {
     for (const [index, body] of this.bodies.entries()) {
       if (!group || this.groups[index] === group) this.place(body, this.rest[index]);
     }
+    for (const joint of this.joints) if (!group || this.groups[joint.plank] === group) this.lock(joint);
     if (!group) {
       for (const laptop of [...this.laptops]) this.removeLaptop(laptop);
       this.retired.length = 0;
@@ -297,6 +373,8 @@ export class PropPhysics {
     const base = new Body({ mass: LAPTOP.baseMass, material, shape: new Box(new Vec3(hw, LAPTOP.base / 2, hd)) });
     // The lid is a hair shorter than the base and rests on it, hinged at the base's back (+Z) edge.
     const lid = new Body({ mass: LAPTOP.lidMass, material, shape: new Box(new Vec3(hw, LAPTOP.lid / 2, hd - 0.005)) });
+    // A laptop flying into a fence breaks it like the chair does.
+    for (const part of [base, lid]) part.addEventListener('collide', (event: { body: BodyType }) => this.knock(event.body, part.velocity.vsub(event.body.velocity).length()));
     const orientation = new Quaternion(pose.quaternion.x, pose.quaternion.y, pose.quaternion.z, pose.quaternion.w);
     base.position.set(pose.position.x, pose.position.y, pose.position.z);
     base.quaternion.copy(orientation);
@@ -351,9 +429,11 @@ export class PropPhysics {
       body.wakeUp();
       // Pushed where the blow touches it, so it also spins.
       body.applyImpulse(new Vec3(along.x * change * body.mass, change * STRIKE_LIFT * body.mass, along.z * change * body.mass), touch.vsub(body.position));
+      this.knock(body, change);
       hits++;
     }
     if (hits) this.idle = false;
+    this.breakJoints();
     return hits;
   }
 
@@ -454,6 +534,17 @@ export class PropPhysics {
       if (this.bodies[index].sleepState === asleep) continue;
       for (const flap of flaps) if (flap.body.sleepState === asleep) flap.body.wakeUp();
     }
+    if (this.chairActive) movers.push({ x: this.chair.position.x, z: this.chair.position.z, reach: 1.2 + this.chair.velocity.length() * STEP * MAX_SUBSTEPS });
+    // A fence moves as one while it holds together: a sleeping part would pin the rest in place.
+    for (const joint of this.joints) {
+      if (!joint.constraint) continue;
+      const plank = this.bodies[joint.plank];
+      const leg = this.bodies[joint.leg];
+      if ((plank.sleepState === asleep) !== (leg.sleepState === asleep)) {
+        plank.wakeUp();
+        leg.wakeUp();
+      }
+    }
     for (const body of this.bodies) {
       if (body.sleepState !== asleep) continue;
       for (const mover of movers) {
@@ -465,9 +556,38 @@ export class PropPhysics {
     }
   }
 
-  /** Advance by `delta` seconds with the character at `pusher`. Returns false when the world was skipped. */
-  step(delta: number, pusher: Pusher | undefined): boolean {
-    const close = pusher !== undefined && this.near(pusher);
+  /**
+   * The office chair while it is ridden (its base on the ground and heading), or undefined when nobody drives it:
+   * then it takes no part. Moved like the character's pusher, by its velocity, so what it runs into is knocked away.
+   */
+  private moveChair(chair: ChairPusher | undefined, delta: number): void {
+    const body = this.chair;
+    if (!chair) {
+      if (this.chairActive) {
+        body.position.set(0, this.groundY - 10, 0);
+        body.velocity.setZero();
+        body.collisionResponse = false;
+        this.chairActive = false;
+      }
+      return;
+    }
+    const y = chair.y + CHAIR_HALF[1];
+    if (!this.chairActive || delta <= 0) {
+      body.position.set(chair.x, y, chair.z);
+      body.velocity.setZero();
+    } else {
+      const scale = 1 / Math.max(delta, STEP);
+      body.velocity.set((chair.x - body.position.x) * scale, (y - body.position.y) * scale, (chair.z - body.position.z) * scale);
+    }
+    body.quaternion.setFromEuler(0, chair.yaw, 0);
+    body.collisionResponse = true;
+    this.chairActive = true;
+  }
+
+  /** Advance by `delta` seconds with the character at `pusher` (and the ridden chair). Returns false when the world was skipped. */
+  step(delta: number, pusher: Pusher | undefined, chair?: ChairPusher): boolean {
+    this.moveChair(chair, delta);
+    const close = (pusher !== undefined && this.near(pusher)) || (chair !== undefined && this.near(chair));
     if (!close && !this.active) {
       this.idle = true;
       return false;

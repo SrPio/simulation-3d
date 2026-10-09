@@ -66,7 +66,7 @@ HALF, WALL_T = room.HALF, room.WALL_T
 GROUND_Z = -0.12    # outside ground, below the room floor (plank tops at 0)
 FAR = 24.0          # walkable ground from the room centre, further on the +X side and in front (BOUNDS)
 # Blender XY rectangle of the walkable ground: the crossroads and the playground lie towards +X and -Y.
-BOUNDS = [-30.0, 54.0, -48.0, FAR]
+BOUNDS = [-30.0, 56.0, -50.0, FAR]
 # Room platform footprint in Blender XY (create_room.build_shell): the floor is at 0 inside it.
 PLATFORM = [-HALF - WALL_T, HALF + 0.1, -HALF - 0.1, HALF + WALL_T]
 BOARD_W, BOARD_H, BOARD_BOTTOM, BOARD_T, BORDER, POST = 2.4, 1.5, 0.6, 0.06, 0.07, 0.08
@@ -254,7 +254,7 @@ CIRCUIT = [
     (-11.16, 45.43), (-9.87, 45.29), (-8.62, 45.04), (-7.13, 44.55), (-5.94, 43.86), (-5.09, 42.92), (-4.49, 41.73), (-4.13, 40.39),
     (-3.94, 38.96), (-3.89, 37.48), (-3.91, 36), (-3.96, 34.58), (-3.99, 33.27),
 ]
-CIRCUIT_WIDTH = 3.5
+CIRCUIT_WIDTH = 5.0
 # Bowling (playground axes): the ball near the camera, the pins up the lane in a 4-3-2-1 triangle.
 LANE_X, BALL_Z, HEAD_PIN_Z = -3.6, 3.6, -1.2
 PIN_SPACING, PIN_ROW = 0.56, 0.485

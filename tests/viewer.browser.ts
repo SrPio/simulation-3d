@@ -382,7 +382,7 @@ test('Habitación places the selected character in the isometric diorama and Est
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-scene', 'studio');
   await expect(page.locator('.orbit-label')).toHaveText('ÓRBITA 360°');
   await expect(page.locator('[data-view="back"]')).toBeEnabled();
-  assert.deepEqual(requests, ['developer.glb', 'developer.glb', 'room.glb', 'laptop.glb', 'outside.glb', 'developer-v4-interactions.glb', 'room.glb', 'laptop.glb', 'outside.glb', 'developer-v4-interactions.glb']);
+  assert.deepEqual(requests, ['developer.glb', 'developer.glb', 'room.glb', 'laptop.glb', 'outside.glb', 'circuit.glb', 'developer-v4-interactions.glb', 'room.glb', 'laptop.glb', 'outside.glb', 'circuit.glb', 'developer-v4-interactions.glb']);
   assert.deepEqual(errors, []);
 });
 

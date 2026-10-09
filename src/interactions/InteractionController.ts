@@ -17,7 +17,7 @@ export const APPEAR_TIME = 0.15;
 export const LID_TIME = 0.3;
 const ARRIVED = 0.03;
 const TURN_RATE = 9;
-const seatName = (seat: Seat) => t(seat === 'chair' ? 'seat.chair' : 'seat.bed');
+const seatName = (seat: Seat) => t(seat === 'chair' ? 'seat.chair' : seat === 'office' ? 'seat.office' : 'seat.bed');
 
 const distance = (a: Point2, b: Point2) => Math.hypot(a.x - b.x, a.z - b.z);
 const wrap = (angle: number) => Math.atan2(Math.sin(angle), Math.cos(angle));
@@ -45,7 +45,7 @@ export class InteractionController {
   private entry?: Point2;
   private stalled = 0;
   private moving = false;
-  private readonly seats: readonly SeatSpot[];
+  private seats: readonly SeatSpot[];
   private readonly boxes: readonly Box2[];
   private readonly floor: Floor;
   private readonly radius: number;
@@ -55,6 +55,11 @@ export class InteractionController {
     this.boxes = boxes;
     this.floor = floor;
     this.radius = radius;
+  }
+
+  /** Add or replace a seat that moves (the office chair): its spot is kept up to date by the caller. */
+  setSeat(spot: SeatSpot): void {
+    this.seats = [...this.seats.filter((seat) => seat.seat !== spot.seat), spot];
   }
 
   /** The seat and approach point the character can use from here: close enough and with a clear straight path. */
@@ -163,10 +168,10 @@ export class InteractionController {
     return false;
   }
 
-  /** Leave by the side used to sit down; if something blocks it now, by any other free side. */
+  /** Leave by the side used to sit down; if something blocks it now, by any other free side. A seat that moves (the office chair) is left by its sides where it stands now. */
   private exitPoint(): Point2 | undefined {
     const spot = this.seat!;
-    const sides = [...(this.entry ? [this.entry] : []), ...spot.approaches.filter((point) => point !== this.entry)];
+    const sides = spot.seat === 'office' ? spot.approaches : [...(this.entry ? [this.entry] : []), ...spot.approaches.filter((point) => point !== this.entry)];
     return sides.find((point) => !overlaps(point, this.radius, this.boxes));
   }
 
