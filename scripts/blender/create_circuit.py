@@ -9,8 +9,8 @@ outside.glb and reads it the same way (src/scene/outsideData.ts), so the extras 
   arches (open in the middle: two `Collider_*` legs), the traffic light (`TrafficLight_Lens_<i>` lit by the viewer), the
   lap board (`board` like the scoreboard) and the ramps (`ramp` [length, width, height], `profile` up | bump: the
   ground rises along the ramp's local +Z, three.js axes).
-- `Tapes`: safety tapes, `Tape_<i>` anchors (`tape` [length]) with two halves `Tape_<i>_L`/`_R` pivoting at their
-  post; the viewer lets them drop when something fast goes through.
+- `Tapes`: safety tapes, `Tape_<i>` anchors (`tape` [length]) with their two posts; the viewer draws the tape itself
+  (a ribbon on a rope that falls apart when something fast goes through).
 - `OfficeChair`: the chair the character rides: `ChairBase` with `ChairCaster_<i>` (swivel, `ChairWheel_<i>` inside),
   and `ChairUpper` pivoting on the gas lift top (seat, back and arms; `ChairArmrest_<side>` on top of each arm pad,
   `armrest` 'right' or 'left' for the rider's side; `ChairBottle_<side>` soda bottles strapped under the arms with their
@@ -536,16 +536,6 @@ def build_meshes(m):
     return meshes
 
 
-def tape_half(m, length):
-    """Half a tape, from its post (origin) along +X to the middle, black and yellow stripes."""
-    def build(bm):
-        stripes = 8
-        for k in range(stripes):
-            x0 = k * length / stripes
-            bm_box(bm, (x0, -0.004, -0.04), (x0 + length / stripes, 0.004, 0.04), k % 2)
-    return mesh('Circuit_TapeHalf', build, [m['yellow'], m['black']])
-
-
 def build_arch(m, root, name, i):
     """Scaffold arch over the road: two towers and a checkered banner on top."""
     width = CIRCUIT_WIDTH + 0.9
@@ -703,14 +693,12 @@ def build(root):
     # Safety tapes across the road between two posts.
     tapes = room.anchor('Tapes', (0, 0, 0), root)
     length = CIRCUIT_WIDTH + 0.6
-    half = tape_half(m, length / 2)
     for t, i in enumerate((54, 68, 108, 136)):
         yaw = yaw_along(i)   # across the road
         cx, cz = road(i)
         tape = room.anchor(f'Tape_{t}', at((cx, cz)), tapes, yaw, tape=[length])
         for end, suffix in ((-1, 'L'), (1, 'R')):
             obj(f'Tape_{t}_Post{suffix}', meshes['post'], tape, (end * length / 2, 0, 0))
-            obj(f'Tape_{t}_{suffix}', half, tape, (end * length / 2, 0, 0.85), 0.0 if end < 0 else math.pi)
 
     # Edges and signs.
     for k, i in enumerate(range(9, 16)):

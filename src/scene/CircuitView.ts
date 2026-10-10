@@ -1,6 +1,7 @@
 import {
-  BufferAttribute, BufferGeometry, CanvasTexture, Group, Mesh, MeshStandardMaterial, SRGBColorSpace, type Object3D,
+  BufferAttribute, BufferGeometry, CanvasTexture, DoubleSide, Group, Mesh, MeshStandardMaterial, RepeatWrapping, SRGBColorSpace, type Object3D,
 } from 'three';
+import { TapeRope, type Point3 } from '../world/tapeRope.ts';
 import { t } from '../core/i18n.ts';
 import { FONT } from './canvasText.ts';
 import type { OfficeChair, OutsideData, Scoreboard, Tape } from './outsideData.ts';
@@ -15,10 +16,8 @@ export function lapText(seconds: number | undefined): string {
   return `${minutes}:${rest < 10 ? '0' : ''}${rest.toFixed(1)}`;
 }
 
-/** How long a cut tape takes to drop and swing still (s). */
-const TAPE_DROP = 1.6;
-/** Height of the tape on its posts (m). */
-const TAPE_HEIGHT = 0.85;
+/** Height of the tape's middle on its posts, how tall the band is (it stays a thin ribbon) and one stripe's length (m). */
+export const TAPE = { height: 0.85, band: 0.12, stripe: 0.18 } as const;
 /** Lens colours when lit (red, amber, green). */
 const LIT = [0xff3b30, 0xffc21a, 0x2ee86b] as const;
 
@@ -40,7 +39,7 @@ export type ChairRig = {
 export type Side = 'right' | 'left';
 export type ChairBottle = { side: Side; liquid?: Object3D; cap?: Object3D; nozzle: Object3D };
 
-type TapeState = Tape & { halves: Object3D[]; cut: number | undefined };
+type TapeState = Tape & { rope: TapeRope; geometry: BufferGeometry; cut: number | undefined };
 
 /**
  * The circuit's moving bits outside the merged static scene: the office chair, the safety tapes (cut and drooping)
@@ -55,6 +54,8 @@ export class CircuitView {
   private readonly canvas = document.createElement('canvas');
   private readonly texture: CanvasTexture;
   private lap: { time: number | undefined; best: number | undefined; running: boolean } = { time: undefined, best: undefined, running: false };
+  private readonly tapeMaterial: MeshStandardMaterial;
+  private reducedMotion = false;
 
   constructor(data: Pick<OutsideData, 'chair' | 'tapes' | 'trafficLight' | 'lapBoard'>) {
     this.root.name = 'CircuitView';
@@ -67,10 +68,22 @@ export class CircuitView {
     if (board) this.root.add(boardMesh(board, this.texture));
     this.paint();
     this.chair = data.chair ? this.takeChair(data.chair) : undefined;
+    this.tapeMaterial = new MeshStandardMaterial({ map: stripes(), roughness: 0.55, side: DoubleSide });
     this.tapes = data.tapes.map((tape) => {
       this.root.attach(tape.object);
-      const halves = ['L', 'R'].map((side) => tape.object.getObjectByName(`${tape.name}_${side}`)).filter((half): half is Object3D => !!half);
-      return { ...tape, halves, cut: undefined };
+      // Between the tops of its posts, across the road.
+      const ax = { x: Math.cos(tape.yaw), z: -Math.sin(tape.yaw) };
+      const half = tape.length / 2;
+      const { x, y, z } = tape.position;
+      const rope = new TapeRope({ x: x - ax.x * half, y: y + TAPE.height, z: z - ax.z * half }, { x: x + ax.x * half, y: y + TAPE.height, z: z + ax.z * half }, y);
+      const geometry = new BufferGeometry();
+      const mesh = new Mesh(geometry, this.tapeMaterial);
+      mesh.name = `${tape.name}_Ribbon`;
+      mesh.frustumCulled = false;
+      this.root.add(mesh);
+      const state = { ...tape, rope, geometry, cut: undefined };
+      drawRibbon(state);
+      return state;
     });
     for (let k = 0; k < 3; k++) {
       const lens = data.trafficLight?.getObjectByName(`TrafficLight_Lens_${k}`);
@@ -148,10 +161,17 @@ export class CircuitView {
     }
   }
 
-  /** Cut tape `index` (its halves drop and swing from their posts); a cut tape stays cut until reset. */
-  cut(index: number): void {
+  /**
+   * Cut tape `index` at `at` (0 at its first post … 1 at the second) by something moving at `push` (m/s on the ground):
+   * its halves whip back, hang from their posts and fall to the ground; a cut tape stays cut until reset.
+   */
+  cut(index: number, at = 0.5, push = { x: 0, z: 0 }): void {
     const tape = this.tapes[index];
-    if (tape && tape.cut === undefined) tape.cut = this.clock;
+    if (!tape || tape.cut !== undefined) return;
+    tape.cut = this.clock;
+    tape.rope.cutAt(at, push, index * 7919 + Math.round(this.clock * 1000));
+    if (this.reducedMotion) tape.rope.settle();
+    drawRibbon(tape);
   }
 
   get cutCount(): number {
@@ -162,25 +182,18 @@ export class CircuitView {
   reset(): void {
     for (const tape of this.tapes) {
       tape.cut = undefined;
-      for (const [k, half] of tape.halves.entries()) half.rotation.set(0, k === 0 ? 0 : Math.PI, 0, 'YZX');
+      tape.rope.reset();
+      drawRibbon(tape);
     }
   }
 
   update(delta: number, reducedMotion: boolean): void {
     this.clock += delta;
+    this.reducedMotion = reducedMotion;
     for (const tape of this.tapes) {
-      if (tape.cut === undefined) continue;
-      const t = Math.min((this.clock - tape.cut) / TAPE_DROP, 1);
-      // A damped swing down to hanging: about 80 degrees below the horizontal, overshooting a little first.
-      const hang = reducedMotion ? 1 : 1 - Math.exp(-5 * t) * Math.cos(9 * t);
-      // Each half pivots at its post: it drops until its end touches the ground and swings round along the road
-      // (about the vertical first, then down: Euler order YZX), like a cut tape blown back by what went through.
-      const drop = Math.asin(Math.min(1, TAPE_HEIGHT / (tape.length / 2)));
-      for (const [k, half] of tape.halves.entries()) {
-        half.rotation.order = 'YZX';
-        half.rotation.y = k === 0 ? -hang * 1.25 : Math.PI + hang * 1.25;
-        half.rotation.z = -hang * drop;
-      }
+      if (!tape.rope.active) continue;
+      tape.rope.update(delta);
+      drawRibbon(tape);
     }
   }
 }
@@ -203,4 +216,112 @@ function boardMesh(board: Scoreboard, texture: CanvasTexture): Mesh {
   const mesh = new Mesh(geometry, new MeshStandardMaterial({ map: texture, emissiveMap: texture, emissive: 0xffffff, emissiveIntensity: 0.4, roughness: 0.6 }));
   mesh.name = 'LapBoardFace';
   return mesh;
+}
+
+/**
+ * The tape's black and yellow stripes, slanting up to the right (/) like real safety tape, repeating along it. The canvas
+ * is one period of stripes along the tape by the band's height, at the same pixels per metre both ways, so the
+ * stripes run at 45 degrees; each pixel's colour depends on x + y, so the pattern wraps seamlessly along the tape.
+ */
+function stripes(): CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 96;
+  canvas.height = Math.round((96 * TAPE.band) / (TAPE.stripe * 2));
+  const context = canvas.getContext('2d');
+  if (context) {
+    const image = context.createImageData(canvas.width, canvas.height);
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = 0; x < canvas.width; x++) {
+        // Canvas y grows downwards: a constant x + y rises to the right.
+        const yellow = (x + y) % canvas.width < canvas.width / 2;
+        const i = (y * canvas.width + x) * 4;
+        image.data.set(yellow ? [0xe4, 0xbf, 0x2c, 255] : [0x14, 0x12, 0x16, 255], i);
+      }
+    }
+    context.putImageData(image, 0, 0);
+  }
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  texture.wrapS = RepeatWrapping;
+  return texture;
+}
+
+const UP = { x: 0, y: 1, z: 0 };
+const normalize = (v: Point3): Point3 => {
+  const length = Math.hypot(v.x, v.y, v.z) || 1;
+  return { x: v.x / length, y: v.y / length, z: v.z / length };
+};
+const crossOf = (a: Point3, b: Point3): Point3 => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
+
+/**
+ * The ribbon along the rope's chains: each node gets the band's two edges, across the rope. In the air the band
+ * stands upright (like a stretched tape); near the ground it turns flat, lying on the road.
+ */
+function drawRibbon(tape: { rope: TapeRope; geometry: BufferGeometry }): void {
+  const chains = tape.rope.chains;
+  const count = chains.reduce((sum, chain) => sum + chain.length, 0);
+  let position = tape.geometry.getAttribute('position') as BufferAttribute | undefined;
+  let uv = tape.geometry.getAttribute('uv') as BufferAttribute | undefined;
+  const fresh = !position || position.count !== count * 2 || tape.geometry.userData.chains !== chains.length;
+  if (fresh) {
+    position = new BufferAttribute(new Float32Array(count * 6), 3);
+    uv = new BufferAttribute(new Float32Array(count * 4), 2);
+    tape.geometry.setAttribute('position', position);
+    tape.geometry.setAttribute('uv', uv);
+    const index: number[] = [];
+    let base = 0;
+    for (const chain of chains) {
+      for (let i = 0; i < chain.length - 1; i++) {
+        const v = (base + i) * 2;
+        index.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
+      }
+      base += chain.length;
+    }
+    tape.geometry.setIndex(index);
+    tape.geometry.userData.chains = chains.length;
+  }
+  const ground = tape.rope.chains[0][0].y - TAPE.height;
+  let v = 0;
+  for (const chain of chains) {
+    // Read along the way that goes to the right on screen (the default corner view looks along -X-Z, so screen right
+    // is +X-Z): whichever way a tape or a cut half runs, its stripes then slant up to the right, never mirrored.
+    const first = chain[0];
+    const last = chain[chain.length - 1];
+    const way = (last.x - first.x) - (last.z - first.z) < 0 ? -1 : 1;
+    let along = 0;
+    let previous: Point3 | undefined;
+    for (let i = 0; i < chain.length; i++) {
+      const p = chain[i];
+      if (i > 0) along += Math.hypot(p.x - chain[i - 1].x, p.y - chain[i - 1].y, p.z - chain[i - 1].z);
+      const a = chain[Math.max(0, i - 1)];
+      const b = chain[Math.min(chain.length - 1, i + 1)];
+      const tangent = normalize({ x: (b.x - a.x) * way, y: (b.y - a.y) * way, z: (b.z - a.z) * way });
+      // Upright: up without its part along the rope. Flat: across the rope on the ground.
+      const dot = tangent.y;
+      const upright = { x: -tangent.x * dot, y: 1 - tangent.y * dot, z: -tangent.z * dot };
+      const flat = normalize(crossOf(tangent, UP));
+      const lift = Math.min(1, Math.max(0, (p.y - ground - 0.02) / 0.25));
+      const uprightLength = Math.hypot(upright.x, upright.y, upright.z);
+      const k = uprightLength > 0.2 ? lift : 0;
+      let across = normalize({
+        x: flat.x * (1 - k) + (upright.x / (uprightLength || 1)) * k,
+        y: flat.y * (1 - k) + (upright.y / (uprightLength || 1)) * k,
+        z: flat.z * (1 - k) + (upright.z / (uprightLength || 1)) * k,
+      });
+      // Keep the band from flipping over between neighbours.
+      if (previous && across.x * previous.x + across.y * previous.y + across.z * previous.z < 0) across = { x: -across.x, y: -across.y, z: -across.z };
+      previous = across;
+      const half = TAPE.band / 2;
+      // Lying flat, the band's lower edge would go below the road: raise it by what its slope takes.
+      const rise = Math.max(0, ground + 0.006 - (p.y - Math.abs(across.y) * half));
+      position!.setXYZ(v, p.x + across.x * half, p.y + across.y * half + rise, p.z + across.z * half);
+      position!.setXYZ(v + 1, p.x - across.x * half, p.y - across.y * half + rise, p.z - across.z * half);
+      uv!.setXY(v, (way * along) / (TAPE.stripe * 2), 1);
+      uv!.setXY(v + 1, (way * along) / (TAPE.stripe * 2), 0);
+      v += 2;
+    }
+  }
+  position!.needsUpdate = true;
+  uv!.needsUpdate = true;
+  tape.geometry.computeVertexNormals();
 }

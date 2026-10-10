@@ -1576,7 +1576,11 @@ export class CharacterViewer {
         const ax = { x: Math.cos(tape.yaw), z: -Math.sin(tape.yaw) };
         const a = { x: tape.position.x - ax.x * half, z: tape.position.z - ax.z * half };
         const b = { x: tape.position.x + ax.x * half, z: tape.position.z + ax.z * half };
-        if (crosses(last, mover, a, b)) this.circuit.cut(index);
+        if (!crosses(last, mover, a, b)) continue;
+        // Where along the tape it was cut, and the push of what went through (its speed along its way).
+        const at = ((mover.x - a.x) * (b.x - a.x) + (mover.z - a.z) * (b.z - a.z)) / (tape.length * tape.length);
+        const way = Math.hypot(mover.x - last.x, mover.z - last.z) || 1;
+        this.circuit.cut(index, Math.min(1, Math.max(0, at)), { x: ((mover.x - last.x) / way) * speed, z: ((mover.z - last.z) / way) * speed });
       }
       if (driving && this.lines) {
         const across = (line: FloorBlock) => {
