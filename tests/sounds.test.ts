@@ -59,7 +59,7 @@ test('each loose piece outside and on the circuit sounds of what it is made of',
   const data = readOutside(outside);
   const heard = new Map<string, string>();
   for (const piece of [...data.letters, ...data.props]) heard.set(`${piece.group}/${piece.prop ?? '-'}`, pieceSound(piece));
-  assert.equal(heard.get('name/-'), 'stone');
+  assert.equal(heard.get('name/-'), 'brick', 'the name letters clatter like bricks');
   assert.equal(heard.get('bricks/brick'), 'brick');
   assert.equal(heard.get('wall/brick'), 'brick');
   assert.equal(heard.get('bowling/pin'), 'pin');

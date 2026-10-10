@@ -274,33 +274,58 @@ def build_chair(m, root):
     return chair
 
 
-BOTTLE = {'radius': 0.045, 'body': (-0.15, 0.08), 'neck': (0.13, 0.15), 'x': 0.43, 'z': 0.3}
+# A contour soda bottle, lying with its mouth backwards: half its outline traced from the user's silhouette, as
+# (height from the base, radius), both as fractions of its length, and turned round its axis. LENGTH is its size on the chair.
+BOTTLE_PROFILE = [
+    (0.0, 0.0), (0.02, 0.114), (0.07, 0.147), (0.22, 0.121), (0.32, 0.13), (0.44, 0.143), (0.54, 0.143),
+    (0.62, 0.129), (0.7, 0.111), (0.78, 0.08), (0.86, 0.063), (0.92, 0.06), (0.935, 0.07), (1.0, 0.046), (1.0, 0.0),
+]
+BOTTLE = {'length': 0.46, 'x': 0.45, 'z': 0.31, 'base': -0.2, 'fill': 0.62}
+
+
+def bm_lathe_y(bm, profile, segments=12, material=0):
+    """Turn a (height, radius) profile round Blender Y: height along +Y from 0."""
+    rings = []
+    for h, r in profile:
+        if r < 1e-6:
+            rings.append([bm.verts.new((0, h, 0))])
+        else:
+            rings.append([bm.verts.new((math.cos(k / segments * math.tau) * r, h, math.sin(k / segments * math.tau) * r)) for k in range(segments)])
+    for a, b in zip(rings, rings[1:]):
+        for k in range(segments):
+            n = (k + 1) % segments
+            if len(a) == 1:
+                face = (a[0], b[n], b[k])
+            elif len(b) == 1:
+                face = (a[k], a[n], b[0])
+            else:
+                face = (a[k], a[n], b[n], b[k])
+            bm.faces.new(face).material_index = material
 
 
 def build_bottles(m, upper):
-    """Two cola bottles strapped under the arms, lying along the seat with their mouths backwards (Blender +Y): the nitro.
-    The clear shell and its label, the dark liquid inside (scaled along Y by the viewer as it empties), a cap that pops off
-    and an anchor at the mouth where the spray comes out. Shared meshes; positions are in ChairUpper's space."""
-    r, (y0, y1), (n0, n1) = BOTTLE['radius'], BOTTLE['body'], BOTTLE['neck']
-
-    def shell(bm):
-        bm_cylinder(bm, (0, (y0 + y1) / 2, 0), r, y1 - y0, 10, 0, 'Y')
-        bm_cylinder(bm, (0, (y1 + n0) / 2, 0), r, n0 - y1, 10, 0, 'Y', top=0.016)
-        bm_cylinder(bm, (0, (n0 + n1) / 2, 0), 0.015, n1 - n0, 8, 0, 'Y')
-        bm_cylinder(bm, (0, -0.02, 0), r + 0.0015, 0.08, 10, 1, 'Y')
-    shell_mesh = mesh('Chair_Bottle', shell, [m['pet'], m['red']], 40)
-    liquid_mesh = mesh('Chair_BottleLiquid', lambda bm: bm_cylinder(bm, (0, (y1 - 0.02 - y0) / 2, 0), r - 0.004, y1 - 0.02 - y0, 10, 0, 'Y'), [m['cola']], 40)
-    cap_mesh = mesh('Chair_BottleCap', lambda bm: bm_cylinder(bm, (0, 0, 0), 0.0175, 0.018, 8, 0, 'Y'), [m['red']], 40)
-    strap_mesh = mesh('Chair_BottleStrap', lambda bm: (bm_box(bm, (-0.06, -0.012, -0.012), (0.06, 0.012, 0.012), 0),), [m['plastic']])
+    """Two contour cola bottles strapped under the arms, lying along the seat with their mouths backwards (Blender +Y):
+    the nitro. The clear glass, the dark cola inside up to the shoulders (its origin at the base, scaled along Y by the
+    viewer as it empties), a cap that pops off and an anchor at the mouth where the spray comes out. Shared meshes;
+    positions are in ChairUpper's space."""
+    length, base = BOTTLE['length'], BOTTLE['base']
+    glass = [(h * length, r * length) for h, r in BOTTLE_PROFILE]
+    # The cola: a simpler outline a little inside the glass, up to where the shoulders narrow.
+    cola = [(h * length, r * length * 0.9) for h, r in ((0.0, 0.0), (0.03, 0.12), (0.08, 0.145), (0.5, 0.14), (BOTTLE['fill'], 0.128), (BOTTLE['fill'], 0.0))]
+    shell_mesh = mesh('Chair_Bottle', lambda bm: bm_lathe_y(bm, glass, 10), [m['pet']], 50)
+    liquid_mesh = mesh('Chair_BottleLiquid', lambda bm: bm_lathe_y(bm, cola, 8), [m['cola']], 50)
+    lip = 0.07 * length
+    cap_mesh = mesh('Chair_BottleCap', lambda bm: bm_cylinder(bm, (0, 0, 0), lip, 0.022, 8, 0, 'Y'), [m['red']], 40)
+    strap_mesh = mesh('Chair_BottleStrap', lambda bm: (bm_box(bm, (-0.08, -0.015, -0.012), (0.08, 0.015, 0.012), 0),), [m['plastic']])
     for side, name in ((-1, 'right'), (1, 'left')):
         x, z = side * BOTTLE['x'], BOTTLE['z']
-        obj(f'ChairBottle_{name}', shell_mesh, upper, (x, 0, z), bottle=name)
-        obj(f'ChairBottleLiquid_{name}', liquid_mesh, upper, (x, y0 + 0.005, z), liquid=name)
-        obj(f'ChairBottleCap_{name}', cap_mesh, upper, (x, n1 + 0.008, z), cap=name)
-        room.anchor(f'ChairNozzle_{name}', (x, n1 + 0.02, z), upper, 0.0, nozzle=name)
-        # Straps from the bottle to the arm post, front and back.
-        for y in (-0.08, 0.03):
-            obj(f'ChairBottleStrap_{name}_{"F" if y < 0 else "B"}', strap_mesh, upper, (side * (BOTTLE['x'] - 0.05), y, z))
+        obj(f'ChairBottle_{name}', shell_mesh, upper, (x, base, z), bottle=name)
+        obj(f'ChairBottleLiquid_{name}', liquid_mesh, upper, (x, base, z), liquid=name)
+        obj(f'ChairBottleCap_{name}', cap_mesh, upper, (x, base + length + 0.008, z), cap=name)
+        room.anchor(f'ChairNozzle_{name}', (x, base + length + 0.025, z), upper, 0.0, nozzle=name)
+        # Straps round the belly to the arm post, front and back.
+        for y in (0.08, 0.24):
+            obj(f'ChairBottleStrap_{name}_{"F" if y < 0.2 else "B"}', strap_mesh, upper, (side * (BOTTLE['x'] - 0.07), base + y, z))
 
 
 # ------------------------------------------------------------------ sandbags

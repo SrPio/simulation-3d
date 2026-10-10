@@ -111,12 +111,20 @@ const gamepad = new GamepadInput(() => viewer?.input);
 gamepad.inZone = () => (host.dataset.sign ?? 'none') !== 'none';
 gamepad.onMenu = () => setMenu(tools.hidden !== false);
 gamepad.onUse = (kind) => setInputMode('gamepad', kind);
+// On the loading screen ✕/A or Start presses START.
+gamepad.onButton = (button) => {
+  if (start.current !== 'ready' || (button !== 'cross' && button !== 'start')) return false;
+  start.press();
+  return true;
+};
 
 /**
  * What the player uses now, for the hints: `data-input` (keyboard | touch | gamepad) and `data-gamepad` on the page,
  * and the key the sign zones show (ENTER, the pad's ✕ or A, nothing on a touch screen).
  */
 let inputMode = '';
+gamepad.start();
+
 function setInputMode(mode: 'keyboard' | 'touch' | 'gamepad', kind?: PadKind): void {
   const key = `${mode}:${kind ?? ''}`;
   if (key === inputMode) return;
@@ -133,7 +141,6 @@ const start = new StartScreen(app.querySelector<HTMLDivElement>('.room-page')!, 
   onStart: () => {
     started = true;
     if (touch) touchControls.show();
-    gamepad.start();
     sounds.unlock();
     applySound();
     viewer?.setInputEnabled(true);
@@ -217,7 +224,6 @@ function mount(): void {
     orbit: () => {},
     animation: () => {},
     movement: (state) => { if (live()) updateMovement(state); },
-    progress: (fraction) => { if (live()) start.setProgress(fraction); },
     run: (on) => { if (live()) touchControls.setRunning(on); },
   }, {
     modelId: 'v4rig', view: 'three-quarter', light: LIGHT, wireframe: false, scene: 'room',

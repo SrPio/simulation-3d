@@ -114,6 +114,8 @@ export class GamepadInput {
   onUse?: (kind: PadKind) => void;
   /** Start pressed. */
   onMenu?: () => void;
+  /** Every button going down, first: true takes it (the loading screen's START), so it does nothing else. */
+  onButton?: (button: PadButton) => boolean;
   /** ✕/A opens a sign instead of jumping while this says so. */
   inZone: () => boolean = () => false;
   private readonly input: () => KeyboardInput | undefined;
@@ -156,6 +158,7 @@ export class GamepadInput {
       const up = !state.buttons[name] && previous[name] > 0;
       if (down) {
         used = true;
+        if (this.onButton?.(name)) continue;
         this.konami(name, input);
         if (name === 'start') this.onMenu?.();
         else if (name === 'l3') input.toggleRun();

@@ -21,7 +21,6 @@ const impact = (velocityMin: number, velocityMultiplier: number, volume: [number
 
 export const SOUNDS: Record<SoundName, SoundDef> = {
   // Pieces, by what they are made of; velocity is the impact speed along the contact normal.
-  stone: impact(0.7, 0.22, [0.15, 0.8], [0.9, 1.15]),
   brick: impact(0.7, 0.2, [0.15, 0.85], [0.75, 1]),
   wood: impact(0.7, 0.22, [0.15, 0.85], [0.9, 1.2]),
   woodHeavy: impact(1.5, 0.2, [0.4, 1], [0.8, 1], 120),
@@ -50,7 +49,6 @@ export const SOUNDS: Record<SoundName, SoundDef> = {
   zone: fixed(0.55, [1, 1], 150),
   open: fixed(0.75, [1, 1], 150),
   reset: fixed(0.7, [1, 1], 150),
-  tape: fixed(0.8, [0.9, 1.1], 80),
   beep: fixed(0.55, [1, 1], 100),
   beepGo: fixed(0.65, [1, 1], 100),
   lap: fixed(0.75, [1, 1], 200),

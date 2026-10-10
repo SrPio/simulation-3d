@@ -480,7 +480,7 @@ test('the office chair: E sits on it, W/A/D drive it like a little car into a wo
   await expect(host(page)).toHaveAttribute('data-drive', 'none', { timeout: 8000 });
   await expect(host(page)).toHaveAttribute('data-interaction', 'free', { timeout: 8000 });
   // Restablecer puts the fences together and the chair back by the start.
-  await page.getByRole('button', { name: 'Restablecer posición' }).click();
+  await page.keyboard.press('KeyR');
   await expect(host(page)).toHaveAttribute('data-broken', '0');
   await expect.poll(async () => (await chair())[0], { timeout: 3000 }).toBeLessThan(23);
   assert.deepEqual(errors, []);

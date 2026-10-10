@@ -17,7 +17,6 @@ from pathlib import Path
 
 import bmesh
 import bpy
-from mathutils import Matrix, Vector
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import create_room as room
@@ -31,13 +30,6 @@ BASE = (1.85, 0.8, 0.18)            # half length along X, half depth, height of
 # Along X from the base's middle (three.js x offsets): flag pole, hat, cup, pin.
 SLOTS = {'flag': -1.35, 'hat': -0.5, 'cup': 0.42, 'pin': 1.32}
 FLAG = {'pole': 2.5, 'width': 1.05, 'height': 0.7, 'cols': 14, 'rows': 6}
-
-
-def bm_cylinder(bm, centre, radius, depth, segments=24):
-    """A closed cylinder along Blender Y."""
-    geom = bmesh.ops.create_cone(bm, cap_ends=True, segments=segments, radius1=radius, radius2=radius, depth=depth)
-    for v in geom['verts']:
-        v.co = Matrix.Rotation(math.pi / 2, 3, 'X') @ v.co + Vector(centre)
 
 
 def lathe(bm, profile, materials, segments=40):
@@ -115,15 +107,24 @@ def cup_mesh(ceramic, coffee, band):
 
 
 def pin_mesh(red):
-    """A map pin standing on its point: a cone up to a round head, tangent where they meet."""
-    head_z, radius = 0.85, 0.3
+    """A flat map pin, like a marker icon extruded: a drop standing on its point with a round hole through its head,
+    its faces towards the front (three.js +Z) and the back."""
+    head_z, radius, hole, thick = 0.85, 0.32, 0.13, 0.16
     tilt = math.asin(radius / head_z)
-    profile = [(0.0, 0.0)]
-    for k in range(12):   # the top is the closing point below
-        a = -tilt + k / 12 * (math.pi / 2 + tilt)
-        profile.append((radius * math.cos(a), head_z + radius * math.sin(a)))
-    profile.append((0.0, head_z + radius))
-    return mesh('Colombia_Pin', lambda bm: lathe(bm, profile, [0] * (len(profile) - 1), 32), [red], 50)
+
+    def build(bm):
+        outer = [(radius * math.cos(a), head_z + radius * math.sin(a))
+                 for a in (-tilt + k / 40 * (math.pi + 2 * tilt) for k in range(41))] + [(0.0, 0.0)]
+        inner = [(hole * math.cos(k / 24 * math.tau), head_z + hole * math.sin(k / 24 * math.tau)) for k in range(24)]
+        edges = []
+        for loop in (outer, inner):
+            verts = [bm.verts.new((x, -thick / 2, z)) for x, z in loop]
+            edges += [bm.edges.new((verts[i], verts[(i + 1) % len(verts)])) for i in range(len(verts))]
+        faces = bmesh.ops.triangle_fill(bm, use_beauty=True, use_dissolve=False, edges=edges)['geom']
+        faces = [f for f in faces if isinstance(f, bmesh.types.BMFace)]
+        extruded = bmesh.ops.extrude_face_region(bm, geom=faces)
+        bmesh.ops.translate(bm, vec=(0, thick, 0), verts=[v for v in extruded['geom'] if isinstance(v, bmesh.types.BMVert)])
+    return mesh('Colombia_Pin', build, [red], 35)
 
 
 def flag_cloth(yellow, blue, red):
@@ -149,7 +150,6 @@ def build(root):
     coffee = m('Coffee', (0.2, 0.1, 0.04), 0.2)
     accent = m('CupBand', (0.55, 0.36, 0.8), 0.5)
     pin_red = m('PinRed', (0.86, 0.17, 0.14), 0.45)
-    white = m('PinWhite', (0.97, 0.96, 0.95), 0.5)
     metal = m('FlagPole', (0.7, 0.7, 0.74), 0.35, 0.8)
     gold = m('FlagFinial', (0.95, 0.72, 0.2), 0.35, 0.8)
     yellow = m('FlagYellow', (0.99, 0.75, 0.0), 0.7)
@@ -164,9 +164,6 @@ def build(root):
     place('Colombia_Hat', hat_mesh(cream, black), SLOTS['hat'], corner, top)
     place('Colombia_Cup', cup_mesh(ceramic, coffee, accent), SLOTS['cup'], corner, top)
     place('Colombia_Pin', pin_mesh(pin_red), SLOTS['pin'], corner, top)
-    # The pin's white dot faces the default corner view (between three.js +Z and +X): the pin is round, so it may turn.
-    dot = mesh('Colombia_PinDot', lambda bm: bm_cylinder(bm, (0, -0.3, 0.85), 0.13, 0.05), [white])
-    place('Colombia_PinDot', dot, SLOTS['pin'], corner, top).rotation_euler.z = math.pi / 4
     pole_x = SLOTS['flag']
     room.cylinder('ColombiaFlag_Pole', (pole_x, 0, top + FLAG['pole'] / 2), 0.03, FLAG['pole'], metal, corner, segments=12)
     room.cylinder('ColombiaFlag_Foot', (pole_x, 0, top + 0.04), 0.12, 0.08, metal, corner, segments=16)

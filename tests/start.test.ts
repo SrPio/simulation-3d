@@ -3,7 +3,7 @@ import { statSync } from 'node:fs';
 import { test } from 'node:test';
 import { EXPECTED_BYTES } from '../src/core/loadAssets.ts';
 import { DOWNLOAD_SHARE, ProgressMeter } from '../src/core/loadProgress.ts';
-import { coverScale, easeIn } from '../src/home/StartScreen.ts';
+import { coverScale, easeIn, FILL, fillStep, finishSpeed, outlineCentre } from '../src/home/StartScreen.ts';
 import { ACTION_ICONS, HEAD_OUTLINE } from '../src/ui/silhouettes.ts';
 
 /** The points of an SVG path made of M/L/Z commands, one list per closed loop. */
@@ -76,4 +76,38 @@ test('the opening grows the hole until it covers every corner of the screen', ()
     const scale = coverScale(width, height, centre, inner);
     assert.ok(inner * scale >= Math.hypot(width / 2, height / 2), `${width}×${height}`);
   }
+});
+
+test('the head is centred by its area, which sits behind the cap brim and inside the skull', () => {
+  const centre = outlineCentre(HEAD_OUTLINE.d);
+  assert.ok(centre.x > HEAD_OUTLINE.width / 2 + 3, `right of the box middle the brim pulls back (${centre.x.toFixed(1)})`);
+  assert.ok(centre.x < HEAD_OUTLINE.width * 0.75 && centre.y > HEAD_OUTLINE.height * 0.3 && centre.y < HEAD_OUTLINE.height * 0.7);
+});
+
+test('the shown progress fills smoothly from 0 to 100 however fast the scene loads', () => {
+  const run = (readyAt: number) => {
+    let shown = 0;
+    let time = 0;
+    let finish = 0;
+    let biggest = 0;
+    while (shown < 1 && time < 60000) {
+      if (!finish && time >= readyAt) finish = finishSpeed(shown);
+      const next = fillStep(shown, time, 16, finish);
+      assert.ok(next >= shown, 'never goes back');
+      biggest = Math.max(biggest, next - shown);
+      shown = next;
+      time += 16;
+    }
+    return { time, biggest, shown };
+  };
+  // Loaded at once (a warm cache): it still takes the whole fill, never jumping.
+  const instant = run(0);
+  assert.ok(instant.time >= FILL.FILL_MS * 0.95 && instant.time <= FILL.FILL_MS + 400, `${instant.time} ms`);
+  assert.ok(instant.biggest < 0.01);
+  // A slow load: it waits below 100 and finishes within FINISH_MS once ready.
+  const slow = run(8000);
+  assert.ok(slow.time >= 8000 && slow.time <= 8000 + FILL.FINISH_MS + 32, `${slow.time} ms`);
+  let shown = 0;
+  for (let time = 0; time < 20000; time += 16) shown = fillStep(shown, time, 16, 0);
+  assert.ok(shown > FILL.HOLD_AT && shown <= FILL.CREEP_MAX, 'never reaches 100 before the scene is ready');
 });

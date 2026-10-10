@@ -2,7 +2,6 @@
 
 /** Files in public/sounds/ for each recorded sound, the variants played at random. */
 export const SOUND_FILES = {
-  stone: ['stone-0.mp3', 'stone-1.mp3', 'stone-2.mp3'],
   brick: ['brick-0.mp3', 'brick-1.mp3', 'brick-2.mp3', 'brick-3.mp3'],
   wood: ['wood-0.mp3', 'wood-1.mp3', 'wood-2.mp3', 'wood-3.mp3'],
   woodHeavy: ['woodHeavy-0.mp3', 'woodHeavy-1.mp3', 'woodHeavy-2.mp3'],
@@ -26,7 +25,6 @@ export const SOUND_FILES = {
   zone: ['zone-0.mp3'],
   open: ['open-0.mp3'],
   reset: ['reset-0.mp3'],
-  tape: ['tape-0.mp3', 'tape-1.mp3'],
   beep: ['beep-0.mp3'],
   beepGo: ['beepGo-0.mp3'],
   lap: ['lap-0.mp3'],

@@ -18,7 +18,6 @@ const LIST = new URL('src/audio/soundFiles.ts', ROOT);
 /** Sound name → source files as pack/file (the variants played at random). */
 export const SOURCES: Record<string, string[]> = {
   // Pieces knocked about, by what they are made of.
-  stone: ['impact-sounds/impactPlate_light_000', 'impact-sounds/impactPlate_light_002', 'impact-sounds/impactPlate_light_004'],
   brick: ['impact-sounds/impactMining_000', 'impact-sounds/impactMining_001', 'impact-sounds/impactMining_002', 'impact-sounds/impactMining_003'],
   wood: ['impact-sounds/impactWood_light_000', 'impact-sounds/impactWood_light_002', 'impact-sounds/impactWood_medium_001', 'impact-sounds/impactWood_medium_003'],
   woodHeavy: ['impact-sounds/impactWood_heavy_000', 'impact-sounds/impactWood_heavy_002', 'impact-sounds/impactWood_heavy_004'],
@@ -45,7 +44,6 @@ export const SOURCES: Record<string, string[]> = {
   zone: ['interface-sounds/maximize_006'],
   open: ['interface-sounds/confirmation_002'],
   reset: ['interface-sounds/drop_002'],
-  tape: ['rpg-audio/knifeSlice', 'rpg-audio/knifeSlice2'],
   beep: ['digital-audio/pepSound1'],
   beepGo: ['digital-audio/highUp'],
   lap: ['interface-sounds/bong_001'],

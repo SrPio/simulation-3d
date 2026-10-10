@@ -1,6 +1,6 @@
 import {
-  AnimationMixer, Box3, CircleGeometry, Color, DirectionalLight, Group, HemisphereLight, InstancedMesh, LoopOnce, LoopRepeat, PointLight,
-  Raycaster, RepeatWrapping, Vector2, type Texture,
+  AnimationMixer, BackSide, Box3, CircleGeometry, Color, DirectionalLight, DoubleSide, FrontSide, Group, HemisphereLight, InstancedMesh, LoopOnce, LoopRepeat, PointLight,
+  MeshDepthMaterial, Raycaster, RepeatWrapping, Texture, Vector2, WebGLRenderTarget, type Material, type Side,
   Matrix4, Mesh, MeshStandardMaterial, OrthographicCamera, Quaternion, Scene, SkinnedMesh, Vector3, type AnimationAction, type Object3D,
   type WebGLRenderer,
 } from 'three';
@@ -41,7 +41,7 @@ import { SodaSpray } from '../scene/SodaSpray.ts';
 import type { SeatSpot } from '../interactions/InteractionController.ts';
 import type { FloorBlock } from '../scene/outsideData.ts';
 import { RoomReveal } from '../scene/RoomReveal.ts';
-import { Graffiti } from '../scene/Graffiti.ts';
+import { Graffiti, paintGraffiti, type Paintings } from '../scene/Graffiti.ts';
 import { GRAFFITI } from '../scene/graffitiData.ts';
 import { hiddenBehind, revealStep, type Bounds3 } from '../world/reveal.ts';
 import { TargetGame, type Lane } from '../world/targets.ts';
@@ -111,11 +111,27 @@ type ViewerEvents = {
 const LOCOMOTION = new Set(['idle', 'walk', 'run', 'jump']);
 /** How quickly the camera catches up with the character (1/s); frame-rate independent. */
 const FOLLOW_RATE = 4;
+/** Longest stretch of first-frame GPU work done at once while loading (ms), see warmUp. */
+const WARM_SLICE_MS = 12;
+/** Lets the page paint between the steps of putting the scene together (see load). */
+const breathe = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 const SHADOWLESS = /^(FloorPlank|Platform|Wall|Baseboard|Poster|NightCity|WindowGlass)/;
 /** How quickly the character steps down to the outside ground or back up onto the room floor (1/s). */
 const STEP_RATE = 25;
 /** Radius of the round grass bed at the crossroads (CROSSROADS_GREEN in create_outside.py): footsteps there sound of grass. */
 const CROSSROADS_GREEN = 4;
+/**
+ * Open a link in a new tab the way a link click does (a real <a target=_blank>), which browsers and blockers treat as a
+ * navigation from the press, from Enter as from a click; window.open from a key press is blocked by some of them.
+ */
+function openLink(href: string): void {
+  const anchor = document.createElement('a');
+  anchor.href = href;
+  anchor.target = '_blank';
+  anchor.rel = 'noopener noreferrer';
+  anchor.click();
+}
+
 /** Where the rider's wrists rest on the office chair's arm pads: ahead of the pad's middle and above its top (m). */
 const RIDER_WRIST = { ahead: 0.02, up: 0.045 };
 /** How far ahead of the office chair's seat centre the rider sits (m). */
@@ -289,6 +305,14 @@ export class CharacterViewer {
   private disposed = false;
   private contextLost = false;
   private ready = false;
+  /**
+   * The scene is being put together and warmed up behind the loading screen (see load and warmUp): frames are skipped
+   * meanwhile, since a frame would draw a half-built scene, wait for every shader, and make the adaptive resolution react
+   * to the loading work.
+   */
+  private preparing = false;
+  /** Depth stand-ins that compiled the shadow pass ahead of the first frame (see compileShadowPass). */
+  private readonly shadowStandIns: MeshDepthMaterial[] = [];
   private wireframe = false;
   private mixer?: AnimationMixer;
   private readonly actions = new Map<string, AnimationAction>();
@@ -399,15 +423,19 @@ export class CharacterViewer {
     try {
       const meter = this.progress;
       const track = (file: string) => meter.file(file, EXPECTED_BYTES[file] ?? 1_000_000);
-      const [gltf, roomGltf, laptopGltf, outsideGltf, circuitGltf, colombiaGltf] = await Promise.all([
+      // The graffiti are painted in a worker meanwhile (seconds of canvas work that would freeze the loading screen).
+      const paintings = this.inRoom && GRAFFITI.length ? paintGraffiti(GRAFFITI) : Promise.resolve([]);
+      const [gltf, roomGltf, laptopGltf, outsideGltf, circuitGltf, colombiaGltf, graffitiPaintings] = await Promise.all([
         loadCharacter(this.options.modelId, this.abort.signal, track(modelVersions[this.options.modelId].file)),
         this.inRoom ? loadRoom(this.abort.signal, track(roomFile)) : Promise.resolve(undefined),
         this.inRoom ? loadLaptop(this.abort.signal, track(laptopFile)) : Promise.resolve(undefined),
         this.inRoom ? loadOutside(this.abort.signal, track(outsideFile)) : Promise.resolve(undefined),
         this.inRoom ? loadCircuit(this.abort.signal, track(circuitFile)) : Promise.resolve(undefined),
         this.inRoom ? loadColombia(this.abort.signal, track(colombiaFile)) : Promise.resolve(undefined),
+        paintings,
       ]);
       meter.report(DOWNLOAD_SHARE);
+      this.preparing = true;
       const scenes = [...gltf.scenes, ...(roomGltf?.scenes ?? []), ...(laptopGltf?.scenes ?? []), ...(outsideGltf?.scenes ?? []), ...(circuitGltf?.scenes ?? []), ...(colombiaGltf?.scenes ?? [])];
       if (this.disposed) {
         disposeObjects(scenes);
@@ -419,7 +447,7 @@ export class CharacterViewer {
         // The circuit is read as part of the outside: its pieces, decor, floors and zones join the outside's.
         if (outsideGltf && circuitGltf) outsideGltf.scene.add(circuitGltf.scene);
         if (outsideGltf && colombiaGltf) outsideGltf.scene.add(colombiaGltf.scene);
-        if (outsideGltf) this.addOutside(outsideGltf.scene);
+        if (outsideGltf) await this.addOutside(outsideGltf.scene, graffitiPaintings);
         this.placeInRoom(roomGltf.scene);
         // Everything receives shadows; only furniture casts them. Floor, walls, posters and the
         // window backdrop cannot shadow anything visible, so they stay out of the shadow pass.
@@ -433,10 +461,12 @@ export class CharacterViewer {
         const bounds = new Box3().setFromObject(roomGltf.scene);
         this.roomBounds = { min: bounds.min.clone(), max: bounds.max.clone() };
         if (laptopGltf) this.addLaptop(laptopGltf.scene);
+        await breathe();
       }
       // Fewer draw calls: static and skinned parts are merged by material (they render identically).
       mergeStaticMeshes(this.model);
       mergeSkinnedMeshes(this.model);
+      await breathe();
       if (gltf.animations.length) {
         this.mixer = new AnimationMixer(this.model);
         // One-shot seat clips advance the interaction when they end (no timers).
@@ -496,6 +526,8 @@ export class CharacterViewer {
       this.setLight(this.options.light);
       this.setWireframe(this.wireframe);
       this.resize();
+      await this.warmUp();
+      if (this.disposed) return;
       this.ready = true;
       this.progress.report(1);
       if (this.controls) this.controls.enabled = !this.contextLost;
@@ -526,6 +558,84 @@ export class CharacterViewer {
           : t('viewer.modelInvalid', { file: modelVersions[this.options.modelId].file }),
       });
     }
+  }
+
+  /**
+   * Gets the GPU work of the first frame done beforehand, a little at a time, so the page (and the loading screen over
+   * it) never freezes: the shaders compile in the background where the browser can (KHR_parallel_shader_compile), then
+   * each program's first use (reading its uniforms, which waits for the driver) and each texture upload happen in
+   * slices of WARM_SLICE_MS with the page free in between. Frames are not rendered meanwhile.
+   */
+  private async warmUp(): Promise<void> {
+    const renderer = this.renderer;
+    if (!renderer) return;
+    try {
+      await renderer.compileAsync(this.scene, this.camera);
+      await this.compileShadowPass(renderer);
+      const textures = new Set<Texture>();
+      this.scene.traverse((object) => {
+        const materials = (object as Mesh).material;
+        for (const material of Array.isArray(materials) ? materials : materials ? [materials] : []) {
+          for (const value of Object.values(material)) if (value instanceof Texture) textures.add(value);
+        }
+      });
+      const jobs: (() => void)[] = [
+        ...(renderer.info.programs ?? []).map((program) => () => { program.getUniforms(); program.getAttributes(); }),
+        ...[...textures].map((texture) => () => renderer.initTexture(texture)),
+      ];
+      let slice = performance.now();
+      for (const job of jobs) {
+        if (this.disposed) return;
+        job();
+        if (performance.now() - slice < WARM_SLICE_MS) continue;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        slice = performance.now();
+      }
+    } catch {
+      // The first frame does whatever is left.
+    } finally {
+      this.preparing = false;
+    }
+  }
+
+  /**
+   * The shadow pass draws every caster with depth materials of its own, which compileAsync does not see. For a moment
+   * each caster wears a stand-in made the way three's shadow map makes its depth material (side flipped, the same
+   * map, alpha test and displacement) and the scene compiles into an off-screen target like the shadow map: three
+   * shares programs by their key, so the shadow pass then finds them ready. The stand-ins stay alive until the first
+   * full frame has taken the programs over (disposing them sooner would release them).
+   */
+  private async compileShadowPass(renderer: WebGLRenderer): Promise<void> {
+    if (!renderer.shadowMap.enabled || !this.key.castShadow) return;
+    const flipped: Record<number, Side> = { [FrontSide]: BackSide, [BackSide]: FrontSide, [DoubleSide]: DoubleSide };
+    const standIn = (material: Material) => {
+      const source = material as Material & Partial<Pick<MeshStandardMaterial, 'map' | 'alphaMap' | 'displacementMap' | 'displacementScale' | 'displacementBias' | 'wireframe'>>;
+      const depth = new MeshDepthMaterial({
+        side: material.shadowSide ?? flipped[material.side], alphaTest: material.alphaToCoverage ? 0.5 : material.alphaTest,
+        map: source.map ?? null, alphaMap: source.alphaMap ?? null, displacementMap: source.displacementMap ?? null,
+        displacementScale: source.displacementScale ?? 1, displacementBias: source.displacementBias ?? 0, wireframe: source.wireframe ?? false,
+      });
+      depth.clippingPlanes = material.clippingPlanes;
+      depth.clipShadows = material.clipShadows;
+      this.shadowStandIns.push(depth);
+      return depth;
+    };
+    const worn: [Mesh, Material | Material[]][] = [];
+    this.scene.traverse((object) => {
+      const mesh = object as Mesh;
+      if (!mesh.isMesh || !mesh.castShadow || !mesh.material) return;
+      worn.push([mesh, mesh.material]);
+      mesh.material = mesh.customDepthMaterial ?? (Array.isArray(mesh.material) ? mesh.material.map(standIn) : standIn(mesh.material));
+    });
+    const target = new WebGLRenderTarget(1, 1);
+    const previous = renderer.getRenderTarget();
+    renderer.setRenderTarget(target);
+    // compile() is synchronous inside compileAsync: the materials go back before anything renders.
+    const compiled = renderer.compileAsync(this.scene, this.camera);
+    renderer.setRenderTarget(previous);
+    for (const [mesh, material] of worn) mesh.material = material;
+    await compiled;
+    target.dispose();
   }
 
   /** Puts the character on the room's Spawn anchor and turns the Light_* anchors into point lights. */
@@ -614,7 +724,7 @@ export class CharacterViewer {
    * Everything outside the room: the endless ground, the signs and reset zones, the painted floor, the name
    * letters and the playground pieces. None of it is in the shadow map; blob shadows stand in for it on the ground.
    */
-  private addOutside(outside: Group): void {
+  private async addOutside(outside: Group, paintings: Paintings[]): Promise<void> {
     this.outside = outside;
     const data = readOutside(outside);
     this.outsideData = data;
@@ -638,6 +748,7 @@ export class CharacterViewer {
       object.castShadow = false;
     });
     mergeStaticMeshes(outside);
+    await breathe();
     this.ground = new InfiniteFloor(data.groundY);
     // Loose pieces first (their order matches the physics bodies), then the floor keys, which stay put and only sink.
     // On a touch screen there are no keys on the floor: being last, leaving them out keeps the physics indices.
@@ -671,8 +782,9 @@ export class CharacterViewer {
     }
     // Graffiti: on the merged static surfaces, and on loose pieces (a brick wall) whose poses it then follows. Built
     // before the pieces' source geometry is released.
-    if (GRAFFITI.length) this.graffiti = new Graffiti(GRAFFITI, [outside], data.groundY, this.pieceList, getLanguage());
+    if (GRAFFITI.length) this.graffiti = new Graffiti(GRAFFITI, [outside], data.groundY, this.pieceList, getLanguage(), paintings);
     this.host.dataset.graffiti = this.graffiti?.painted.join(',') || 'none';
+    await breathe();
     if (this.pieceList.length) {
       this.pieces = new PieceMeshes(this.pieceList, this.shadows, pieceShadows, data.groundY);
       if (this.graffiti) {
@@ -689,6 +801,7 @@ export class CharacterViewer {
     this.areas.setOpenKey(this.openKeyLabel);
     this.areas.setReducedMotion(this.reducedMotion);
     this.floorTexts = new FloorTexts(this.options.touch ? data.floors.filter((floor) => floor.id !== 'controls') : data.floors, data.groundY, !!this.options.touch);
+    await breathe();
     this.about = new AboutPlaza(data.plaques);
     if (flag) this.about.waveFlag(flag);
     if (data.targets.length) {
@@ -1463,10 +1576,7 @@ export class CharacterViewer {
         const ax = { x: Math.cos(tape.yaw), z: -Math.sin(tape.yaw) };
         const a = { x: tape.position.x - ax.x * half, z: tape.position.z - ax.z * half };
         const b = { x: tape.position.x + ax.x * half, z: tape.position.z + ax.z * half };
-        if (crosses(last, mover, a, b)) {
-          this.circuit.cut(index);
-          this.sound('tape', 0, tape.position);
-        }
+        if (crosses(last, mover, a, b)) this.circuit.cut(index);
       }
       if (driving && this.lines) {
         const across = (line: FloorBlock) => {
@@ -1714,14 +1824,18 @@ export class CharacterViewer {
     if (sign.kind === 'reset') {
       if (sign.target === 'targets') this.resetTargets();
       else if (sign.target) this.physics?.reset(sign.target);
-      if (sign.target === 'circuit') this.resetCircuit();
+      if (sign.target === 'circuit') {
+        // The circuit's reset puts back the brick wall at its end too.
+        this.physics?.reset('wall');
+        this.resetCircuit();
+      }
       if (sign.target === 'tech') this.checkTech();
       if (this.physics) this.pieces?.sync(this.physics.bodies, true);
       this.syncFlaps(true);
       this.reportLetters();
       return;
     }
-    window.open(sign.link, '_blank', 'noopener,noreferrer');
+    openLink(sign.link);
   }
 
   private readonly onLanguage = (): void => {
@@ -2220,6 +2334,10 @@ export class CharacterViewer {
     const frame = this.lastFrame === undefined ? undefined : time - this.lastFrame;
     const delta = frame === undefined ? 0 : Math.min(Math.max(frame / 1000, 0), 0.05);
     this.lastFrame = time;
+    if (this.preparing) {
+      this.resetDelta();
+      return;
+    }
     if (frame !== undefined) this.adaptResolution(frame);
     if (this.ready && this.room) {
       if (this.interaction && this.interaction.phase !== 'free') this.driveInteraction(delta);
@@ -2257,6 +2375,8 @@ export class CharacterViewer {
     this.updateChargeMeter();
     if (this.ground && this.model) this.ground.update(this.camera, this.model.position);
     this.renderer.render(this.scene, this.camera);
+    // The shadow pass holds the programs it found ready now (see compileShadowPass).
+    if (this.shadowStandIns.length) for (const material of this.shadowStandIns.splice(0)) material.dispose();
     this.sampleRender(frame);
   };
 
