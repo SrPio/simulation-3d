@@ -17,6 +17,8 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; }
+/* Phones flash a grey/blue square over whatever is tapped; the buttons have their own pressed look. */
+html { -webkit-tap-highlight-color: transparent; }
 body { background: radial-gradient(ellipse at 50% 38%, #2c2337 0, #1b1623 55%, #120f18 100%); }
 button { font: inherit; cursor: pointer; }
 button:focus-visible, a:focus-visible { outline: 2px solid #d7b9ff; outline-offset: 3px; }

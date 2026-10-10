@@ -1,5 +1,5 @@
 /* Loading screen: a dark violet sheet with the character's head cut out of it once everything is loaded. */
-.start-screen { position: fixed; inset: 0; z-index: 5; --start-below: 150px; }
+.start-screen { position: fixed; inset: 0; z-index: 5; --start-below: 150px; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .start-art { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .start-backdrop { fill: #17121e; }
 .start-hole { fill: #fff; transition: fill 420ms ease; }
@@ -36,6 +36,7 @@
   font: 600 26px/1 var(--font); letter-spacing: 10px; text-indent: 10px; text-shadow: 0 0 10px #8a5cf066;
   opacity: 0; pointer-events: none; transition: opacity 400ms ease 200ms, color 160ms ease, text-shadow 160ms ease;
 }
+.start-screen .start-button:focus { outline: none; }
 .start-screen .start-button:is(:hover, :focus-visible) { outline: none; color: #ffffff; text-shadow: 0 0 6px #ffffffcc, 0 0 18px #c4a2ed, 0 0 34px #8a5cf0; }
 .start-screen .start-button:active { color: #ffffff; text-shadow: 0 0 8px #ffffff, 0 0 24px #d7b9ff, 0 0 48px #8a5cf0; }
 .start-screen[data-start='ready'] .start-button { opacity: 1; pointer-events: auto; }
