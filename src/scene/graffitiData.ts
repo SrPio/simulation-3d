@@ -94,6 +94,11 @@ export const GRAFFITI: readonly GraffitiSpot[] = [
   { id: 'ground-konami', symbol: 'konami', style: 'spray', at: [-14.15, 'ground', 26.25], face: 'up', width: 4, tilt: -13, color: C.yellow, seed: 517 },
 ];
 
+/** The spots as a touch screen shows them: the Konami code names the on-screen buttons instead of B and A. */
+export function graffitiForTouch(spots: readonly GraffitiSpot[]): GraffitiSpot[] {
+  return spots.map((spot) => (spot.symbol === 'konami' ? { ...spot, symbol: 'konamiTouch' } : spot));
+}
+
 /** The words of a text spot in a language. */
 export function textFor(spot: GraffitiSpot, language: Language): string {
   return typeof spot.text === 'string' ? spot.text : spot.text?.[language] ?? '';

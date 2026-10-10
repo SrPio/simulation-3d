@@ -4,8 +4,9 @@ import { test } from 'node:test';
 import { Texture, type Object3D } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { Matrix4, Mesh, Raycaster, Vector3 } from 'three';
-import { GRAFFITI, GRAFFITI_SYMBOLS, JITTER, glyphLayout, seeded, surfaceFor, textFor, type GraffitiSpot } from '../src/scene/graffitiData.ts';
-import { SPRAY_CHARACTERS, SPRAY_SYMBOLS, sprayGlyph } from '../src/scene/sprayFont.ts';
+import { GRAFFITI, GRAFFITI_SYMBOLS, JITTER, glyphLayout, graffitiForTouch, seeded, surfaceFor, textFor, type GraffitiSpot } from '../src/scene/graffitiData.ts';
+import { SPRAY_CHARACTERS, SPRAY_SYMBOLS, fillOutlines, sprayGlyph } from '../src/scene/sprayFont.ts';
+import { ACTION_ICONS } from '../src/ui/silhouettes.ts';
 import { readOutside } from '../src/scene/outsideData.ts';
 
 async function parse(file: string): Promise<Object3D> {
@@ -142,4 +143,21 @@ test('the JAVA graffiti lands on the bricks of the playground wall, spread over 
   const covered = bricks.filter(({ piece }) => Math.abs(piece.position.x - spot.at[0]) < spot.width / 2 && Math.abs(piece.position.z - spot.at[2]) < 0.3
     && Math.abs(piece.position.y - (spot.at[1] as number)) < 0.5);
   assert.ok(covered.length >= 8, `${covered.length} bricks under the paint`);
+});
+
+test('on a touch screen the Konami code keeps its arrows and rings and shows the throw and jump buttons for B and A', () => {
+  const keyboard = SPRAY_SYMBOLS.konami;
+  const touch = SPRAY_SYMBOLS.konamiTouch;
+  assert.equal(touch.width, keyboard.width);
+  // 8 arrows of 2 strokes each come first, the same in both.
+  assert.deepEqual(touch.strokes.slice(0, 16), keyboard.strokes.slice(0, 16));
+  assert.equal(touch.strokes.length, 18, 'arrows and the two rings, no letters');
+  assert.deepEqual(touch.fills?.map((fill) => fill.d), [ACTION_ICONS.throw, ACTION_ICONS.jump]);
+  for (const fill of touch.fills!) {
+    const outlines = fillOutlines(fill.d);
+    assert.ok(outlines.length >= 1 && outlines.every((outline) => outline.length >= 3 && outline.flat().every(Number.isFinite)));
+  }
+  const spots = graffitiForTouch(GRAFFITI);
+  assert.equal(spots.find((spot) => spot.id === 'ground-konami')?.symbol, 'konamiTouch');
+  assert.deepEqual(spots.filter((spot) => spot.id !== 'ground-konami'), GRAFFITI.filter((spot) => spot.id !== 'ground-konami'));
 });

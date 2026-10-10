@@ -5,6 +5,8 @@
  * capitals; accented vowels add their accent; characters without a glyph are left as a gap.
  */
 
+import { ACTION_ICONS } from '../ui/silhouettes.ts';
+
 export type Point = [number, number];
 export type Stroke = Point[];
 export type SprayGlyph = { width: number; strokes: Stroke[] };
@@ -131,6 +133,39 @@ function arrowStrokes(cx: number, cy: number, length: number, angle: number): St
  * down, down on the first row; left, right, left, right and the B and A buttons, each in a loose ring, on the second.
  */
 function konami(): Stroke[] {
+  const strokes = konamiArrows();
+  for (const [char, cx] of KONAMI_BUTTONS) {
+    const size = 0.366;
+    const glyph = LETTERS[char];
+    strokes.push(...lettering(char, cx - 0.2 - (glyph.width * size) / 2, 1.646 - 0.35 - size / 2, size));
+    strokes.push(konamiRing(cx));
+  }
+  return strokes;
+}
+
+/** Where the B and A buttons sit on the code's second row (units). */
+const KONAMI_BUTTONS = [['B', 3.3], ['A', 4.1]] as const;
+
+/** A button's loose ring: it runs a little past where it started. */
+const konamiRing = (cx: number): Stroke => arc(cx - 0.2 + 0.01, 1.646 - 0.35 + 0.01, 0.36, 0.34, -0.62 * PI, 1.48 * PI, 22);
+
+/**
+ * The Konami code for a touch screen: the same arrows (the joystick flicked each way) and, in the B and A rings, the
+ * silhouettes of the on-screen buttons that stand for them, throw and jump (as on a gamepad: ○/B throws, ✕/A jumps).
+ */
+function konamiTouch(): SpraySymbol {
+  const strokes = konamiArrows();
+  const fills: SprayFill[] = [];
+  const size = 0.6;
+  for (const [index, [, cx]] of KONAMI_BUTTONS.entries()) {
+    strokes.push(konamiRing(cx));
+    fills.push({ d: ACTION_ICONS[index === 0 ? 'throw' : 'jump'], x: cx - 0.2 - size / 2, y: 1.646 - 0.35 - size / 2, size });
+  }
+  return { width: 4.2, strokes, fills };
+}
+
+/** ↑ ↑ ↓ ↓ on the first row and ← → ← → on the second, each arrow a little off straight. */
+function konamiArrows(): Stroke[] {
   const up = 0;
   const down = PI;
   const left = -PI / 2;
@@ -144,13 +179,6 @@ function konami(): Stroke[] {
   const strokes: Stroke[] = [];
   for (const [row, [y, length, step, angles]] of rows.entries()) {
     for (const [k, angle] of angles.entries()) strokes.push(...arrowStrokes(starts[row] + k * step - 0.2, y - 0.35, length, angle));
-  }
-  for (const [char, cx] of [['B', 3.3], ['A', 4.1]] as const) {
-    const size = 0.366;
-    const glyph = LETTERS[char];
-    strokes.push(...lettering(char, cx - 0.2 - (glyph.width * size) / 2, 1.646 - 0.35 - size / 2, size));
-    // The ring runs a little past where it started.
-    strokes.push(arc(cx - 0.2 + 0.01, 1.646 - 0.35 + 0.01, 0.36, 0.34, -0.62 * PI, 1.48 * PI, 22));
   }
   return strokes;
 }
@@ -188,10 +216,12 @@ export const SPRAY_CHARACTERS = [...Object.keys(LETTERS), ...Object.keys(ACCENTE
  * Can-stroke symbols in a box one unit tall and `width` wide, after the classic spray set: crown, curved arrow,
  * stitched smiley, cross, zigzag, arrow down, heart outline, splat and dot. `blobs` are filled spots (x, y, radius).
  */
-export type SpraySymbol = { width: number; strokes: Stroke[]; blobs?: [number, number, number][] };
+export type SpraySymbol = { width: number; strokes: Stroke[]; blobs?: [number, number, number][]; fills?: SprayFill[] };
+/** A filled silhouette (an SVG path of M/L/Z in a 100 × 100 box, even-odd) laid in a square `size` units wide at x, y. */
+export type SprayFill = { d: string; x: number; y: number; size: number };
 export type SpraySymbolName =
   | 'crownline' | 'swoosh' | 'stitched' | 'cross' | 'zigzag' | 'arrowdown' | 'heartline' | 'splat' | 'dot'
-  | 'react' | 'js' | 'ts' | 'node' | 'git' | 'three' | 'vite' | 'html' | 'css' | 'terminal' | 'konami';
+  | 'react' | 'js' | 'ts' | 'node' | 'git' | 'three' | 'vite' | 'html' | 'css' | 'terminal' | 'konami' | 'konamiTouch';
 export const SPRAY_SYMBOLS: Record<SpraySymbolName, SpraySymbol> = {
   crownline: {
     width: 1,
@@ -262,4 +292,12 @@ export const SPRAY_SYMBOLS: Record<SpraySymbolName, SpraySymbol> = {
   },
   // ↑ ↑ ↓ ↓ / ← → ← → (B) (A): the hint for the chick rain, painted on the ground near the intro's arrow keys.
   konami: { width: 4.2, strokes: konami() },
+  // The same on a touch screen, with the throw and jump buttons' silhouettes for B and A.
+  konamiTouch: konamiTouch(),
 };
+
+/** The closed outlines of a silhouette path (M/L/Z, numbers only), in its own 100 × 100 box. */
+export function fillOutlines(d: string): Point[][] {
+  return d.split('M').filter((part) => part.trim()).map((part) =>
+    part.replace(/Z/g, '').split('L').map((pair) => pair.trim().split(/[\s,]+/).map(Number) as Point));
+}

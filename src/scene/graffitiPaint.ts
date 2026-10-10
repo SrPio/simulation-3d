@@ -2,7 +2,7 @@
 // paint them (graffitiWorker.ts) while the scene loads: OffscreenCanvas works on the page and in a worker alike.
 import type { Language } from '../core/i18n.ts';
 import { JITTER, glyphLayout, seeded, textFor, type GraffitiFace, type GraffitiSpot, type GraffitiSymbol } from './graffitiData.ts';
-import { SPACE, SPRAY_SYMBOLS, TRACKING, sprayGlyph } from './sprayFont.ts';
+import { SPACE, SPRAY_SYMBOLS, TRACKING, fillOutlines, sprayGlyph } from './sprayFont.ts';
 
 /** Letter height on the canvas (px); symbols are drawn in a square of SYMBOL_SIZE. */
 const LETTER = 180;
@@ -107,13 +107,17 @@ function smoothed(input: PixelStroke, steps = 6, spacing = 18): PixelStroke {
   return out;
 }
 
-/** Strokes and filled spots of a spray drawing in canvas pixels, with the canvas size that holds them and their paint. */
-type SprayDrawing = { strokes: PixelStroke[]; blobs: { x: number; y: number; r: number }[]; width: number; height: number; line: number };
+/**
+ * Strokes, filled spots and filled silhouettes (closed outlines, even-odd) of a spray drawing in canvas pixels, with
+ * the canvas size that holds them and their paint.
+ */
+type SprayDrawing = { strokes: PixelStroke[]; blobs: { x: number; y: number; r: number }[]; fills: PixelStroke[][]; width: number; height: number; line: number };
 
 /** Lay strokes out with room around them: mist all round, the drips below. */
-function framed(strokes: PixelStroke[], blobs: SprayDrawing['blobs'], line: number, size: number): SprayDrawing {
-  const xs = [...strokes.flat().map((p) => p.x), ...blobs.flatMap((b) => [b.x - b.r, b.x + b.r])];
-  const ys = [...strokes.flat().map((p) => p.y), ...blobs.flatMap((b) => [b.y - b.r, b.y + b.r])];
+function framed(strokes: PixelStroke[], blobs: SprayDrawing['blobs'], line: number, size: number, fills: PixelStroke[][] = []): SprayDrawing {
+  const filled = fills.flat(2);
+  const xs = [...strokes.flat().map((p) => p.x), ...blobs.flatMap((b) => [b.x - b.r, b.x + b.r]), ...filled.map((p) => p.x)];
+  const ys = [...strokes.flat().map((p) => p.y), ...blobs.flatMap((b) => [b.y - b.r, b.y + b.r]), ...filled.map((p) => p.y)];
   const pad = line * 2.2;
   const left = Math.min(...xs) - pad;
   const top = Math.min(...ys) - pad;
@@ -121,6 +125,7 @@ function framed(strokes: PixelStroke[], blobs: SprayDrawing['blobs'], line: numb
   return {
     strokes: strokes.map((stroke) => stroke.map(move)),
     blobs: blobs.map((b) => ({ ...move(b), r: b.r })),
+    fills: fills.map((outlines) => outlines.map((outline) => outline.map(move))),
     width: Math.max(...xs) - left + pad,
     height: Math.max(...ys) - top + pad + size * 0.45,
     line,
@@ -199,7 +204,12 @@ function spraySymbol(symbol: keyof typeof SPRAY_SYMBOLS, random: () => number): 
   const shake = size * 0.015;
   const strokes = shape.strokes.map((stroke) => smoothed(stroke.map(([u, v]) => ({ x: u * size + (random() - 0.5) * shake, y: v * size + (random() - 0.5) * shake }))));
   const blobs = (shape.blobs ?? []).map(([u, v, r]) => ({ x: u * size, y: v * size, r: r * size }));
-  return framed(strokes, blobs, size * 0.07, size);
+  // Silhouettes keep their shape: only a slight shake of their outline.
+  const fills = (shape.fills ?? []).map((fill) => fillOutlines(fill.d).map((outline) => outline.map(([u, v]) => ({
+    x: (fill.x + (u / 100) * fill.size) * size + (random() - 0.5) * shake * 0.3,
+    y: (fill.y + (v / 100) * fill.size) * size + (random() - 0.5) * shake * 0.3,
+  }))));
+  return framed(strokes, blobs, size * 0.07, size, fills);
 }
 
 /** The drawing's paint in white: strokes that thicken and thin as the can moves, paint pooled where it starts and stops. */
@@ -224,6 +234,15 @@ function sprayMask(drawing: SprayDrawing, random: () => number): Canvas {
       ctx.arc(end.x, end.y, line * (0.5 + random() * 0.12), 0, Math.PI * 2);
       ctx.fill();
     }
+  }
+  for (const outlines of drawing.fills) {
+    ctx.beginPath();
+    for (const outline of outlines) {
+      ctx.moveTo(outline[0].x, outline[0].y);
+      for (const point of outline.slice(1)) ctx.lineTo(point.x, point.y);
+      ctx.closePath();
+    }
+    ctx.fill('evenodd');
   }
   for (const blob of drawing.blobs) {
     // A burst: a ragged disc with spatters thrown off round it.

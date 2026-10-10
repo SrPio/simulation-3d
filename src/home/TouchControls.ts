@@ -15,6 +15,45 @@ export function stickMove(dx: number, dy: number, radius: number): AnalogMove | 
   return { forward: (-dy / length) * strength, right: (dx / length) * strength, run: amount >= STICK.run };
 }
 
+/**
+ * Joystick flicks for the Konami code: a push past `reach` of the radius, clearly along one axis, let go of (back to
+ * the dead zone, or the other way) within `time` seconds counts as that arrow; a longer push is just walking.
+ */
+export const FLICK = { reach: 0.55, axis: 1.4, time: 0.5 } as const;
+
+export type FlickCode = 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight';
+
+/** The arrow a joystick dragged `dx`, `dy` px (y down) from its centre points, when pushed far enough along one axis. */
+export function flickDirection(dx: number, dy: number, radius: number): FlickCode | undefined {
+  if (Math.hypot(dx, dy) < radius * FLICK.reach) return undefined;
+  if (Math.abs(dy) >= Math.abs(dx) * FLICK.axis) return dy < 0 ? 'ArrowUp' : 'ArrowDown';
+  if (Math.abs(dx) >= Math.abs(dy) * FLICK.axis) return dx < 0 ? 'ArrowLeft' : 'ArrowRight';
+  return undefined;
+}
+
+/** Follows one finger on the joystick and reports each quick flick (an arrow of the Konami code) as it ends. */
+export class FlickReader {
+  private current?: { code: FlickCode; since: number };
+
+  /** The joystick at dx, dy at `time` seconds; returns the flick that just ended, if any. */
+  move(dx: number, dy: number, radius: number, time: number): FlickCode | undefined {
+    const code = flickDirection(dx, dy, radius);
+    if (code && code === this.current?.code) return undefined;
+    const back = Math.hypot(dx, dy) < radius * STICK.dead;
+    // Swept straight on to another arrow, or back to the middle: the flick so far ends.
+    const ended = code || back ? this.end(time) : undefined;
+    if (code) this.current = { code, since: time };
+    return ended;
+  }
+
+  /** The finger lifted (or the push ended) at `time` seconds. */
+  end(time: number): FlickCode | undefined {
+    const current = this.current;
+    this.current = undefined;
+    return current && time - current.since <= FLICK.time ? current.code : undefined;
+  }
+}
+
 /** What the zone button says in a sign's zone (`data-sign` is the sign id, or `reset-<group>` in a reset zone). */
 export function zoneAction(sign: string): { kind: 'link' | 'reset'; key: MessageKey } | undefined {
   if (!sign || sign === 'none') return undefined;
@@ -35,18 +74,18 @@ export const PEDAL_ARROWS = {
  * The buttons: what each does (a press, a hold kept until the finger lifts, the run switch, or, while riding, a pedal
  * held like W or S or a steering arrow held like A or D) and its figure.
  */
-type Button = { id: string; label: MessageKey; icon?: ActionIcon; arrow?: keyof typeof PEDAL_ARROWS; press?: PressAction; hold?: HoldAction; run?: true; pedal?: 1 | -1; steer?: 1 | -1 };
+type Button = { id: string; label: MessageKey; icon?: ActionIcon; arrow?: keyof typeof PEDAL_ARROWS; press?: PressAction; hold?: HoldAction; run?: true; pedal?: 1 | -1; steer?: 1 | -1; konami?: 'KeyB' | 'KeyA' };
 const BUTTONS: Button[] = [
   { id: 'accelerate', arrow: 'up', label: 'touch.accelerate', pedal: 1 },
   { id: 'reverse', arrow: 'down', label: 'touch.reverse', pedal: -1 },
   { id: 'nitro', icon: 'nitro', label: 'touch.nitro', hold: 'jump' },
   { id: 'sit', icon: 'sit', label: 'touch.sit', press: 'interact' },
   { id: 'laptop', icon: 'laptop', label: 'touch.laptop', press: 'laptop' },
-  { id: 'throw', icon: 'throw', label: 'touch.throw', hold: 'throw' },
+  { id: 'throw', icon: 'throw', label: 'touch.throw', hold: 'throw', konami: 'KeyB' },
   { id: 'kick', icon: 'kick', label: 'touch.kick', hold: 'kick' },
   { id: 'punch', icon: 'punch', label: 'touch.punch', hold: 'punch' },
   { id: 'run', icon: 'run', label: 'touch.run', run: true },
-  { id: 'jump', icon: 'jump', label: 'touch.jump', hold: 'jump' },
+  { id: 'jump', icon: 'jump', label: 'touch.jump', hold: 'jump', konami: 'KeyA' },
 ];
 /** Riding, these take the joystick's place: left and right, like A and D (or the arrow keys). */
 const STEER: Button[] = [
@@ -63,7 +102,8 @@ const RIDING_SOURCES = ['pedal-accelerate', 'pedal-reverse', 'steer-left', 'stee
  * seated (stand up, the laptop) or riding the office chair (accelerate and reverse, the nitro, stand up; the joystick
  * gives way to two arrows that steer left and right). Near a seat
  * the sit button glows on and off softly, as the speech bubble over the head asks for it. Standing in a sign's or a reset
- * zone, a short text button above them names what Enter does there (visit the site, reset the pieces).
+ * zone, a short text button above them names what Enter does there (visit the site, reset the pieces). The Konami
+ * code works here too: quick flicks of the joystick are its arrows, the throw button its B and the jump button its A.
  */
 export class TouchControls {
   readonly root: HTMLDivElement;
@@ -76,6 +116,7 @@ export class TouchControls {
   private text?: (key: MessageKey) => string;
   private readonly host: HTMLElement;
   private pointer?: number;
+  private readonly flicks = new FlickReader();
   private readonly abort = new AbortController();
   private readonly observer: MutationObserver;
   private readonly input: () => KeyboardInput | undefined;
@@ -141,6 +182,8 @@ export class TouchControls {
       element.classList.add('is-down');
       const keys = this.input();
       if (!keys) return;
+      // Every button is a step of the Konami code: B and A for throw and jump, anything else breaks it.
+      keys.konamiStep(button.konami ?? button.id);
       if (button.pedal) keys.setAnalog(`pedal-${button.id}`, { forward: button.pedal, right: 0, run: false });
       else if (button.steer) keys.setAnalog(`steer-${button.id}`, { forward: 0, right: button.steer, run: false });
       else if (button.run) keys.toggleRun();
@@ -226,6 +269,8 @@ export class TouchControls {
       dy *= radius / length;
     }
     this.knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    const flick = this.flicks.move(dx, dy, radius, event.timeStamp / 1000);
+    if (flick) this.input()?.konamiStep(flick);
     const move = stickMove(dx, dy, radius);
     this.input()?.setAnalog('touch', move);
     this.root.dataset.joystick = move ? `${move.right.toFixed(2)},${move.forward.toFixed(2)}` : 'none';
@@ -236,6 +281,8 @@ export class TouchControls {
   };
 
   private releaseStick(): void {
+    const flick = this.flicks.end(performance.now() / 1000);
+    if (flick) this.input()?.konamiStep(flick);
     if (this.pointer !== undefined && this.stick.hasPointerCapture(this.pointer)) this.stick.releasePointerCapture(this.pointer);
     this.pointer = undefined;
     this.stick.classList.remove('is-active');

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { PEDAL_ARROWS, STICK, stickMove, zoneAction } from '../src/home/TouchControls.ts';
+import { FLICK, FlickReader, PEDAL_ARROWS, STICK, flickDirection, stickMove, zoneAction } from '../src/home/TouchControls.ts';
 import { MESSAGES } from '../src/core/i18n.ts';
-import { combineIntent } from '../src/input/KeyboardInput.ts';
+import { KeyboardInput, combineIntent } from '../src/input/KeyboardInput.ts';
 
 test('the joystick ignores a light touch, pushes up the screen as forward and runs at full tilt', () => {
   assert.equal(stickMove(0, 0, 60), undefined);
@@ -44,4 +44,30 @@ test('the pedal and steering arrows point their way inside the button box', () =
   assert.deepEqual(points(PEDAL_ARROWS.down)[0], [50, 88], 'the down arrow tip is at the bottom');
   assert.deepEqual(points(PEDAL_ARROWS.left)[0], [12, 50], 'the left arrow tip is on the left');
   assert.deepEqual(points(PEDAL_ARROWS.right)[0], [88, 50], 'the right arrow tip is on the right');
+});
+
+test('quick joystick flicks are the arrows of the Konami code, a long push is not', () => {
+  assert.equal(flickDirection(0, -20, 60), undefined, 'not far enough');
+  assert.equal(flickDirection(0, -50, 60), 'ArrowUp');
+  assert.equal(flickDirection(-50, 5, 60), 'ArrowLeft');
+  assert.equal(flickDirection(40, 40, 60), undefined, 'a diagonal is no arrow');
+  const reader = new FlickReader();
+  assert.equal(reader.move(0, -50, 60, 0), undefined);
+  assert.equal(reader.move(0, -2, 60, 0.2), 'ArrowUp', 'back to the middle ends it');
+  reader.move(0, 50, 60, 1);
+  assert.equal(reader.end(1 + FLICK.time + 0.1), undefined, 'held too long: walking');
+  reader.move(-50, 0, 60, 2);
+  assert.equal(reader.move(50, 0, 60, 2.1), 'ArrowLeft', 'swept straight to the other side');
+  assert.equal(reader.end(2.2), 'ArrowRight');
+});
+
+test('flicks, the throw button and the jump button type the Konami code', () => {
+  const target = Object.assign(new EventTarget(), { document: new EventTarget() });
+  const input = new KeyboardInput(target as unknown as Window, new AbortController().signal);
+  const presses: string[] = [];
+  input.onPress = (action) => presses.push(action);
+  for (const code of ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'KeyB', 'KeyA']) input.konamiStep(code);
+  assert.deepEqual(presses, ['konami']);
+  for (const code of ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'KeyB', 'punch', 'KeyA']) input.konamiStep(code);
+  assert.deepEqual(presses, ['konami'], 'another button breaks it');
 });

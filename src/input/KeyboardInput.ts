@@ -111,6 +111,14 @@ export class KeyboardInput {
     this.onRelease?.(action);
   }
 
+  /**
+   * A step of the Konami code from another source, as the key code it stands for (the touch joystick flicked up is
+   * 'ArrowUp', the throw button 'KeyB', the jump button 'KeyA'; anything else breaks the sequence).
+   */
+  konamiStep(code: string): void {
+    if (this.enabled && pushKonami(this.recent, code)) this.onPress?.('konami');
+  }
+
   /** Running on or off, like Shift. */
   toggleRun(): void {
     if (!this.enabled) return;

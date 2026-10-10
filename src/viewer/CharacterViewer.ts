@@ -45,7 +45,7 @@ import type { SeatSpot } from '../interactions/InteractionController.ts';
 import type { FloorBlock } from '../scene/outsideData.ts';
 import { RoomReveal } from '../scene/RoomReveal.ts';
 import { Graffiti, paintGraffiti, type Paintings } from '../scene/Graffiti.ts';
-import { GRAFFITI } from '../scene/graffitiData.ts';
+import { GRAFFITI, graffitiForTouch, type GraffitiSpot } from '../scene/graffitiData.ts';
 import { hiddenBehind, revealStep, type Bounds3 } from '../world/reveal.ts';
 import { TargetGame, type Lane } from '../world/targets.ts';
 import { signAt } from '../world/signs.ts';
@@ -434,6 +434,11 @@ export class CharacterViewer {
     this.scene.add(this.key.target, this.fill.target, this.rim.target);
   }
 
+  /** The graffiti as this screen shows them (on a touch screen the Konami code names the on-screen buttons). */
+  private get graffitiSpots(): readonly GraffitiSpot[] {
+    return this.options.touch ? graffitiForTouch(GRAFFITI) : GRAFFITI;
+  }
+
   private get inRoom(): boolean {
     return this.options.scene === 'room';
   }
@@ -443,7 +448,7 @@ export class CharacterViewer {
       const meter = this.progress;
       const track = (file: string) => meter.file(file, EXPECTED_BYTES[file] ?? 1_000_000);
       // The graffiti are painted in a worker meanwhile (seconds of canvas work that would freeze the loading screen).
-      const paintings = this.inRoom && GRAFFITI.length ? paintGraffiti(GRAFFITI) : Promise.resolve([]);
+      const paintings = this.inRoom && GRAFFITI.length ? paintGraffiti(this.graffitiSpots) : Promise.resolve([]);
       const [, gltf, roomGltf, laptopGltf, outsideGltf, circuitGltf, colombiaGltf, boxingGltf, univalleGltf, graffitiPaintings] = await Promise.all([
         // The canvas labels below are painted once, so the typeface must be loaded first (fontsReady never rejects).
         fontsReady(),
@@ -820,7 +825,7 @@ export class CharacterViewer {
     }
     // Graffiti: on the merged static surfaces, and on loose pieces (a brick wall) whose poses it then follows. Built
     // before the pieces' source geometry is released.
-    if (GRAFFITI.length) this.graffiti = new Graffiti(GRAFFITI, [outside], data.groundY, this.pieceList, getLanguage(), paintings);
+    if (GRAFFITI.length) this.graffiti = new Graffiti(this.graffitiSpots, [outside], data.groundY, this.pieceList, getLanguage(), paintings);
     this.host.dataset.graffiti = this.graffiti?.painted.join(',') || 'none';
     await breathe();
     if (this.pieceList.length) {
