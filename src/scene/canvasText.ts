@@ -1,5 +1,5 @@
-/** The project typeface (see --font in the stylesheets): the installed Windows font, never downloaded. */
-export const FONT = '"Bahnschrift", "Segoe UI", system-ui, sans-serif';
+/** The project typeface (see --font in the stylesheets): the installed Windows font, else the bundled fallback (src/core/fonts.ts). */
+export const FONT = '"Bahnschrift", "Barlow Semi Condensed", "Segoe UI", system-ui, sans-serif';
 
 /** A keyboard key drawn as an outlined rounded cap with its label; returns its width. */
 export function drawKey(context: CanvasRenderingContext2D, label: string, x: number, y: number, height: number): number {

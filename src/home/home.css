@@ -1,6 +1,6 @@
 :root {
-  /* Project typeface: Bahnschrift (installed with Windows; nothing is downloaded), then close fallbacks. */
-  --font: Bahnschrift, 'DIN Alternate', 'Segoe UI', system-ui, sans-serif;
+  /* Project typeface: Bahnschrift (installed with Windows), else the bundled Barlow Semi Condensed (src/core/fonts.ts). */
+  --font: Bahnschrift, 'Barlow Semi Condensed', 'DIN Alternate', 'Segoe UI', system-ui, sans-serif;
   font-family: var(--font);
   color: #ebe3f2;
   background: #120f18;

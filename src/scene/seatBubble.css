@@ -3,7 +3,7 @@
 .seat-bubble-body {
   position: absolute; left: 0; bottom: 12px; display: flex; align-items: center; gap: 8px; padding: 7px 13px 7px 8px; transform: translateX(-50%);
   transform-origin: 50% calc(100% + 12px); border: 2px solid #2a1f36; border-radius: 16px; white-space: nowrap;
-  font: 600 14px/1 Bahnschrift, 'DIN Alternate', 'Segoe UI', system-ui, sans-serif; color: #241a2f; background: #f7f1fd;
+  font: 600 14px/1 Bahnschrift, 'Barlow Semi Condensed', 'DIN Alternate', 'Segoe UI', system-ui, sans-serif; color: #241a2f; background: #f7f1fd;
   box-shadow: 0 4px 0 #2a1f3640, 0 8px 18px #00000045;
 }
 /* The tail: a turned square under the middle, its outline continuing the border. */

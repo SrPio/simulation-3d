@@ -49,6 +49,7 @@ import { signAt } from '../world/signs.ts';
 import { KEY_SINK, onKey, pressStep, type FloorKey } from '../world/keyPress.ts';
 import { ChickRain } from '../scene/ChickRain.ts';
 import { LAPTOP, MAX_CHICKS, PropPhysics, type ChairPusher, type StaticBox, type TargetDisc, type TargetHit, type ThrownLaptop } from '../world/PropPhysics.ts';
+import { fontsReady } from '../core/fonts.ts';
 
 export type ViewPreset = 'front' | 'left' | 'right' | 'back' | 'three-quarter';
 export type LightPreset = 'neutral' | 'violet';
@@ -425,7 +426,9 @@ export class CharacterViewer {
       const track = (file: string) => meter.file(file, EXPECTED_BYTES[file] ?? 1_000_000);
       // The graffiti are painted in a worker meanwhile (seconds of canvas work that would freeze the loading screen).
       const paintings = this.inRoom && GRAFFITI.length ? paintGraffiti(GRAFFITI) : Promise.resolve([]);
-      const [gltf, roomGltf, laptopGltf, outsideGltf, circuitGltf, colombiaGltf, graffitiPaintings] = await Promise.all([
+      const [, gltf, roomGltf, laptopGltf, outsideGltf, circuitGltf, colombiaGltf, graffitiPaintings] = await Promise.all([
+        // The canvas labels below are painted once, so the typeface must be loaded first (fontsReady never rejects).
+        fontsReady(),
         loadCharacter(this.options.modelId, this.abort.signal, track(modelVersions[this.options.modelId].file)),
         this.inRoom ? loadRoom(this.abort.signal, track(roomFile)) : Promise.resolve(undefined),
         this.inRoom ? loadLaptop(this.abort.signal, track(laptopFile)) : Promise.resolve(undefined),
