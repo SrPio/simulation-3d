@@ -21,7 +21,7 @@ const impact = (velocityMin: number, velocityMultiplier: number, volume: [number
 
 export const SOUNDS: Record<SoundName, SoundDef> = {
   // Pieces, by what they are made of; velocity is the impact speed along the contact normal.
-  brick: impact(0.7, 0.2, [0.15, 0.85], [0.75, 1]),
+  brick: impact(1, 0.75, [0.2, 0.85], [0.5, 0.75], 100),
   wood: impact(0.7, 0.22, [0.15, 0.85], [0.9, 1.2]),
   woodHeavy: impact(1.5, 0.2, [0.4, 1], [0.8, 1], 120),
   pin: impact(0.6, 0.25, [0.25, 1], [0.95, 1.3], 30),
@@ -45,7 +45,8 @@ export const SOUNDS: Record<SoundName, SoundDef> = {
   lidClose: fixed(0.7),
   key: fixed(0.38, [0.9, 1.25], 40),
   // The world.
-  floorKey: fixed(0.75, [0.9, 1.05], 80),
+  // The floor keys are keys of one keyboard: the same keystroke at the same pitch for all four.
+  floorKey: fixed(0.85, [1, 1], 60),
   zone: fixed(0.55, [1, 1], 150),
   open: fixed(0.75, [1, 1], 150),
   reset: fixed(0.7, [1, 1], 150),
