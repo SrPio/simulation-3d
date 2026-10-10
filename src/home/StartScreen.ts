@@ -5,6 +5,9 @@ export type StartState = 'loading' | 'ready' | 'opening' | 'done';
 const SVG = 'http://www.w3.org/2000/svg';
 /** Height of the head on screen, as a share of the smaller viewport side. */
 const HEAD_SHARE = 0.46;
+/** On phones (smaller side under SMALL_SIDE px) the head is larger, so START keeps room inside the skull. */
+const SMALL_SIDE = 600;
+const SMALL_HEAD_SHARE = 0.64;
 /** How long the hole takes to swallow the screen (ms) and the fade used instead with reduced motion. */
 const OPEN_MS = 950;
 const FADE_MS = 280;
@@ -227,11 +230,12 @@ export class StartScreen {
     this.root.dataset.start = state;
   }
 
-  /** Where the head sits and how large: centred, HEAD_SHARE of the smaller side high. */
+  /** Where the head sits and how large: centred, HEAD_SHARE (SMALL_HEAD_SHARE on phones) of the smaller side high. */
   private placement(): { x: number; y: number; scale: number } {
     const width = window.innerWidth;
     const height = window.innerHeight;
-    const scale = (Math.min(width, height) * HEAD_SHARE) / HEAD_OUTLINE.height;
+    const side = Math.min(width, height);
+    const scale = (side * (side < SMALL_SIDE ? SMALL_HEAD_SHARE : HEAD_SHARE)) / HEAD_OUTLINE.height;
     return { x: width / 2, y: height / 2, scale };
   }
 
