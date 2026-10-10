@@ -23,8 +23,9 @@ function plaqueRects(plaques: readonly Plaque[]): { rects: Rect[]; height: numbe
 }
 
 /**
- * The about-me plaza's painted parts: the plaques (the bust's name, role and country, the Colombian corner's country) as
- * one mesh over one canvas atlas facing the front, repainted on a language change; and the Colombian flag waving.
+ * The about-me plaza's painted parts: the plaques (the bust's name, role and country, the Colombian corner's country,
+ * the Universidad del Valle's name) as one mesh over one canvas atlas facing the front, repainted on a language change;
+ * and the Colombian flag waving.
  */
 export class AboutPlaza {
   readonly root = new Group();
@@ -162,6 +163,8 @@ export class AboutPlaza {
       line(t('about.name'), h * 0.3, 52, 700, '#2c2112');
       line(t('about.role'), h * 0.56, 34, 600, '#3b2d18');
       line(t('about.country'), h * 0.78, 30, 500, '#3b2d18');
+    } else if (id === 'univalle') {
+      line(t('about.univalle').toUpperCase(), h / 2, 46, 700, '#2c2112');
     } else {
       line(t('about.country').toUpperCase(), h / 2, 46, 700, '#2c2112');
     }

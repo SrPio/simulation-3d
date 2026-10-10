@@ -97,6 +97,8 @@ export const EXPECTED_BYTES: Record<string, number> = {
   'models/outside.glb': 880_000,
   'models/circuit.glb': 300_000,
   'models/colombia.glb': 153_000,
+  'models/boxing.glb': 155_000,
+  'models/univalle.glb': 29_000,
 };
 
 export async function loadCharacter(modelId: ModelVersionId, signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
@@ -134,6 +136,20 @@ export const colombiaFile = 'models/colombia.glb';
 /** The about-me plaza's Colombian corner (hat, cup, pin and flag), read together with the outside. Failures count as room failures. */
 export function loadColombia(signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
   return loadGlb(colombiaFile, 'ROOM', signal, progress);
+}
+
+export const boxingFile = 'models/boxing.glb';
+
+/** The playground's boxing corner (the gantry and the JS and TS punching bags), read together with the outside. Failures count as room failures. */
+export function loadBoxing(signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
+  return loadGlb(boxingFile, 'ROOM', signal, progress);
+}
+
+export const univalleFile = 'models/univalle.glb';
+
+/** The about-me plaza's Universidad del Valle logo on its base, read together with the outside. Failures count as room failures. */
+export function loadUnivalle(signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
+  return loadGlb(univalleFile, 'ROOM', signal, progress);
 }
 
 export const chickFile = 'models/chick.glb';

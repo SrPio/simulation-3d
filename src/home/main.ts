@@ -1,10 +1,12 @@
 import './home.css';
 import './startScreen.css';
 import './touch.css';
+import './nitroGauge.css';
 import { LANGUAGES, getLanguage, initialLanguage, isLanguage, setLanguage, t, type MessageKey } from '../core/i18n.ts';
 import { QUALITY, isQualityId, readPreferences, savePreferences } from '../core/quality.ts';
 import { StartScreen } from './StartScreen.ts';
 import { TouchControls } from './TouchControls.ts';
+import { NitroGauge } from './NitroGauge.ts';
 import { GamepadInput, type PadKind } from '../input/GamepadInput.ts';
 import { Sounds } from '../audio/Sounds.ts';
 import { CharacterViewer, type CameraMode, type LightPreset, type MovementState, type ViewerStatus } from '../viewer/CharacterViewer';
@@ -29,6 +31,10 @@ app.innerHTML = `
     <button type="button" class="menu-toggle" id="menu-toggle" aria-expanded="false" aria-controls="room-tools" data-i18n-label="menu.open">
       <span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>
     </button>
+    <div class="zoom-controls" id="zoom-controls" role="group" data-i18n-label="zoom.label">
+      <button type="button" class="zoom-button" id="zoom-in" data-i18n-label="zoom.in"><svg class="zoom-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/><path d="M15 15l5.5 5.5"/><path d="M7 10h6M10 7v6"/></svg></button>
+      <button type="button" class="zoom-button" id="zoom-out" data-i18n-label="zoom.out"><svg class="zoom-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/><path d="M15 15l5.5 5.5"/><path d="M7 10h6"/></svg></button>
+    </div>
     <nav class="room-tools" id="room-tools" data-i18n-label="menu.label" hidden>
       <div class="tool-group" role="group" aria-labelledby="sound-label">
         <span class="tool-label" id="sound-label" data-i18n="sound.label"></span>
@@ -79,6 +85,9 @@ const cameraFree = element<HTMLButtonElement>('#camera-free');
 const reducedMotion = element<HTMLButtonElement>('#reduced-motion');
 const menuToggle = element<HTMLButtonElement>('#menu-toggle');
 const tools = element<HTMLElement>('#room-tools');
+const zoomControls = element<HTMLDivElement>('#zoom-controls');
+/** Each zoom button press changes the camera zoom by this factor (within the viewer's zoom limits). */
+const ZOOM_STEP = 1.25;
 const qualityButtons = Array.from(app.querySelectorAll<HTMLButtonElement>('[data-quality]'));
 const languageButtons = Array.from(app.querySelectorAll<HTMLButtonElement>('[data-language]'));
 const listeners = new AbortController();
@@ -107,6 +116,7 @@ const motionReduced = () => preferences.reducedMotion ?? false;
 const sounds = new Sounds({ muted: !preferences.sound, base: import.meta.env.BASE_URL });
 
 const touchControls = new TouchControls(app.querySelector<HTMLDivElement>('.room-page')!, host, () => viewer?.input);
+const nitroGauge = new NitroGauge(app.querySelector<HTMLDivElement>('.room-page')!, host);
 const gamepad = new GamepadInput(() => viewer?.input);
 gamepad.inZone = () => (host.dataset.sign ?? 'none') !== 'none';
 gamepad.onMenu = () => setMenu(tools.hidden !== false);
@@ -207,6 +217,8 @@ function setMenu(open: boolean): void {
   menuToggle.setAttribute('aria-expanded', String(open));
   menuToggle.setAttribute('aria-label', t(open ? 'menu.close' : 'menu.open'));
   host.dataset.menu = open ? 'open' : 'closed';
+  // The open panel covers the zoom buttons' place under the menu button.
+  zoomControls.hidden = open;
 }
 
 function mount(): void {
@@ -246,6 +258,8 @@ for (const button of languageButtons) {
     applyTexts();
   }, { signal: listeners.signal });
 }
+element<HTMLButtonElement>('#zoom-in').addEventListener('click', () => viewer?.zoom(ZOOM_STEP), { signal: listeners.signal });
+element<HTMLButtonElement>('#zoom-out').addEventListener('click', () => viewer?.zoom(1 / ZOOM_STEP), { signal: listeners.signal });
 menuToggle.addEventListener('click', () => setMenu(tools.hidden !== false), { signal: listeners.signal });
 soundToggle.addEventListener('click', toggleSound, { signal: listeners.signal });
 window.addEventListener('keydown', (event) => {
@@ -263,7 +277,7 @@ window.addEventListener('touchstart', () => {
   if (started) touchControls.show();
 }, { signal: listeners.signal, passive: true });
 // A soft click for the page's own buttons (the sound switch plays its own once it is on).
-for (const button of app.querySelectorAll<HTMLButtonElement>('.room-tools button:not(#sound-toggle), .language-switch button, .menu-toggle')) {
+for (const button of app.querySelectorAll<HTMLButtonElement>('.room-tools button:not(#sound-toggle), .language-switch button, .menu-toggle, .zoom-button')) {
   button.addEventListener('click', () => sounds.play('ui'), { signal: listeners.signal });
 }
 window.addEventListener('keydown', (event) => {
@@ -302,7 +316,7 @@ reset.addEventListener('click', () => {
   setMenu(false);
 }, { signal: listeners.signal });
 // Buttons keep focus after a click; Space and arrows must still drive the character, not the button.
-for (const button of app.querySelectorAll<HTMLButtonElement>('.room-tools button, .language-switch button, .menu-toggle')) {
+for (const button of app.querySelectorAll<HTMLButtonElement>('.room-tools button, .language-switch button, .menu-toggle, .zoom-button')) {
   button.addEventListener('pointerup', () => button.blur(), { signal: listeners.signal });
 }
 
@@ -312,6 +326,7 @@ function dispose(): void {
   listeners.abort();
   start.dispose();
   touchControls.dispose();
+  nitroGauge.dispose();
   gamepad.dispose();
   viewer?.dispose();
   sounds.dispose();

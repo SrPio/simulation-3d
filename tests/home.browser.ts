@@ -103,7 +103,7 @@ test('the root shows only the room with V4, neutral light, a fixed following cam
   await expect(motion).toHaveAttribute('aria-pressed', 'true');
   await expect(host(page)).toHaveAttribute('data-reduced-motion', 'true');
   await expect(page.locator('html')).toHaveAttribute('data-reduced-motion', 'true');
-  assert.deepEqual(models.sort(), ['circuit.glb', 'colombia.glb', 'developer-v4-interactions.glb', 'laptop.glb', 'outside.glb', 'room.glb']);
+  assert.deepEqual(models.sort(), ['boxing.glb', 'circuit.glb', 'colombia.glb', 'developer-v4-interactions.glb', 'laptop.glb', 'outside.glb', 'room.glb', 'univalle.glb']);
   await expect(host(page)).toHaveAttribute('data-letters', '0');
   await expect(page.locator('.sidebar, .version-selector, #animation-controls')).toHaveCount(0);
   await expect(page.locator('canvas')).toHaveCount(1);

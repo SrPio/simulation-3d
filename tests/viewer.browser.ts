@@ -365,8 +365,9 @@ test('Habitación places the selected character in the isometric diorama and Est
   await expect(page.locator('[data-view="front"]')).toBeEnabled();
   await expect(page.locator('#model-stats')).toContainText('mallas');
   const meshes = Number((await page.locator('#model-stats').textContent())!.split(' ')[0].replace(/\./g, ''));
-  // Each material is one mesh after the merge; the Colombian corner and the chair's bottles bring their own materials.
-  assert.ok(meshes > 20 && meshes < 115, `Room merged by material for fewer draw calls: ${meshes} meshes`);
+  // Each material is one mesh after the merge; the Colombian corner, the Univalle logo, the chair's bottles and the
+  // punching bags (merged per bag, they swing) bring their own materials.
+  assert.ok(meshes > 20 && meshes < 130, `Room merged by material for fewer draw calls: ${meshes} meshes`);
   const ratio = Number(await page.locator('#canvas-host').getAttribute('data-pixel-ratio'));
   assert.ok(ratio >= 1 && ratio <= 1.5, `Pixel ratio capped for fill rate: ${ratio}`);
   const diorama = await frame(page);
@@ -383,7 +384,7 @@ test('Habitación places the selected character in the isometric diorama and Est
   await expect(page.locator('#canvas-host')).toHaveAttribute('data-scene', 'studio');
   await expect(page.locator('.orbit-label')).toHaveText('ÓRBITA 360°');
   await expect(page.locator('[data-view="back"]')).toBeEnabled();
-  assert.deepEqual(requests, ['developer.glb', 'developer.glb', 'room.glb', 'laptop.glb', 'outside.glb', 'circuit.glb', 'colombia.glb', 'developer-v4-interactions.glb', 'room.glb', 'laptop.glb', 'outside.glb', 'circuit.glb', 'colombia.glb', 'developer-v4-interactions.glb']);
+  assert.deepEqual(requests, ['developer.glb', 'developer.glb', 'room.glb', 'laptop.glb', 'outside.glb', 'circuit.glb', 'colombia.glb', 'boxing.glb', 'univalle.glb', 'developer-v4-interactions.glb', 'room.glb', 'laptop.glb', 'outside.glb', 'circuit.glb', 'colombia.glb', 'boxing.glb', 'univalle.glb', 'developer-v4-interactions.glb']);
   assert.deepEqual(errors, []);
 });
 

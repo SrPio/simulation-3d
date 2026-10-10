@@ -333,6 +333,13 @@ export class FloorTexts {
       context.strokeRect(-1.45, -d / 2 + 0.05, 2.9, 0.8);
       context.setLineDash([]);
       scaled(() => text('floor.tech', 0, (d / 2 - 0.5) * 100, 52, 'center', 700, (w - 0.3) * 100));
+    } else if (block.id === 'boxing') {
+      // A dashed ring round the gantry's footprint and the zone's name in front of the bags.
+      context.lineWidth = 0.05;
+      context.setLineDash([0.25, 0.15]);
+      context.strokeRect(-w / 2 + 0.3, -d / 2 + 0.1, w - 0.6, 1.5);
+      context.setLineDash([]);
+      scaled(() => text('floor.boxing', 0, (d / 2 - 0.55) * 100, 52, 'center', 700, (w - 0.3) * 100));
     } else if (block.id === 'footprints') {
       // Shoe prints walking out of the room's front corner (the block's far-left corner) along a gentle S, left and
       // right in turn, fading as they get further from the room.
@@ -399,7 +406,7 @@ export class FloorTexts {
       // It starts above the question, rises in an arc and comes down onto the chair from the left, its tip far enough
       // up the ground to meet the seat from the corner view.
       const end = at(chair, 1.2, -0.8);
-      const start = at(chair, 0.75, -4.55);
+      const start = at(chair, 1.0, -4.55);
       const c1 = at(start, 3.6, 0.9);
       const c2 = at(end, 2.0, -1.6);
       context.save();
@@ -434,11 +441,12 @@ export class FloorTexts {
       }
       context.stroke();
       context.restore();
-      // Two lines under the arrow's start, in the floor's own axes like every painted text.
+      // Two large lines under the arrow's start, in the floor's own axes like every painted text, kept inside the
+      // block's near edge.
       const label = at(chair, -0.35, -4.6);
       const lines = t('floor.chairHint').split('\n');
       for (const [k, line] of lines.entries()) {
-        scaled(() => text({ words: line }, label.x * 100, (label.z + (k - (lines.length - 1) / 2) * 0.32) * 100, 24, 'center', 600, 2.6 * 100));
+        scaled(() => text({ words: line }, label.x * 100, (label.z + (k - (lines.length - 1) / 2) * 0.66) * 100, 56, 'center', 700, 5.4 * 100));
       }
     } else if (block.id === 'technote') {
       // Two lines at the back of the block, and under them a hand-drawn arrow that drops towards the camera and curls

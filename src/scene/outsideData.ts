@@ -70,7 +70,7 @@ export type Letter = Piece & {
 
 /** Where the viewer paints on the ground: a block in its own axes (local +X along the text, +Z towards the camera). */
 export type FloorBlock = {
-  id: 'intro' | 'crossroads' | 'controls' | 'playground' | 'bowling' | 'footprints' | 'about' | 'targets' | 'tech' | 'playarea' | 'prints' | 'circuit' | 'checker' | 'chairhint' | 'technote';
+  id: 'intro' | 'crossroads' | 'controls' | 'playground' | 'bowling' | 'footprints' | 'about' | 'targets' | 'tech' | 'playarea' | 'prints' | 'circuit' | 'checker' | 'chairhint' | 'technote' | 'boxing';
   position: Vector3;
   yaw: number;
   size: [number, number];
@@ -125,6 +125,12 @@ export type Plaque = { id: string; position: Vector3; yaw: number; size: [number
 /** A standing target: its foot, the centre height of its disc, the ring radii (outer to inner) and their points. */
 export type Target = { index: number; object: Object3D; position: Vector3; yaw: number; radius: number; centre: number; rings: number[]; points: number[] };
 
+/**
+ * A punching bag (boxing.glb): a pendulum hanging from its hook. `object` is the empty on the hook that everything of the
+ * bag hangs from (turn it to swing the bag); `centre` is the drop from the hook to the bag's middle.
+ */
+export type PunchBag = { id: string; object: Object3D; pivot: Vector3; centre: number; radius: number; length: number; mass: number };
+
 /** Board next to the targets where the viewer paints the score. */
 export type Scoreboard = { position: Vector3; yaw: number; width: number; height: number; bottom: number };
 
@@ -156,6 +162,8 @@ export type OutsideData = {
   trafficLight?: Object3D;
   /** The park benches as seats (the bed's clips and the lap laptop), each with its bench's name as `id`. */
   benches: SeatSpot[];
+  /** The playground's punching bags (boxing.glb, read together with the outside). */
+  bags: PunchBag[];
 };
 
 export const LETTER_MASS = 1.5;
@@ -221,7 +229,7 @@ type Extras = {
   height?: number; pole_radius?: number; arrows_top?: number; arrow_step?: number;
   prop?: string; group?: string; mass?: number; radius?: number; cylinders?: number[];
   joint?: string; ramp?: number[]; profile?: string; tape?: number[]; chair?: string;
-  seat?: string; stand?: number; approach?: number;
+  seat?: string; stand?: number; approach?: number; bag?: number[];
 };
 
 /** Read what the outside GLB exports (see scripts/blender/create_outside.py). */
@@ -247,6 +255,7 @@ export function readOutside(root: Object3D): OutsideData {
   let lapBoard: Scoreboard | undefined;
   let trafficLight: Object3D | undefined;
   const benches: SeatSpot[] = [];
+  const bags: PunchBag[] = [];
   root.traverse((object) => {
     const data = object.userData as Extras;
     if (data.bounds?.length === 4) {
@@ -281,6 +290,11 @@ export function readOutside(root: Object3D): OutsideData {
       if (data.ramp?.length === 3) {
         ramps.push({ position, yaw, length: data.ramp[0], width: data.ramp[1], height: data.ramp[2], profile: data.profile === 'bump' ? 'bump' : 'up' });
       }
+    } else if (object.name.startsWith('PunchBag_') && data.bag?.length === 3) {
+      bags.push({
+        id: object.name.slice('PunchBag_'.length).toLowerCase(), object, pivot: position, centre: data.bag[0], radius: data.bag[1], length: data.bag[2],
+        mass: data.mass ?? 30,
+      });
     } else if (/^Tape_\d+$/.test(object.name) && data.tape?.length === 1) {
       tapes.push({ name: object.name, object, position, yaw, length: data.tape[0] });
     } else if (object.name === 'OfficeChair' && data.chair) {
@@ -355,7 +369,8 @@ export function readOutside(root: Object3D): OutsideData {
   if (lamppost && crossroads) lamppost.arrows = crossroads.targets.map((target, i) => ({ id: crossroads.labels[i] ?? '', target }));
   targets.sort((a, b) => a.index - b.index);
   tapes.sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }));
-  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost, decor, plaques, targets, scoreboard, ramps, tapes, chair, lapBoard, trafficLight, benches };
+  bags.sort((a, b) => a.id.localeCompare(b.id));
+  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost, decor, plaques, targets, scoreboard, ramps, tapes, chair, lapBoard, trafficLight, benches, bags };
 }
 
 /** Height of a ramp's surface above the ground at a point, 0 off it. */

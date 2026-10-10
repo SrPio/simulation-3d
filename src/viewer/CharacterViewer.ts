@@ -15,7 +15,8 @@ import {
 import { getLanguage, onLanguage, t } from '../core/i18n.ts';
 import { KeyboardInput, type HoldAction, type PressAction } from '../input/KeyboardInput';
 import {
-  EXPECTED_BYTES, circuitFile, colombiaFile, disposeObjects, loadColombia, laptopFile, loadCharacter, loadChick, loadCircuit, loadLaptop, loadOutside, loadRoom, modelVersions, outsideFile, roomFile,
+  EXPECTED_BYTES, boxingFile, circuitFile, colombiaFile, disposeObjects, loadBoxing, loadColombia, laptopFile, loadCharacter, loadChick, loadCircuit, loadLaptop, loadOutside, loadRoom,
+  loadUnivalle, modelVersions, outsideFile, roomFile, univalleFile,
   type ModelVersionId, type SceneId,
 } from '../core/loadAssets';
 import { DOWNLOAD_SHARE, ProgressMeter } from '../core/loadProgress.ts';
@@ -23,11 +24,13 @@ import { distanceGain, type SoundName, type Sounds } from '../audio/Sounds.ts';
 import { pieceSound } from '../audio/pieceSounds.ts';
 import { InteractionController } from '../interactions/InteractionController.ts';
 import { readRoom, type RoomData } from '../scene/roomData.ts';
-import { groundAt, readOutside, type OutsideData, type Piece, type Sign } from '../scene/outsideData.ts';
+import { groundAt, readOutside, type OutsideData, type Piece, type PunchBag, type Sign } from '../scene/outsideData.ts';
 import { SignAreas, signText } from '../scene/SignAreas.ts';
 import { FloorTexts } from '../scene/FloorTexts.ts';
 import { Signpost } from '../scene/Signpost.ts';
 import { SeatBubble } from '../scene/SeatBubble.ts';
+import { ShoutBurst } from '../scene/ShoutBurst.ts';
+import { shoutAt, shoutSpots, type ShoutId, type ShoutSpot } from '../world/shouts.ts';
 import { ChargeMeter } from '../scene/ChargeMeter.ts';
 import { InfiniteFloor } from '../scene/InfiniteFloor.ts';
 import { BlobShadows } from '../scene/BlobShadows.ts';
@@ -112,6 +115,10 @@ type ViewerEvents = {
 const LOCOMOTION = new Set(['idle', 'walk', 'run', 'jump']);
 /** How quickly the camera catches up with the character (1/s); frame-rate independent. */
 const FOLLOW_RATE = 4;
+/** On a touch screen the room camera starts this much closer than the widest zoom (the zoom limits stay the same). */
+const TOUCH_ZOOM = 1.2;
+/** How fast the zoom buttons ease the camera to their zoom (per second; instant with reduced motion). */
+const ZOOM_RATE = 12;
 /** Longest stretch of first-frame GPU work done at once while loading (ms), see warmUp. */
 const WARM_SLICE_MS = 12;
 /** Lets the page paint between the steps of putting the scene together (see load). */
@@ -229,6 +236,9 @@ export class CharacterViewer {
   /** Blob shadows of things that never move (the character's, the signs', the lamppost's), before the pieces' ones. */
   private staticShadows = 0;
   private bubble?: SeatBubble;
+  /** What the character exclaims near the bust, the Colombian corner or the Univalle logo, and where those stand. */
+  private shout?: ShoutBurst;
+  private shoutSpots: ShoutSpot[] = [];
   /** The about-me plaza's plaques and globe. */
   private about?: AboutPlaza;
   /** Spray-painted words and symbols on the outside's surfaces and ground (graffitiData.ts). */
@@ -244,6 +254,11 @@ export class CharacterViewer {
   private chairPusher?: ChairPusher;
   private circuitClock = 0;
   private chairShadow = -1;
+  /** The punching bags: each swings round its hook with its physics body (`rest` its turn hanging still), with a blob shadow from `bagShadow` on. */
+  private bags: { bag: PunchBag; rest: Quaternion }[] = [];
+  private readonly bagRoot = new Group();
+  private bagShadow = -1;
+  private bagSwing = '';
   /** The traffic light's sequence starts when the rider sits down. */
   private lightsAt = -Infinity;
   private wasRiding = false;
@@ -283,6 +298,9 @@ export class CharacterViewer {
   private pointerStart?: { x: number; y: number };
   private hover?: { x: number; y: number };
   private cameraMode: CameraMode = 'free';
+  /** The room camera's zoom chosen with the zoom buttons (the follow camera keeps it), and the zoom it is easing to. */
+  private roomZoom?: number;
+  private zoomGoal?: number;
   /** Point the room camera looks at; it follows the character. */
   private readonly focus = new Vector3();
   /** The desk laptop always stands on the desk; the lap one only exists while it is used on the bed. */
@@ -426,7 +444,7 @@ export class CharacterViewer {
       const track = (file: string) => meter.file(file, EXPECTED_BYTES[file] ?? 1_000_000);
       // The graffiti are painted in a worker meanwhile (seconds of canvas work that would freeze the loading screen).
       const paintings = this.inRoom && GRAFFITI.length ? paintGraffiti(GRAFFITI) : Promise.resolve([]);
-      const [, gltf, roomGltf, laptopGltf, outsideGltf, circuitGltf, colombiaGltf, graffitiPaintings] = await Promise.all([
+      const [, gltf, roomGltf, laptopGltf, outsideGltf, circuitGltf, colombiaGltf, boxingGltf, univalleGltf, graffitiPaintings] = await Promise.all([
         // The canvas labels below are painted once, so the typeface must be loaded first (fontsReady never rejects).
         fontsReady(),
         loadCharacter(this.options.modelId, this.abort.signal, track(modelVersions[this.options.modelId].file)),
@@ -435,11 +453,15 @@ export class CharacterViewer {
         this.inRoom ? loadOutside(this.abort.signal, track(outsideFile)) : Promise.resolve(undefined),
         this.inRoom ? loadCircuit(this.abort.signal, track(circuitFile)) : Promise.resolve(undefined),
         this.inRoom ? loadColombia(this.abort.signal, track(colombiaFile)) : Promise.resolve(undefined),
+        this.inRoom ? loadBoxing(this.abort.signal, track(boxingFile)) : Promise.resolve(undefined),
+        this.inRoom ? loadUnivalle(this.abort.signal, track(univalleFile)) : Promise.resolve(undefined),
         paintings,
       ]);
       meter.report(DOWNLOAD_SHARE);
       this.preparing = true;
-      const scenes = [...gltf.scenes, ...(roomGltf?.scenes ?? []), ...(laptopGltf?.scenes ?? []), ...(outsideGltf?.scenes ?? []), ...(circuitGltf?.scenes ?? []), ...(colombiaGltf?.scenes ?? [])];
+      // Parts of the outside in their own files: read and merged as one outside.
+      const extras = [circuitGltf, colombiaGltf, boxingGltf, univalleGltf];
+      const scenes = [...gltf.scenes, ...(roomGltf?.scenes ?? []), ...(laptopGltf?.scenes ?? []), ...(outsideGltf?.scenes ?? []), ...extras.flatMap((extra) => extra?.scenes ?? [])];
       if (this.disposed) {
         disposeObjects(scenes);
         return;
@@ -448,8 +470,7 @@ export class CharacterViewer {
       this.model = gltf.scene;
       if (roomGltf) {
         // The circuit is read as part of the outside: its pieces, decor, floors and zones join the outside's.
-        if (outsideGltf && circuitGltf) outsideGltf.scene.add(circuitGltf.scene);
-        if (outsideGltf && colombiaGltf) outsideGltf.scene.add(colombiaGltf.scene);
+        for (const extra of extras) if (outsideGltf && extra) outsideGltf.scene.add(extra.scene);
         if (outsideGltf) await this.addOutside(outsideGltf.scene, graffitiPaintings);
         this.placeInRoom(roomGltf.scene);
         // Everything receives shadows; only furniture casts them. Floor, walls, posters and the
@@ -518,7 +539,7 @@ export class CharacterViewer {
       this.scene.add(this.model);
       if (this.room) this.scene.add(this.room);
       if (this.outside) this.scene.add(this.outside);
-      for (const object of [this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.targetsView?.root, this.circuit?.root, this.graffiti?.root]) if (object) this.scene.add(object);
+      for (const object of [this.bags.length ? this.bagRoot : undefined, this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.targetsView?.root, this.circuit?.root, this.graffiti?.root]) if (object) this.scene.add(object);
       if (!this.ground) this.createFloor(this.mixer ? 0 : box.min.y);
       this.frameLights();
       this.cameraDistance = Math.max(this.bounds.length() * 2.5, 1);
@@ -742,6 +763,19 @@ export class CharacterViewer {
       flag.matrixWorld.decompose(flag.position, flag.quaternion, flag.scale);
       flag.removeFromParent();
     }
+    // The punching bags swing round their hooks: out of the merge, each keeping where it hangs.
+    if (data.bags.length) outside.updateMatrixWorld(true);
+    this.bags = data.bags.map((bag) => {
+      bag.object.matrixWorld.decompose(bag.object.position, bag.object.quaternion, bag.object.scale);
+      bag.object.removeFromParent();
+      bag.object.traverse((object) => {
+        if (object instanceof Mesh) object.castShadow = object.receiveShadow = false;
+      });
+      mergeStaticMeshes(bag.object);
+      this.bagRoot.add(bag.object);
+      return { bag, rest: bag.object.quaternion.clone() };
+    });
+    this.bagRoot.name = 'PunchBags';
     // The targets rock when hit: they leave the static scene too, drawn by their own view.
     const targets = outside.getObjectByName('Targets');
     targets?.removeFromParent();
@@ -768,8 +802,9 @@ export class CharacterViewer {
     this.staticShadows = pieceShadows;
     // The last slot is the office chair's.
     this.chairShadow = pieceShadows + this.pieceList.length + THROWN_SHADOWS;
-    // Then one slot per raining chick.
-    this.shadows = new BlobShadows(this.chairShadow + 1 + MAX_CHICKS, data.groundY);
+    // Then one slot per raining chick, then one per punching bag.
+    this.bagShadow = this.chairShadow + 1 + MAX_CHICKS;
+    this.shadows = new BlobShadows(this.bagShadow + this.bags.length, data.groundY);
     for (const [index, sign] of data.signs.entries()) {
       this.shadows.set(1 + index, sign.position.x, sign.position.z, sign.yaw, (sign.board?.width ?? 2) + 0.5, 0.55, 0.45);
     }
@@ -815,6 +850,8 @@ export class CharacterViewer {
       if (lane) this.targetLane = { minX: lane.position.x - lane.size[0] / 2, maxX: lane.position.x + lane.size[0] / 2, lineZ: lane.position.z + lane.line, depth: 3 };
     }
     this.bubble = new SeatBubble(this.host);
+    this.shout = new ShoutBurst(this.host);
+    this.shoutSpots = shoutSpots(data.decor);
     this.host.dataset.sign = 'none';
     this.host.dataset.signArea = 'none';
     this.host.dataset.letters = '0';
@@ -884,11 +921,13 @@ export class CharacterViewer {
     });
     try {
       const loose = this.pieceList.length - this.floorKeys.length;
-      const physics = await PropPhysics.load(this.pieceList.slice(0, loose), statics, groundY, discs);
+      const bags = this.bags.map(({ bag }) => ({ pivot: bag.pivot, centre: bag.centre, radius: bag.radius, length: bag.length, mass: bag.mass }));
+      const physics = await PropPhysics.load(this.pieceList.slice(0, loose), statics, groundY, discs, bags);
       if (this.disposed) return;
       physics.onTargetHit = this.onTargetHit;
       physics.onImpact = (impact) => {
-        const name = impact.source === 'laptop' ? 'laptop' : impact.source === 'chick' ? 'chirp' : pieceSound(this.pieceList[impact.source]);
+        const source = impact.source;
+        const name = source === 'laptop' ? 'laptop' : source === 'chick' ? 'chirp' : source === 'bag' ? 'rubber' : pieceSound(this.pieceList[source]);
         this.sound(name, impact.speed, impact.position);
       };
       physics.onBreak = () => this.sound('woodHeavy', 6);
@@ -1854,6 +1893,8 @@ export class CharacterViewer {
     this.graffiti?.setLanguage(getLanguage());
     this.targetsView?.paint();
     this.bubble?.setLanguage();
+    const shouting = this.shout?.current as ShoutId | undefined;
+    if (shouting) this.shout?.setWords(t(`shout.${shouting}`));
     this.notice = { text: '', until: 0 };
     if (this.sign) this.emitSign();
   };
@@ -1897,6 +1938,7 @@ export class CharacterViewer {
       this.reportLetters();
       this.checkTech();
     }
+    this.syncBags();
     this.targetsView?.update(delta, this.reducedMotion);
     this.updateReveal(delta);
     if (this.thrown.length || this.physics?.retired.length) this.syncThrown(delta);
@@ -1912,6 +1954,28 @@ export class CharacterViewer {
       this.shadows.hide(CHARACTER_SHADOW);
     }
     this.shadows.flush();
+  }
+
+  /**
+   * The punching bags turn round their hooks with their bodies (hanging still until the physics is loaded), their blob
+   * shadows under the bags' middles; `data-bags` is each bag's swing from the vertical, in degrees.
+   */
+  private syncBags(): void {
+    if (!this.bags.length || !this.shadows) return;
+    const swing: string[] = [];
+    for (const [index, { bag, rest }] of this.bags.entries()) {
+      const turn = this.physics?.bags[index]?.quaternion;
+      const swung = turn ? new Quaternion(turn.x, turn.y, turn.z, turn.w) : new Quaternion();
+      bag.object.quaternion.copy(swung).multiply(rest);
+      const down = new Vector3(0, -bag.centre, 0).applyQuaternion(swung);
+      this.shadows.set(this.bagShadow + index, bag.pivot.x + down.x, bag.pivot.z + down.z, 0, 0.75, 0.75, 0.4);
+      swing.push(`${bag.id}:${Math.round(Math.acos(Math.min(1, -down.y / bag.centre)) * 180 / Math.PI)}`);
+    }
+    const value = swing.join(',');
+    if (value !== this.bagSwing) {
+      this.bagSwing = value;
+      this.host.dataset.bags = value;
+    }
   }
 
   /** Floor keys go down under the character's feet and spring back up when it steps off (not while airborne). */
@@ -1959,6 +2023,25 @@ export class CharacterViewer {
     const width = this.host.clientWidth;
     const height = this.host.clientHeight;
     this.bubble.update(true, (point.x + 1) / 2 * width, (1 - point.y) / 2 * height);
+  }
+
+  /**
+   * The comic burst beside the head while the character walks near a landmark of the about-me plaza (not seated or
+   * riding), placed on the screen each frame; it rises over the seat bubble when both show.
+   */
+  private updateShout(): void {
+    if (!this.shout || !this.model) return;
+    const { x, z } = this.model.position;
+    const free = this.interaction?.phase === 'free' && !this.riding;
+    const id = free ? shoutAt({ x, z }, this.shoutSpots, this.shout.current as ShoutId | undefined) : undefined;
+    if (!id) {
+      this.shout.update(undefined);
+      return;
+    }
+    if (id !== this.shout.current) this.sound('pop');
+    const point = this.model.position.clone().setY(this.model.position.y + BUBBLE_HEIGHT).project(this.camera);
+    const lift = this.host.dataset.bubble === 'shown' ? 44 : 0;
+    this.shout.update(id, t(`shout.${id}`), (point.x + 1) / 2 * this.host.clientWidth, (1 - point.y) / 2 * this.host.clientHeight - lift);
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
@@ -2077,19 +2160,51 @@ export class CharacterViewer {
       this.controls.target.copy(center);
     }
     this.camera.position.copy(center).add(directions[preset].normalize().multiplyScalar(this.cameraDistance));
-    // The fixed room camera keeps the widest zoom of the orbit.
-    this.camera.zoom = this.inRoom && this.cameraMode === 'follow' && this.controls ? this.controls.minZoom : 1;
+    // The fixed room camera starts at the widest zoom of the orbit (a little closer on a touch screen), or the one chosen.
+    this.zoomGoal = undefined;
+    this.camera.zoom = this.inRoom && this.cameraMode === 'follow' && this.controls ? this.followZoom(this.controls) : 1;
     this.camera.lookAt(center);
     this.camera.updateProjectionMatrix();
     this.controls?.update();
     if (this.controls) this.controls.enableDamping = damping ?? !this.reducedMotion;
   }
 
+  private followZoom(controls: OrbitControls): number {
+    const zoom = this.roomZoom ?? (this.options.touch ? TOUCH_ZOOM : controls.minZoom);
+    return Math.min(controls.maxZoom, Math.max(controls.minZoom, zoom));
+  }
+
+  /** Zoom in (factor > 1) or out within the orbit's limits; in the room it eases there and the follow camera keeps it. */
   zoom(factor: number): void {
-    if (!this.ready || this.contextLost || !this.controls || (this.inRoom && this.cameraMode === 'follow')) return;
-    this.camera.zoom = Math.min(this.controls.maxZoom, Math.max(this.controls.minZoom, this.camera.zoom * factor));
+    if (!this.ready || this.contextLost || !this.controls) return;
+    const { minZoom, maxZoom } = this.controls;
+    const goal = Math.min(maxZoom, Math.max(minZoom, (this.zoomGoal ?? this.camera.zoom) * factor));
+    if (this.inRoom) this.roomZoom = goal;
+    if (!this.inRoom || this.reducedMotion) {
+      this.zoomGoal = undefined;
+      this.setZoom(goal);
+    } else {
+      this.zoomGoal = goal;
+    }
+  }
+
+  private setZoom(zoom: number): void {
+    this.camera.zoom = zoom;
     this.camera.updateProjectionMatrix();
-    this.controls.update();
+    this.controls?.update();
+    this.onCameraChange();
+  }
+
+  /** Ease the camera towards the zoom the buttons asked for. */
+  private easeZoom(delta: number): void {
+    if (this.zoomGoal === undefined) return;
+    const gap = this.zoomGoal - this.camera.zoom;
+    if (Math.abs(gap) < 1e-3) {
+      this.setZoom(this.zoomGoal);
+      this.zoomGoal = undefined;
+      return;
+    }
+    this.setZoom(this.camera.zoom + gap * (1 - Math.exp(-delta * ZOOM_RATE)));
   }
 
   setLight(preset: LightPreset): void {
@@ -2371,6 +2486,7 @@ export class CharacterViewer {
     }
     if (this.ready && this.room) {
       this.followCharacter(delta);
+      this.easeZoom(delta);
       this.updateSounds(delta);
     }
     this.controls?.update();
@@ -2379,6 +2495,7 @@ export class CharacterViewer {
     this.updateHover();
     this.reportSign();
     this.updateBubble();
+    this.updateShout();
     this.updateChargeMeter();
     if (this.ground && this.model) this.ground.update(this.camera, this.model.position);
     this.renderer.render(this.scene, this.camera);
@@ -2423,6 +2540,8 @@ export class CharacterViewer {
   };
 
   private readonly onOrbit = (): void => {
+    // A wheel or pinch in the free camera takes over from the zoom buttons.
+    this.zoomGoal = undefined;
     this.events.orbit();
   };
 
@@ -2476,6 +2595,7 @@ export class CharacterViewer {
     this.graffiti?.dispose();
     this.targetsView?.dispose();
     this.bubble?.dispose();
+    this.shout?.dispose();
     this.chargeMeter?.dispose();
     this.clearThrown();
     this.chickRain?.dispose();

@@ -15,4 +15,13 @@ each mark belongs to its owner and keeps its owner's terms.
 | playwright.svg | https://playwright.dev/img/playwright-logo.svg |
 | blender.png | `square/blender_icon_512x512.png` from https://download.blender.org/branding/blender_logo_kit.zip (unaltered, refers to Blender only) |
 | gltf.svg | https://raw.githubusercontent.com/KhronosGroup/glTF/main/specification/figures/glTF_RGB_June16.svg |
+| javascript.svg | https://raw.githubusercontent.com/voodootikigod/logo.js/master/js.svg (MIT, notice inside the file); its "JS" is on the yellow punching bag |
 | openvdb.svg | https://raw.githubusercontent.com/AcademySoftwareFoundation/artwork/main/projects/openvdb/icon/color/openvdb-icon-color.svg |
+
+## Punching bags and the Universidad del Valle logo
+
+`node scripts/logo_outlines.ts` writes `logo-outlines.json`: the "JS" of javascript.svg and the "TS" of
+typescript.svg flattened into outlines (used unaltered, only simplified to about a millimetre at the bags' size) for
+`scripts/blender/create_boxing.py`, and the Universidad del Valle logo for `scripts/blender/create_univalle.py`. The
+Univalle logo has no file here: its shapes (red disc, white U and V with the red fillet between them) were measured on
+the image the user supplied on 2026-10-10 and are written as numbers in `UNIVALLE` in that script.

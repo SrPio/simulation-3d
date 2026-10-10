@@ -1,0 +1,34 @@
+/* Comic burst beside the character's head: placed by transform on the head point, animated on its body. */
+.shout-burst { position: absolute; left: 0; top: 0; z-index: 1; pointer-events: none; will-change: transform; }
+.shout-burst-body {
+  position: absolute; left: 6px; bottom: 0; display: grid; place-items: center; padding: 42px 72px;
+  transform: rotate(-5deg); transform-origin: 0% 100%;
+}
+.shout-burst-shape { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.shout-burst-shadow { fill: #241a2f; opacity: 0.55; }
+.shout-burst-fill { fill: #ffd84a; stroke: #241a2f; stroke-width: 3; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.shout-burst-text {
+  position: relative; display: grid; justify-items: center; gap: 2px; max-width: 230px; text-align: center; text-transform: uppercase;
+  font: 700 13px/1.1 Bahnschrift, 'Barlow Semi Condensed', 'DIN Alternate', 'Segoe UI', system-ui, sans-serif; letter-spacing: 0.3px;
+  color: #2a1440; transform: skewX(-6deg);
+}
+.shout-burst-lead { font-size: 19px; letter-spacing: 0.6px; color: #c0182b; text-shadow: 1px 1px 0 #fff3b8; white-space: nowrap; }
+.shout-burst[data-state='in'] .shout-burst-body { animation: shout-in 420ms cubic-bezier(.2, 1.6, .4, 1) both, shout-beat 1.6s ease-in-out 420ms infinite; }
+.shout-burst[data-state='out'] .shout-burst-body { animation: shout-out 180ms ease-in both; }
+@keyframes shout-in {
+  from { opacity: 0; transform: rotate(-24deg) scale(0.2); }
+  to { opacity: 1; transform: rotate(-5deg) scale(1); }
+}
+@keyframes shout-beat {
+  0%, 100% { transform: rotate(-5deg) scale(1); }
+  50% { transform: rotate(-4deg) scale(1.04); }
+}
+@keyframes shout-out {
+  from { opacity: 1; transform: rotate(-5deg) scale(1); }
+  to { opacity: 0; transform: rotate(4deg) scale(0.6); }
+}
+@media (max-width: 520px) {
+  .shout-burst-body { padding: 34px 54px; }
+  .shout-burst-text { max-width: 170px; font-size: 11px; }
+  .shout-burst-lead { font-size: 15px; }
+}

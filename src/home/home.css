@@ -56,6 +56,18 @@ h1, p { margin: 0; }
 .menu-toggle[aria-expanded='true'] .menu-icon span:nth-child(2) { opacity: 0; }
 .menu-toggle[aria-expanded='true'] .menu-icon span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
 
+/* Zoom in and out under the menu button: round-cornered keys with a magnifying glass, no text. */
+.zoom-controls { position: absolute; z-index: 2; top: 70px; right: 16px; display: grid; gap: 8px; }
+.zoom-controls[hidden] { display: none; }
+.zoom-button {
+  display: grid; place-items: center; width: 46px; height: 46px; border: 1px solid var(--edge); border-radius: 10px; color: #e6dcf1;
+  background: var(--panel); box-shadow: 0 1px 0 #ffffff12 inset, 0 10px 24px #00000055; backdrop-filter: blur(6px);
+  transition: background-color 160ms ease, transform 120ms ease;
+}
+.zoom-button:hover { background-color: #2a2135f0; }
+.zoom-button:active { transform: translateY(2px); }
+.zoom-icon { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+
 .room-tools {
   top: 70px; right: 16px; display: grid; gap: 12px; padding: 14px; width: max-content; max-width: calc(100% - 32px);
   transform-origin: top right; animation: tools-in 200ms cubic-bezier(.2, 1.2, .4, 1) both;
@@ -93,6 +105,7 @@ h1, p { margin: 0; }
 @media (max-width: 760px) {
   .room-bar { top: 12px; left: 12px; }
   .menu-toggle { top: 12px; right: 12px; }
+  .zoom-controls { top: 66px; right: 12px; }
   .room-tools { top: 66px; left: 12px; right: 12px; width: auto; max-width: none; }
   .tool-group { grid-template-columns: 84px auto; }
 }

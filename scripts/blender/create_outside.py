@@ -424,6 +424,38 @@ def tower_layers(layers):
     return bricks
 
 
+def pinwheel_layers(layers):
+    """A hollow square tower: four bricks round a square hole like a pinwheel, the pinwheel mirrored on every other layer."""
+    pitch = BRICK_W / 2 + BRICK_GAP / 2
+    across = BRICK_D / 2 + BRICK_GAP / 2
+    # (x, z, along X) for each brick of the even layers; the odd layers mirror x.
+    wheel = [(across, pitch, True), (-pitch, across, False), (-across, -pitch, True), (pitch, -across, False)]
+    bricks = []
+    for layer in range(layers):
+        side = 1 if layer % 2 == 0 else -1
+        for x, z, along in wheel:
+            bricks.append((side * x, layer, z, 0.0 if along else math.pi / 2))
+    return bricks
+
+
+def stair_layers(steps):
+    """A staircase: each layer one brick shorter than the one under it, all flush on the right."""
+    pitch = BRICK_W + BRICK_GAP
+    return brick_layers([(steps - k, k * pitch / 2) for k in range(steps)])
+
+
+def twist_layers(layers, turn=math.radians(20)):
+    """A twisting column: two bricks side by side per layer (a square), each layer turned a little further round the
+    middle (turned like frame(): an offset (0, z) goes to (z sin, z cos))."""
+    half = BRICK_D / 2 + BRICK_GAP / 2
+    bricks = []
+    for layer in range(layers):
+        angle = layer * turn
+        for side in (-1, 1):
+            bricks.append((side * half * math.sin(angle), layer, side * half * math.cos(angle), angle))
+    return bricks
+
+
 def build_playground(root):
     rng = random.Random(4)
     key_mat = room.material('KeyCap', (0.86, 0.83, 0.94), 0.45)
@@ -481,12 +513,16 @@ def build_playground(root):
           prop='ball', group='bowling', mass=MASS['ball'], radius=BALL_RADIUS, box=[2 * BALL_RADIUS] * 3)
     room.anchor('Zone_Bowling', at(play(LANE_X - 2.4, BALL_Z)), root, BLOCK_YAW, zone='reset', target='bowling', area=RESET_AREA)
 
-    # Bricks: a running-bond wall, a stepped pyramid and a square tower.
+    # Bricks: a running-bond wall, a stepped pyramid and a square tower; then (added after them, so the first stacks keep
+    # their bricks' names) a hollow pinwheel tower, a staircase and a twisting column round the boxing corner.
     group = room.anchor('Bricks', (0, 0, 0), root)
     stacks = [
         ((1.8 + BRICKS_SHIFT, -1.6), 0.0, brick_layers([(6, 0.0), (5, 0.0)] * 2 + [(6, 0.0)])),
         ((5.8 + BRICKS_SHIFT, 0.6), 0.0, brick_layers([(5, 0.0), (4, 0.0), (3, 0.0), (2, 0.0), (1, 0.0)])),
         ((2.2 + BRICKS_SHIFT, 2.6), 0.0, tower_layers(8)),
+        ((1.6, -4.9), 0.0, pinwheel_layers(4)),
+        ((7.9, -4.7), 0.0, stair_layers(4)),
+        ((11.4, -2.4), 0.0, twist_layers(7)),
     ]
     count = 0
     for (sx, sz), turn, layout in stacks:
@@ -510,6 +546,7 @@ TECH_ATLAS = TEXTURES / 'tech-atlas.png'
 ABOUT, ABOUT_SIZE = (30.25, 2.5), (17.5, 16.5)
 BUST = (30.2, 2.25)
 COLOMBIA = (25.2, 2.25)                          # the Colombian corner (create_colombia.py, its own GLB)
+UNIVALLE = (35.2, 2.25)                          # the Universidad del Valle logo, across the bust from it (create_univalle.py)
 PATH_RADIUS = 2.6                                # painted ring round the bust
 ABOUT_BENCHES = [(30.2, 5.85), (26.6, 5.25), (33.8, 5.25)]   # along X, facing the bust
 ABOUT_TREES = [(23.0, -3.75, 0), (37.4, -3.75, 1), (23.0, 8.75, 1), (37.4, 8.75, 0)]
@@ -537,8 +574,11 @@ TECH_ROWS = [['typescript', 'node', 'pnpm', 'vite'], ['three', 'github', 'playwr
 TECH_ATLAS_COLUMNS = 5
 # The playground's own floor, bordered like the about-me plaza, around its four lanes and their reset zones.
 PLAY_AREA, PLAY_AREA_SIZE = (25.0, 33.0), (42.0, 16.0)
-# Dashed lines across the playground between its games (three.js x): targets | bowling | bricks | tech tower.
+# Dashed lines across the playground between its games (three.js x): targets | bowling | bricks and boxing | tech tower.
 PLAY_DIVIDERS = [12.8, 21.7, 34.7]
+# The boxing corner at the front of the bricks' part of the playground: a gantry with two punching bags
+# (create_boxing.py, its own GLB).
+BOXING = (28.0, 38.6)
 MASS.update({'crate': 2.0, 'cone': 0.5, 'tech': 0.9})
 TREES = [(-15.5, 10.5, 0), (-11.5, 12.0, 1), (-16.0, 15.0, 0), (-12.5, 19.5, 1), (-15.5, 21.5, 0),   # park
          (43.2, 1.8, 1), (46.8, 3.2, 0), (43.6, 6.4, 0), (47.0, 8.0, 1), (44.4, 9.8, 0),             # forest

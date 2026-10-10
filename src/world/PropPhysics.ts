@@ -20,8 +20,15 @@ export type StaticBox = { center: Vec; half: [number, number, number]; yaw: numb
 export type TargetDisc = { center: Vec; radius: number; yaw: number };
 /** A thrown laptop hitting a target disc: which target, how far from its centre (in the disc's plane) and the laptop. */
 export type TargetHit = { target: number; distance: number; laptop: ThrownLaptop };
-/** Something hit a loose piece (its index), a thrown laptop or a chick this hard (m/s along the contact normal), for its sound. */
-export type Impact = { source: number | 'laptop' | 'chick'; speed: number; position: Vec };
+/** Something hit a loose piece (its index), a thrown laptop, a chick or a punching bag this hard (m/s along the contact normal), for its sound. */
+export type Impact = { source: number | 'laptop' | 'chick' | 'bag'; speed: number; position: Vec };
+/**
+ * A punching bag: a cylinder (`radius`, `length`) hanging from a fixed hook at `pivot`, its middle `centre` below it.
+ * It only swings like a pendulum round the hook: a ball joint holds it there and its spin about its own axis is taken away.
+ */
+export type BagBody = { pivot: Vec; centre: number; radius: number; length: number; mass: number };
+/** A blow sets a bag's middle moving at this speed (m/s, by power): a tap nudges it, a full charge swings it about 33°. */
+export const BAG_STRIKE = { min: 0.6, max: 2.8 };
 /** Impacts slower than this make no sound and are not reported (resting contacts jitter well below it). */
 const IMPACT_MIN = 0.5;
 type CollideEvent = { body: BodyType; contact: { getImpactVelocityAlongNormal(): number } };
@@ -91,6 +98,8 @@ const SETTINGS: Record<PieceGroup | 'laptop' | 'chick', Settings> = {
   laptop: { material: 'laptop', sleepSpeed: 0.15, angularDamping: 0.3, linearDamping: 0.05 },
   chick: { material: 'chick', sleepSpeed: 0.12, angularDamping: 0.9, linearDamping: 0.2 },
 };
+/** A heavy bag swings a few times and settles: damped enough to stop within seconds, asleep once nearly still. */
+const BAG: Settings = { material: 'bag', sleepSpeed: 0.05, angularDamping: 0.45, linearDamping: 0.5 };
 /** The ball rolls: it keeps less damping than the pins but still comes to rest on the flat ground. */
 const BALL: Settings = { material: 'ball', sleepSpeed: 0.12, angularDamping: 0.12, linearDamping: 0.05 };
 const CONTACTS: [string, string, number, number][] = [
@@ -100,6 +109,8 @@ const CONTACTS: [string, string, number, number][] = [
   ['ball', 'ground', 0.4, 0.15], ['laptop', 'ground', 0.5, 0.15],
   // Chicks bounce a little off the ground and off each other.
   ['chick', 'ground', 0.6, 0.35], ['chick', 'chick', 0.4, 0.3],
+  // A bag is soft: what hits it hardly bounces.
+  ['bag', 'bag', 0.5, 0.05], ['bag', 'laptop', 0.5, 0.05], ['bag', 'chick', 0.5, 0.1],
 ];
 
 /**
@@ -118,6 +129,9 @@ export class PropPhysics {
   /** Chicks in the world, oldest first, and the ones taken out (past MAX_CHICKS) for the viewer to shrink away; it empties the list. */
   readonly chicks: BodyType[] = [];
   readonly retiredChicks: BodyType[] = [];
+  /** The punching bags, in the order given, and where each one hangs at rest. */
+  readonly bags: BodyType[] = [];
+  private readonly bagRest: BagBody[] = [];
   private readonly cannon: Cannon;
   private readonly rest: PieceBody[];
   private readonly groups: PieceGroup[];
@@ -144,12 +158,12 @@ export class PropPhysics {
   private readonly chair: BodyType;
   private chairActive = false;
 
-  static async load(pieces: readonly PieceBody[], statics: readonly StaticBox[], groundY: number, targets: readonly TargetDisc[] = []): Promise<PropPhysics> {
-    return new PropPhysics(await import('cannon-es'), pieces, statics, groundY, targets);
+  static async load(pieces: readonly PieceBody[], statics: readonly StaticBox[], groundY: number, targets: readonly TargetDisc[] = [], bags: readonly BagBody[] = []): Promise<PropPhysics> {
+    return new PropPhysics(await import('cannon-es'), pieces, statics, groundY, targets, bags);
   }
 
-  constructor(cannon: Cannon, pieces: readonly PieceBody[], statics: readonly StaticBox[], groundY: number, targets: readonly TargetDisc[] = []) {
-    const { Body, Box, ContactMaterial, Cylinder, Material, Plane, SAPBroadphase, Sphere, Vec3, World } = cannon;
+  constructor(cannon: Cannon, pieces: readonly PieceBody[], statics: readonly StaticBox[], groundY: number, targets: readonly TargetDisc[] = [], bags: readonly BagBody[] = []) {
+    const { Body, Box, ContactMaterial, Cylinder, Material, Plane, PointToPointConstraint, SAPBroadphase, Sphere, Vec3, World } = cannon;
     this.cannon = cannon;
     // Copied field by field: three.js vectors and quaternions keep their values in accessors.
     this.rest = pieces.map(({ position: p, quaternion: q, half, shape, mass, group, flaps, joint }) => ({
@@ -163,7 +177,7 @@ export class PropPhysics {
     this.world.broadphase = new SAPBroadphase(this.world);
     // More solver passes: thin pieces resting on an edge and stacked bricks settle and sleep instead of rocking forever.
     (this.world.solver as unknown as { iterations: number }).iterations = 20;
-    for (const name of ['ground', 'letter', 'brick', 'pin', 'ball', 'laptop', 'chick']) this.materials.set(name, new Material(name));
+    for (const name of ['ground', 'letter', 'brick', 'pin', 'ball', 'laptop', 'chick', 'bag']) this.materials.set(name, new Material(name));
     this.world.defaultContactMaterial.friction = 0.4;
     this.world.defaultContactMaterial.restitution = 0.1;
     for (const [a, b, friction, restitution] of CONTACTS) {
@@ -221,6 +235,21 @@ export class PropPhysics {
       this.bodies.push(body);
       this.flaps.push((piece.flaps ?? []).map((at) => this.addFlap(body, at)));
     }
+    // Punching bags: each hangs by a ball joint from a fixed hook (a static body with no shape).
+    for (const bag of bags) {
+      const rest = { pivot: { x: bag.pivot.x, y: bag.pivot.y, z: bag.pivot.z }, centre: bag.centre, radius: bag.radius, length: bag.length, mass: bag.mass };
+      const hook = new Body({ type: Body.STATIC });
+      hook.position.set(rest.pivot.x, rest.pivot.y, rest.pivot.z);
+      this.world.addBody(hook);
+      const body = new Body({ mass: rest.mass, material: this.materials.get(BAG.material), shape: new Cylinder(rest.radius, rest.radius, rest.length, 12) });
+      this.configure(body, BAG);
+      body.collisionFilterGroup = GROUP.piece;
+      body.addEventListener('collide', (event: CollideEvent) => this.report('bag', body, event));
+      this.world.addBody(body);
+      this.world.addConstraint(new PointToPointConstraint(body, new Vec3(0, rest.centre, 0), hook, new Vec3(0, 0, 0)));
+      this.bags.push(body);
+      this.bagRest.push(rest);
+    }
     this.pusher = new Body({ type: Body.KINEMATIC });
     for (const y of PUSHER_SPHERES) this.pusher.addShape(new Sphere(PUSHER_RADIUS), new Vec3(0, y, 0));
     this.pusher.allowSleep = false;
@@ -241,7 +270,26 @@ export class PropPhysics {
     this.world.addEventListener('postStep', this.limitLids);
     this.world.addEventListener('postStep', this.limitFlaps);
     this.world.addEventListener('postStep', this.breakJoints);
+    this.world.addEventListener('postStep', this.swingOnly);
     this.reset();
+  }
+
+  /** A bag only swings: the spin about its own (hanging) axis is taken away after every step. */
+  private readonly swingOnly = (): void => {
+    for (const body of this.bags) {
+      const axis = body.quaternion.vmult(new this.cannon.Vec3(0, 1, 0));
+      const spin = body.angularVelocity.dot(axis);
+      if (spin) body.angularVelocity.vsub(axis.scale(spin), body.angularVelocity);
+    }
+  };
+
+  /** A bag hanging still under its hook. */
+  private hang(body: BodyType, rest: BagBody): void {
+    body.position.set(rest.pivot.x, rest.pivot.y - rest.centre, rest.pivot.z);
+    body.quaternion.set(0, 0, 0, 1);
+    body.velocity.setZero();
+    body.angularVelocity.setZero();
+    body.sleep();
   }
 
   /** How many fence planks have broken loose from a leg. */
@@ -385,6 +433,7 @@ export class PropPhysics {
       this.retired.length = 0;
       for (const chick of this.chicks) this.world.removeBody(chick);
       this.chicks.length = 0;
+      for (const [index, body] of this.bags.entries()) this.hang(body, this.bagRest[index]);
       this.retiredChicks.length = 0;
       // The character is put back too: its pusher jumps there on the next step instead of sweeping across the pieces
       // just put back (at the speed of that jump it would fling them away).
@@ -460,8 +509,9 @@ export class PropPhysics {
     const length = Math.hypot(direction.x, direction.z) || 1;
     const along = { x: direction.x / length, z: direction.z / length };
     const speed = STRIKE_SPEED.min + (STRIKE_SPEED.max - STRIKE_SPEED.min) * Math.min(Math.max(power, 0), 1);
+    const bagSpeed = BAG_STRIKE.min + (BAG_STRIKE.max - BAG_STRIKE.min) * Math.min(Math.max(power, 0), 1);
     let hits = 0;
-    for (const body of [...this.bodies, ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid]), ...this.chicks]) {
+    for (const body of [...this.bodies, ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid]), ...this.chicks, ...this.bags]) {
       // Only what is in front of the character: a fist or foot can reach past a piece it is pressed against.
       if ((body.position.x - from.x) * along.x + (body.position.z - from.z) * along.z <= 0) continue;
       // Distance to the body's bounds, not its centre: a kick at hip height reaches the top of a short letter.
@@ -471,6 +521,14 @@ export class PropPhysics {
         Math.min(Math.max(point.x, low.x), high.x), Math.min(Math.max(point.y, low.y), high.y), Math.min(Math.max(point.z, low.z), high.z));
       const distance = Math.hypot(touch.x - point.x, touch.y - point.y, touch.z - point.z);
       if (distance > STRIKE_RADIUS) continue;
+      if (this.bags.includes(body)) {
+        // A bag is pushed through its middle, straight along the blow: it swings away from the character and back.
+        const push = bagSpeed * (1 - 0.3 * distance / STRIKE_RADIUS) * body.mass;
+        body.wakeUp();
+        body.applyImpulse(new Vec3(along.x * push, 0, along.z * push));
+        hits++;
+        continue;
+      }
       const change = speed * (1 - 0.5 * distance / STRIKE_RADIUS);
       body.wakeUp();
       // Pushed where the blow touches it, so it also spins.
@@ -577,13 +635,14 @@ export class PropPhysics {
     return this.bodies.some((body) => body.sleepState !== asleep)
       || this.flaps.some((flaps) => flaps.some((flap) => flap.body.sleepState !== asleep))
       || this.laptops.some((laptop) => laptop.base.sleepState !== asleep || laptop.lid.sleepState !== asleep)
-      || this.chicks.some((chick) => chick.sleepState !== asleep);
+      || this.chicks.some((chick) => chick.sleepState !== asleep)
+      || this.bags.some((bag) => bag.sleepState !== asleep);
   }
 
   private near(pusher: Pusher): boolean {
     const close = (body: BodyType) => Math.abs(body.position.x - pusher.x) < WAKE_DISTANCE && Math.abs(body.position.z - pusher.z) < WAKE_DISTANCE
       && Math.hypot(body.position.x - pusher.x, body.position.z - pusher.z) < WAKE_DISTANCE;
-    return this.bodies.some(close) || this.laptops.some((laptop) => close(laptop.base)) || this.chicks.some(close);
+    return this.bodies.some(close) || this.laptops.some((laptop) => close(laptop.base)) || this.chicks.some(close) || this.bags.some(close);
   }
 
   /**
@@ -596,7 +655,7 @@ export class PropPhysics {
     const movers: { x: number; z: number; reach: number }[] = [];
     // The character only wakes what it walks into: standing still next to a piece lets it sleep.
     if (pusher && !this.idle && Math.hypot(pusher.x - this.pusher.position.x, pusher.z - this.pusher.position.z) > 0.002) movers.push({ x: pusher.x, z: pusher.z, reach: 0.8 });
-    const moving = [...this.bodies, ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid]), ...this.chicks];
+    const moving = [...this.bodies, ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid]), ...this.chicks, ...this.bags];
     for (const body of moving) {
       if (body.sleepState === asleep) continue;
       const speed = body.velocity.length();
@@ -618,7 +677,7 @@ export class PropPhysics {
         leg.wakeUp();
       }
     }
-    for (const body of [...this.bodies, ...this.chicks]) {
+    for (const body of [...this.bodies, ...this.chicks, ...this.bags]) {
       if (body.sleepState !== asleep) continue;
       for (const mover of movers) {
         if (Math.abs(body.position.x - mover.x) < mover.reach && Math.abs(body.position.z - mover.z) < mover.reach) {

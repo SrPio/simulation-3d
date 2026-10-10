@@ -79,7 +79,7 @@ test('dashed dividers run across the playground between its games, clear of ever
     for (const zone of data.zones.filter((entry) => inside(entry.position))) assert.ok(Math.abs(zone.position.x - x) > 1.2, `${zone.id} clear of ${x}`);
     for (const target of data.targets) assert.ok(Math.abs(target.position.x - x) > 1, `target ${target.index} clear of ${x}`);
   }
-  // Each game on its own side: targets | bowling | bricks | tech.
+  // Each game on its own side: targets | bowling | bricks and boxing (boxing.glb, tests/boxing.test.ts) | tech.
   const lane = (group: string) => data.props.filter((entry) => entry.group === group && inside(entry.position)).map((entry) => entry.position.x);
   const between = (values: number[], lo: number, hi: number) => values.every((x) => x > lo && x < hi);
   assert.ok(between(data.targets.map((target) => target.position.x), -Infinity, xs[0]));

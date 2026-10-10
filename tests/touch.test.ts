@@ -37,9 +37,11 @@ test('the zone button names the zone: a short visit for each sign, reset for the
   assert.equal(zoneAction('somewhere')!.key, 'touch.open', 'an unknown sign falls back to Open');
 });
 
-test('the pedal arrows point up and down inside the button box', () => {
+test('the pedal and steering arrows point their way inside the button box', () => {
   const points = (d: string) => [...d.matchAll(/(\d+) (\d+)/g)].map((m) => [Number(m[1]), Number(m[2])]);
   for (const d of Object.values(PEDAL_ARROWS)) for (const [x, y] of points(d)) assert.ok(x >= 0 && x <= 100 && y >= 0 && y <= 100);
   assert.deepEqual(points(PEDAL_ARROWS.up)[0], [50, 12], 'the up arrow tip is at the top');
   assert.deepEqual(points(PEDAL_ARROWS.down)[0], [50, 88], 'the down arrow tip is at the bottom');
+  assert.deepEqual(points(PEDAL_ARROWS.left)[0], [12, 50], 'the left arrow tip is on the left');
+  assert.deepEqual(points(PEDAL_ARROWS.right)[0], [88, 50], 'the right arrow tip is on the right');
 });

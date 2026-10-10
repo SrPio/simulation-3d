@@ -1,0 +1,56 @@
+/* The nitro gauge: the chair's soda bottle bottom right while riding, filled with cola up to the fuel left. */
+.nitro-gauge {
+  position: absolute; z-index: 2; right: 24px; bottom: 24px; height: 136px; aspect-ratio: 34 / 106; pointer-events: none;
+  opacity: 0; visibility: hidden; transform: translateY(14px) scale(0.92); transform-origin: 50% 100%;
+  transition: opacity 260ms ease, transform 260ms ease, visibility 0s linear 260ms;
+}
+.nitro-gauge.is-shown { opacity: 1; visibility: visible; transform: none; transition: opacity 260ms ease, transform 260ms ease; }
+.nitro-gauge svg { display: block; width: 100%; height: 100%; overflow: visible; filter: drop-shadow(0 6px 10px #00000080); }
+
+.nitro-glass { fill: #dcefe924; }
+.nitro-outline { fill: none; stroke: #eef8f4e0; stroke-width: 2px; stroke-linejoin: round; vector-effect: non-scaling-stroke; transition: stroke 200ms ease; }
+.nitro-shine { fill: none; stroke: #ffffff55; stroke-width: 2.2; stroke-linecap: round; }
+.nitro-mark { stroke: #eef8f466; stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+.nitro-cola { fill: url(#nitro-cola-fill); animation: nitro-wave 1.6s linear infinite; }
+.nitro-foam { fill: #ecd9b3; opacity: 0; transition: opacity 200ms ease; animation: nitro-wave 0.7s linear infinite reverse; }
+.nitro-liquid { transition: transform 120ms linear; }
+@keyframes nitro-wave { to { transform: translateX(16px); } }
+
+/* Bubbles rise through the cola while it sprays (fast) and while it refills (slowly); none when full or empty. */
+.nitro-bubble { fill: #f3dfb8aa; opacity: 0; }
+.nitro-gauge[data-state='boosting'] .nitro-bubble { animation: nitro-bubble 0.8s ease-in infinite; }
+.nitro-gauge[data-state='refilling'] .nitro-bubble { animation: nitro-bubble 2.2s ease-in infinite; }
+@keyframes nitro-bubble {
+  0% { opacity: 0; transform: translateY(0); }
+  15% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-78px); }
+}
+
+/* Spraying: foam on top and the bottle shaking. */
+.nitro-gauge[data-state='boosting'] .nitro-foam { opacity: 1; }
+.nitro-gauge[data-state='boosting'] svg { animation: nitro-shake 90ms linear infinite alternate; }
+@keyframes nitro-shake { from { transform: translateX(-1px) rotate(-2deg); } to { transform: translateX(1px) rotate(2deg); } }
+
+/* Too little left to light: the outline goes red and pulses until it refills past the mark. */
+.nitro-gauge[data-state='empty'] .nitro-outline { stroke: #ff7a6a; animation: nitro-empty 0.9s ease-in-out infinite; }
+@keyframes nitro-empty { 50% { stroke: #ff7a6a55; } }
+
+/* Full again: one soft glow. */
+.nitro-gauge[data-state='full'] svg { animation: nitro-full 700ms ease-out; }
+@keyframes nitro-full {
+  40% { filter: drop-shadow(0 6px 10px #00000080) drop-shadow(0 0 12px #ffd7a0cc); transform: scale(1.06); }
+}
+
+/* Touch screens: smaller, under the zoom-out button (centred on its 46 px), where it shows best; hidden with the menu open. */
+:root[data-touch='true'] .nitro-gauge {
+  --gauge: 72px; top: 182px; bottom: auto; height: var(--gauge); width: calc(var(--gauge) * 34 / 106);
+  right: calc(16px + (46px - var(--gauge) * 34 / 106) / 2); transform-origin: 50% 0;
+}
+@media (max-width: 760px) {
+  :root[data-touch='true'] .nitro-gauge { top: 178px; right: calc(12px + (46px - var(--gauge) * 34 / 106) / 2); }
+}
+/* Landscape phones: shorter, so it ends above the riding buttons at the bottom right. */
+@media (max-height: 460px) {
+  :root[data-touch='true'] .nitro-gauge { --gauge: 42px; }
+}
+:root[data-touch='true'] .zoom-controls[hidden] ~ .nitro-gauge { display: none; }

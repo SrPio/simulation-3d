@@ -136,3 +136,24 @@ test('a thrown laptop flies, swings its lid within the hinge and knocks a pin ov
   physics.reset();
   assert.equal(physics.laptops.length, 0, 'a full reset clears thrown laptops');
 });
+
+test('the new brick stacks (a hollow pinwheel tower, a staircase, a twisting column) stand on their own and fall when walked into', async () => {
+  const data = await outside();
+  const bricks = data.props.filter((piece) => piece.group === 'bricks');
+  // Brick names sort by their two digits: the stacks must stay under a hundred bricks.
+  assert.ok(bricks.length > 59 && bricks.length < 100, `${bricks.length} bricks`);
+  const added = bricks.slice(59);
+  const physics = physicsFor(bricks, data);
+  // Woken and left alone for a few seconds, nothing moves.
+  for (const body of physics.bodies) body.wakeUp();
+  for (let i = 0; i < 60 * 4; i++) physics.step(1 / 60, far);
+  for (const [k, brick] of added.entries()) {
+    assert.ok(physics.bodies[59 + k].position.distanceTo(brick.position as never) < 0.02, `${brick.name} stays put`);
+  }
+  // The twisting column: the highest brick, walked into, comes down.
+  const top = added.reduce((high, brick) => (brick.position.y > high.position.y ? brick : high));
+  assert.ok(top.position.y - data.groundY > 1.5, 'a tall column');
+  const index = bricks.indexOf(top);
+  for (let i = 0; i < 60 * 3; i++) physics.step(1 / 60, { x: top.position.x - 1.5 + (i / 60), y: data.groundY, z: top.position.z });
+  assert.ok(physics.bodies[index].position.y < top.position.y - 0.5, 'the column fell');
+});

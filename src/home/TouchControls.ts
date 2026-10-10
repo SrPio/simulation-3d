@@ -23,17 +23,19 @@ export function zoneAction(sign: string): { kind: 'link' | 'reset'; key: Message
   return { kind: 'link', key: (key in MESSAGES.es ? key : 'touch.open') as MessageKey };
 }
 
-/** Arrows for the office chair's pedals, in the same 100 × 100 box as the silhouettes. */
+/** Arrows for the office chair's pedals and steering, in the same 100 × 100 box as the silhouettes. */
 export const PEDAL_ARROWS = {
   up: 'M50 12 L86 52 L63 52 L63 88 L37 88 L37 52 L14 52 Z',
   down: 'M50 88 L86 48 L63 48 L63 12 L37 12 L37 48 L14 48 Z',
+  left: 'M12 50 L52 14 L52 37 L88 37 L88 63 L52 63 L52 86 Z',
+  right: 'M88 50 L48 14 L48 37 L12 37 L12 63 L48 63 L48 86 Z',
 } as const;
 
 /**
- * The buttons: what each does (a press, a hold kept until the finger lifts, the run switch, or a pedal held like W or S
- * while riding) and its figure.
+ * The buttons: what each does (a press, a hold kept until the finger lifts, the run switch, or, while riding, a pedal
+ * held like W or S or a steering arrow held like A or D) and its figure.
  */
-type Button = { id: string; label: MessageKey; icon?: ActionIcon; arrow?: keyof typeof PEDAL_ARROWS; press?: PressAction; hold?: HoldAction; run?: true; pedal?: 1 | -1 };
+type Button = { id: string; label: MessageKey; icon?: ActionIcon; arrow?: keyof typeof PEDAL_ARROWS; press?: PressAction; hold?: HoldAction; run?: true; pedal?: 1 | -1; steer?: 1 | -1 };
 const BUTTONS: Button[] = [
   { id: 'accelerate', arrow: 'up', label: 'touch.accelerate', pedal: 1 },
   { id: 'reverse', arrow: 'down', label: 'touch.reverse', pedal: -1 },
@@ -46,18 +48,27 @@ const BUTTONS: Button[] = [
   { id: 'run', icon: 'run', label: 'touch.run', run: true },
   { id: 'jump', icon: 'jump', label: 'touch.jump', hold: 'jump' },
 ];
+/** Riding, these take the joystick's place: left and right, like A and D (or the arrow keys). */
+const STEER: Button[] = [
+  { id: 'left', arrow: 'left', label: 'touch.left', steer: -1 },
+  { id: 'right', arrow: 'right', label: 'touch.right', steer: 1 },
+];
+/** The analog sources the riding buttons hold, let go of when the rider gets off. */
+const RIDING_SOURCES = ['pedal-accelerate', 'pedal-reverse', 'steer-left', 'steer-right'];
 
 /**
  * On-screen controls for touch screens: a joystick bottom left (forward is up the screen, a full push runs) and round
  * buttons bottom right, each showing the character's own silhouette doing the action. Buttons show only when they
  * make sense, read from the viewer's state on its host: walking about (jump, run, punch, kick, throw; sit near a seat),
- * seated (stand up, the laptop) or riding the office chair (accelerate and reverse, the nitro, stand up). Near a seat
+ * seated (stand up, the laptop) or riding the office chair (accelerate and reverse, the nitro, stand up; the joystick
+ * gives way to two arrows that steer left and right). Near a seat
  * the sit button glows on and off softly, as the speech bubble over the head asks for it. Standing in a sign's or a reset
  * zone, a short text button above them names what Enter does there (visit the site, reset the pieces).
  */
 export class TouchControls {
   readonly root: HTMLDivElement;
   private readonly stick: HTMLDivElement;
+  private readonly steer: HTMLDivElement;
   private readonly knob: HTMLDivElement;
   private readonly buttons = new Map<string, HTMLButtonElement>();
   private readonly zone: HTMLButtonElement;
@@ -82,39 +93,12 @@ export class TouchControls {
     this.stick.append(this.knob);
     const pad = document.createElement('div');
     pad.className = 'touch-buttons';
+    for (const button of BUTTONS) pad.append(this.makeButton(button));
+    this.steer = document.createElement('div');
+    this.steer.className = 'touch-steer';
+    this.steer.hidden = true;
+    for (const button of STEER) this.steer.append(this.makeButton(button));
     const signal = this.abort.signal;
-    for (const button of BUTTONS) {
-      const element = document.createElement('button');
-      element.type = 'button';
-      element.className = 'touch-button';
-      element.dataset.action = button.id;
-      element.innerHTML = `<svg viewBox="0 0 100 100" aria-hidden="true"><path fill-rule="evenodd" d="${button.arrow ? PEDAL_ARROWS[button.arrow] : ACTION_ICONS[button.icon!]}"></path></svg>`;
-      element.dataset.label = button.label;
-      if (button.run) element.setAttribute('aria-pressed', 'false');
-      const down = (event: PointerEvent) => {
-        event.preventDefault();
-        element.setPointerCapture(event.pointerId);
-        element.classList.add('is-down');
-        const keys = this.input();
-        if (!keys) return;
-        if (button.pedal) keys.setAnalog(`pedal-${button.id}`, { forward: button.pedal, right: 0, run: false });
-        else if (button.run) keys.toggleRun();
-        else if (button.hold) keys.press(button.hold);
-        else if (button.press) keys.press(button.press);
-      };
-      const up = () => {
-        element.classList.remove('is-down');
-        if (button.hold) this.input()?.release(button.hold);
-        if (button.pedal) this.input()?.setAnalog(`pedal-${button.id}`, undefined);
-      };
-      element.addEventListener('pointerdown', down, { signal });
-      element.addEventListener('pointerup', up, { signal });
-      element.addEventListener('pointercancel', up, { signal });
-      element.addEventListener('lostpointercapture', up, { signal });
-      element.addEventListener('contextmenu', (event) => event.preventDefault(), { signal });
-      this.buttons.set(button.id, element);
-      pad.append(element);
-    }
     this.zone = document.createElement('button');
     this.zone.type = 'button';
     this.zone.className = 'touch-zone';
@@ -131,7 +115,7 @@ export class TouchControls {
     const side = document.createElement('div');
     side.className = 'touch-side';
     side.append(this.zone, pad);
-    this.root.append(this.stick, side);
+    this.root.append(this.stick, this.steer, side);
     parent.append(this.root);
     this.stick.addEventListener('pointerdown', this.onStickDown, { signal });
     this.stick.addEventListener('pointermove', this.onStickMove, { signal });
@@ -139,6 +123,43 @@ export class TouchControls {
     this.observer = new MutationObserver(() => this.sync(host));
     this.observer.observe(host, { attributes: true, attributeFilter: ['data-interaction', 'data-prompt', 'data-sign', 'data-drive'] });
     this.sync(host);
+  }
+
+  /** One round button wired to the input. */
+  private makeButton(button: Button): HTMLButtonElement {
+    const signal = this.abort.signal;
+    const element = document.createElement('button');
+    element.type = 'button';
+    element.className = 'touch-button';
+    element.dataset.action = button.id;
+    element.innerHTML = `<svg viewBox="0 0 100 100" aria-hidden="true"><path fill-rule="evenodd" d="${button.arrow ? PEDAL_ARROWS[button.arrow] : ACTION_ICONS[button.icon!]}"></path></svg>`;
+    element.dataset.label = button.label;
+    if (button.run) element.setAttribute('aria-pressed', 'false');
+    const down = (event: PointerEvent) => {
+      event.preventDefault();
+      element.setPointerCapture(event.pointerId);
+      element.classList.add('is-down');
+      const keys = this.input();
+      if (!keys) return;
+      if (button.pedal) keys.setAnalog(`pedal-${button.id}`, { forward: button.pedal, right: 0, run: false });
+      else if (button.steer) keys.setAnalog(`steer-${button.id}`, { forward: 0, right: button.steer, run: false });
+      else if (button.run) keys.toggleRun();
+      else if (button.hold) keys.press(button.hold);
+      else if (button.press) keys.press(button.press);
+    };
+    const up = () => {
+      element.classList.remove('is-down');
+      if (button.hold) this.input()?.release(button.hold);
+      if (button.pedal) this.input()?.setAnalog(`pedal-${button.id}`, undefined);
+      if (button.steer) this.input()?.setAnalog(`steer-${button.id}`, undefined);
+    };
+    element.addEventListener('pointerdown', down, { signal });
+    element.addEventListener('pointerup', up, { signal });
+    element.addEventListener('pointercancel', up, { signal });
+    element.addEventListener('lostpointercapture', up, { signal });
+    element.addEventListener('contextmenu', (event) => event.preventDefault(), { signal });
+    this.buttons.set(button.id, element);
+    return element;
   }
 
   /** Labels in the current language. */
@@ -165,11 +186,15 @@ export class TouchControls {
     const seated = !free && !riding;
     const show: Record<string, boolean> = {
       accelerate: riding, reverse: riding, nitro: riding, sit: (free && prompt !== 'none') || seated || riding,
-      laptop: seated, throw: free, kick: free, punch: free, run: free, jump: free,
+      laptop: seated, throw: free, kick: free, punch: free, run: free, jump: free, left: riding, right: riding,
     };
     for (const [id, element] of this.buttons) element.hidden = !show[id];
-    // Getting off with a pedal still down must not leave the chair driving.
-    if (!riding) for (const id of ['accelerate', 'reverse']) this.input()?.setAnalog(`pedal-${id}`, undefined);
+    // Riding, the steering arrows replace the joystick; a finger still on it lets go so it never keeps steering.
+    this.stick.hidden = riding;
+    this.steer.hidden = !riding;
+    if (riding && this.pointer !== undefined) this.releaseStick();
+    // Getting off with a pedal or an arrow still down must not leave the chair driving.
+    if (!riding) for (const source of RIDING_SOURCES) this.input()?.setAnalog(source, undefined);
     this.buttons.get('sit')?.classList.toggle('is-hint', free && prompt !== 'none');
     const zone = free ? zoneAction(sign) : undefined;
     this.zone.hidden = !zone;
@@ -207,13 +232,17 @@ export class TouchControls {
   };
 
   private readonly onStickUp = (event: PointerEvent): void => {
-    if (event.pointerId !== this.pointer) return;
+    if (event.pointerId === this.pointer) this.releaseStick();
+  };
+
+  private releaseStick(): void {
+    if (this.pointer !== undefined && this.stick.hasPointerCapture(this.pointer)) this.stick.releasePointerCapture(this.pointer);
     this.pointer = undefined;
     this.stick.classList.remove('is-active');
     this.knob.style.transform = '';
     this.input()?.setAnalog('touch', undefined);
     this.root.dataset.joystick = 'none';
-  };
+  }
 
   dispose(): void {
     this.observer.disconnect();

@@ -285,9 +285,10 @@ export class Sounds {
       this.loops.set(name, loop);
     }
     const t = context.currentTime;
-    const frequency = name === 'fizz' ? 2200 + brightness * 2600 : 140 + brightness * 900;
+    // The casters stay a soft, dark rumble: a low ceiling on the filter and a quiet level even at full speed.
+    const frequency = name === 'fizz' ? 2200 + brightness * 2600 : 120 + brightness * 480;
     loop.filter.frequency.setTargetAtTime(frequency, t, 0.05);
-    loop.gain.gain.setTargetAtTime(Math.max(0, level) * (name === 'fizz' ? 0.5 : 0.65), t, 0.06);
+    loop.gain.gain.setTargetAtTime(Math.max(0, level) * (name === 'fizz' ? 0.5 : 0.22), t, 0.06);
   }
 
   dispose(): void {
