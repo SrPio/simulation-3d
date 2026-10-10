@@ -25,3 +25,8 @@
   from { opacity: 1; transform: translateX(-50%) scale(1); }
   to { opacity: 0; transform: translateX(-50%) translateY(-6px) scale(0.8); }
 }
+/* The key shown follows what the player uses: E on a keyboard, the pad's sit button (Y or △), none on a touch screen. */
+:root[data-input='gamepad'] .seat-bubble-key { font-size: 0; }
+:root[data-input='gamepad'] .seat-bubble-key::after { content: '△'; font-size: 14px; }
+:root[data-input='gamepad'][data-gamepad='xbox'] .seat-bubble-key::after { content: 'Y'; font-size: 13px; color: #f2c94c; }
+:root[data-input='touch'] .seat-bubble-key { display: none; }

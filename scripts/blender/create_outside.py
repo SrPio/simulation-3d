@@ -28,8 +28,7 @@ the room floor, so the room reads as a raised platform) and uses the walkable `b
 - `Zone_<Id>`: floor zones that put a group of pieces back (`zone` 'reset', `target`, `area`); `target` 'targets'
   clears the thrown laptops and the score of the targets lane instead.
 - `About`: the plaza around the signs (`Floor_About`): `Bust` (the web V4 head and shoulders in marble on a pedestal,
-  the cap keeping its own materials), `Globe` (stand only, with `radius` and `centre`; the viewer draws the sphere and
-  the pin on Colombia), planters, park lamps and `Plaque_<text>` anchors where the viewer
+  the cap keeping its own materials), planters, park lamps and `Plaque_<text>` anchors where the viewer
   paints plaques (`plaque` [width, height], `text`) facing the front.
 - `Decor`: fixed trees, rocks and park benches sharing one mesh per kind; extras `decor`, `shadow` [width, depth]
   for the blob shadow and `solid` [width, height, depth] for the box pieces bounce off, plus a `Collider_*` each.
@@ -510,7 +509,7 @@ TECH_ATLAS = TEXTURES / 'tech-atlas.png'
 # The about-me plaza: a park around the bust with the signs at its back (positions set on the adjustable canvas).
 ABOUT, ABOUT_SIZE = (30.25, 2.5), (17.5, 16.5)
 BUST = (30.2, 2.25)
-GLOBE = (25.2, 2.25)
+COLOMBIA = (25.2, 2.25)                          # the Colombian corner (create_colombia.py, its own GLB)
 PATH_RADIUS = 2.6                                # painted ring round the bust
 ABOUT_BENCHES = [(30.2, 5.85), (26.6, 5.25), (33.8, 5.25)]   # along X, facing the bust
 ABOUT_TREES = [(23.0, -3.75, 0), (37.4, -3.75, 1), (23.0, 8.75, 1), (37.4, 8.75, 0)]
@@ -525,7 +524,6 @@ BUST_CUT_Z, BUST_SCALE = 1.62, 0.85 * 2.5   # 2.5 times the first statue
 BUST_CUT_X, BUST_CUT_LEAN = 0.3, 0.3
 BUST_HEIGHT = (2.65 - 1.62) * BUST_SCALE        # from the pedestal top to the cap
 BUST_FACES = {'stone': 3200, 'cap': 1000}   # outside.glb stays under its size budget (tests/outside.test.ts)
-GLOBE_RADIUS, GLOBE_HEIGHT = 0.42, 1.25          # globe centre above the ground
 # Targets lane: the laptop flies towards -Z from the throw line; the far target sits lower so the arc reaches it.
 TARGET_LANE_X, THROW_LINE_Z = 9.0, 36.5
 TARGETS = [(7.9, 3.0, 1.72), (10.1, 3.6, 1.3), (9.0, 4.2, 0.8)]   # x, distance from the line, disc centre height (on the laptop's arc)
@@ -1052,8 +1050,8 @@ def build_bust(holder, stone_mat):
     return bust, caps
 
 
-def build_about(root, frame_mat, glow):
-    """The plaza around the signs: a bust on a pedestal, a globe, a glass case with two diplomas and two benches."""
+def build_about(root, frame_mat):
+    """The plaza around the signs: a bust on a pedestal, planters and park lamps (the Colombian corner is its own GLB)."""
     room.anchor('Floor_About', at(ABOUT), root, BLOCK_YAW, floor='about', size=list(ABOUT_SIZE), targets=list(BUST), gap=PATH_RADIUS)
     stone = room.material('Pedestal', (0.6, 0.59, 0.62), 0.85)
     statue = room.material('Stone', (1, 1, 1), 0.9, image=stone_image())
@@ -1069,15 +1067,7 @@ def build_about(root, frame_mat, glow):
     x, y, _ = at(BUST)
     room.collider('Bust', (x - w - 0.06, y - w - 0.06, GROUND_Z), (x + w + 0.06, y + w + 0.06, GROUND_Z + PEDESTAL[1] + BUST_HEIGHT), group)
     room.anchor('Plaque_bust', at((BUST[0], BUST[1] + w + 0.002), 0.5), group, BLOCK_YAW, plaque=[1.1, 0.56], text='bust')
-    # Globe: the stand here, the sphere and the pin on Colombia drawn by the viewer (it paints the continents).
-    globe = room.anchor('Globe', at(GLOBE), group, BLOCK_YAW, radius=GLOBE_RADIUS, centre=GLOBE_HEIGHT,
-                        decor='globe', shadow=[1.0, 1.0], solid=[0.6, GLOBE_HEIGHT + GLOBE_RADIUS, 0.6])
-    room.cylinder('GlobeFoot', (0, 0, 0.04), 0.3, 0.08, frame_mat, globe, segments=20)
-    room.cylinder('GlobeStem', (0, 0, (GLOBE_HEIGHT - GLOBE_RADIUS) / 2 + 0.04), 0.035, GLOBE_HEIGHT - GLOBE_RADIUS, frame_mat, globe, segments=10)
-    room.cylinder('GlobeMeridian', (0, 0, GLOBE_HEIGHT), GLOBE_RADIUS + 0.05, 0.03, glow, globe, segments=32, axis='Y')
-    room.anchor('Plaque_globe', at((GLOBE[0], GLOBE[1] + 0.302), 0.12), group, BLOCK_YAW, plaque=[0.56, 0.16], text='globe')
-    x, y, _ = at(GLOBE)
-    room.collider('Globe', (x - 0.3, y - 0.3, GROUND_Z), (x + 0.3, y + 0.3, GROUND_Z + GLOBE_HEIGHT + GLOBE_RADIUS), group)
+    # Where the globe stood (COLOMBIA): the Colombian corner, built by create_colombia.py into its own GLB.
     # Planters with low bushes and flowers, and two park lamps, like a small park round the bust.
     soil = room.material('Soil', (0.24, 0.17, 0.12), 0.95)
     bush, flower = plant_meshes()
@@ -1288,7 +1278,7 @@ def build(root):
     # The character may walk behind the room: the viewer opens a window in the walls around it there.
     build_letters(root)
     build_playground(root)
-    build_about(root, frame, glow)
+    build_about(root, frame)
     build_decor(root, frame)
     build_targets(root, frame)
     build_tech(root)

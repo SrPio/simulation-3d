@@ -6,7 +6,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as cannon from 'cannon-es';
 import { BREAK_SPEED, PropPhysics } from '../src/world/PropPhysics.ts';
 import { groundAt, rampHeight, readOutside, type OutsideData } from '../src/scene/outsideData.ts';
-import { chairAt, driveStep, forwardSpeed, SWAY, type DriveWorld } from '../src/world/chairDrive.ts';
+import { chairAt, driveStep, forwardSpeed, NITRO, SWAY, type DriveInput, type DriveWorld } from '../src/world/chairDrive.ts';
 
 async function parse(file: string) {
   const data = await readFile(new URL(`../public/models/${file}.glb`, import.meta.url));
@@ -104,7 +104,7 @@ test('ramps raise the ground along their local +Z, bumps rise and fall', async (
 });
 
 const flat: DriveWorld = { boxes: [], floor: { minX: -100, maxX: 100, minZ: -100, maxZ: 100 }, ground: () => 0 };
-const run = (state: ReturnType<typeof chairAt>, input: { throttle: number; steer: number }, seconds: number, at: DriveWorld = flat) => {
+const run = (state: ReturnType<typeof chairAt>, input: DriveInput, seconds: number, at: DriveWorld = flat) => {
   for (let t = 0; t < seconds; t += 1 / 60) driveStep(state, input, 1 / 60, at);
 };
 
@@ -199,4 +199,29 @@ test('a wooden fence holds together when the character runs into it and breaks i
   assert.ok(physics.broken > 0, `the chair breaks it (${physics.broken} locks, at ${BREAK_SPEED} m/s)`);
   physics.reset();
   assert.equal(physics.broken, 0, 'a reset puts it back together');
+});
+
+test('the soda nitro pushes the chair past its top speed until the bottles run dry, then they refill', () => {
+  const plain = chairAt(0, 0, 0);
+  const boosted = chairAt(0, 0, 0);
+  run(plain, { throttle: 1, steer: 0 }, 0.15);
+  run(boosted, { throttle: 1, steer: 0, nitro: true }, 0.15);
+  assert.ok(boosted.pitch < plain.pitch - 0.05, 'lighting it kicks the seat back');
+  run(plain, { throttle: 1, steer: 0 }, 2);
+  run(boosted, { throttle: 1, steer: 0, nitro: true }, 2);
+  assert.ok(forwardSpeed(boosted) > forwardSpeed(plain) + 1.5, `nitro ${forwardSpeed(boosted)} vs ${forwardSpeed(plain)}`);
+  assert.ok(forwardSpeed(boosted) <= NITRO.maxSpeed + 1e-6);
+  // It pushes even without the legs, and the fizz runs out after its burn time.
+  const dry = chairAt(0, 0, 0);
+  run(dry, { throttle: 0, steer: 0, nitro: true }, 0.5);
+  assert.ok(dry.boosting && forwardSpeed(dry) > 2);
+  run(dry, { throttle: 0, steer: 0, nitro: true }, NITRO.burn);
+  assert.equal(dry.fuel, 0);
+  assert.equal(dry.boosting, false, 'empty');
+  // Held on, it does not light again until a little has refilled; let go, it fills back up.
+  run(dry, { throttle: 0, steer: 0, nitro: false }, NITRO.refill * NITRO.restart * 0.5);
+  run(dry, { throttle: 0, steer: 0, nitro: true }, 1 / 60);
+  assert.equal(dry.boosting, false, 'not enough to relight');
+  run(dry, { throttle: 0, steer: 0, nitro: false }, NITRO.refill);
+  assert.equal(dry.fuel, 1);
 });

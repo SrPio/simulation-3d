@@ -26,6 +26,13 @@ export const DRIVE = {
   gravity: 9.82,
 } as const;
 
+/**
+ * The nitro: two shaken soda bottles strapped to the chair spray backwards and push it on, faster than the legs can,
+ * for as long as their fizz lasts (`burn` seconds from full), then refill in `refill` seconds once it is let go. It lights
+ * again only with at least `restart` of a bottle. Lighting it kicks the seat back.
+ */
+export const NITRO = { accel: 8, maxSpeed: 9.5, burn: 2.5, refill: 6, restart: 0.25, kick: 2.4 } as const;
+
 /** The seat's pendulum: stiffness, damping, how much an acceleration of 1 m/s² leans it (rad) and its limit. */
 export const SWAY = { stiffness: 38, damping: 5.5, gain: 0.035, lateralGain: 0.02, limit: (12 * Math.PI) / 180, landing: 0.9 } as const;
 
@@ -34,6 +41,8 @@ export type DriveInput = {
   throttle: number;
   /** 1 left (A), -1 right (D). */
   steer: number;
+  /** The nitro button held (Space). */
+  nitro?: boolean;
 };
 
 export type ChairState = {
@@ -58,6 +67,9 @@ export type ChairState = {
   /** Distance rolled (m), for the wheels' spin, and the casters' common swivel (yaw towards the motion). */
   rolled: number;
   casterYaw: number;
+  /** What is left in the bottles, 0…1, and whether they are spraying now. */
+  fuel: number;
+  boosting: boolean;
 };
 
 export type DriveWorld = {
@@ -68,7 +80,7 @@ export type DriveWorld = {
 };
 
 export function chairAt(x: number, z: number, yaw: number): ChairState {
-  return { x, z, yaw, vx: 0, vz: 0, y: 0, vy: 0, airborne: false, pitch: 0, pitchRate: 0, roll: 0, rollRate: 0, lastForward: 0, rolled: 0, casterYaw: yaw };
+  return { x, z, yaw, vx: 0, vz: 0, y: 0, vy: 0, airborne: false, pitch: 0, pitchRate: 0, roll: 0, rollRate: 0, lastForward: 0, rolled: 0, casterYaw: yaw, fuel: 1, boosting: false };
 }
 
 /** Forward (signed) speed along the heading. */
@@ -93,10 +105,18 @@ function subStep(state: ChairState, input: DriveInput, dt: number, world: DriveW
   let side = state.vx * fz - state.vz * fx;
   const throttle = Math.max(-1, Math.min(1, input.throttle));
   const steer = Math.max(-1, Math.min(1, input.steer));
+  // The nitro burns while held and there is fizz left; the bottles refill only once it is let go, and light again with a little in them.
+  const lit = !!input.nitro && state.fuel > 0 && (state.boosting || state.fuel >= NITRO.restart);
+  if (lit && !state.boosting) state.pitchRate -= NITRO.kick;
+  state.boosting = lit;
+  if (lit) state.fuel = Math.max(0, state.fuel - dt / NITRO.burn);
+  else if (!input.nitro) state.fuel = Math.min(1, state.fuel + dt / NITRO.refill);
   if (!state.airborne) {
     // Engine (legs, really): forward up to maxSpeed; S brakes hard while rolling forward, then backs off slowly.
     if (throttle > 0) forward = forward < 0 ? approach(forward, 0, DRIVE.brake * dt) : Math.min(forward + DRIVE.accel * throttle * dt, Math.max(forward, DRIVE.maxSpeed));
     else if (throttle < 0) forward = forward > 0 ? approach(forward, 0, DRIVE.brake * dt) : Math.max(forward - DRIVE.accel * 0.6 * -throttle * dt, Math.min(forward, -DRIVE.reverseSpeed));
+    // The spray pushes forwards whatever the legs do, up to the nitro's own top speed.
+    if (lit) forward = forward < NITRO.maxSpeed ? Math.min(forward + NITRO.accel * dt, NITRO.maxSpeed) : forward;
     forward = approach(forward, 0, (DRIVE.rolling + DRIVE.drag * Math.abs(forward)) * dt);
     side *= Math.exp(-DRIVE.grip * dt);
     // Steering: proportional to rolling speed (reversed when backing up), plus a slow swivel standing still.

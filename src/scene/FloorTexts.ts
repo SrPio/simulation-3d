@@ -96,8 +96,12 @@ export class FloorTexts {
   private readonly canvas: HTMLCanvasElement;
   private readonly texture: CanvasTexture;
 
-  constructor(blocks: readonly FloorBlock[], groundY: number) {
+  /** A touch screen: the intro speaks of the on-screen joystick and draws one where the arrow keys would be. */
+  private readonly touch: boolean;
+
+  constructor(blocks: readonly FloorBlock[], groundY: number, touch = false) {
     this.blocks = blocks;
+    this.touch = touch;
     const { rects, height } = pack(blocks);
     this.rects = rects;
     this.canvas = document.createElement('canvas');
@@ -185,11 +189,23 @@ export class FloorTexts {
       // translation gets a smaller size.
       const edge = block.gap / 2 + 0.12;
       const room = (w / 2 - edge - 0.1) * 100;
+      const touch = this.touch;
       scaled(() => {
-        const before = text('floor.introBefore', -edge * 100, 34, 58, 'right', 600, room);
-        const after = text('floor.introAfter', edge * 100, 34, 58, 'left', 600, room);
+        if (touch) {
+          // The joystick in the keys' place: its ring and the knob pushed up.
+          context.lineWidth = 9;
+          context.beginPath();
+          context.arc(0, -20, 78, 0, Math.PI * 2);
+          context.stroke();
+          context.beginPath();
+          context.arc(0, -52, 34, 0, Math.PI * 2);
+          context.fill();
+        }
+        const before = text(touch ? 'floor.introTouchBefore' : 'floor.introBefore', -edge * 100, 34, 58, 'right', 600, room);
+        const after = text(touch ? 'floor.introTouchAfter' : 'floor.introAfter', edge * 100, 34, 58, 'left', 600, room);
         const middle = (edge * 100 + after - (edge * 100 + before)) / 2;
         text('floor.introNext', middle, 128, 58, 'center', 600, (w - 0.2) * 100);
+        if (touch) return;
         // Under it the Shift key with the controls panel's own label, centred on the same line.
         const keyHeight = 46;
         context.font = `700 ${Math.round(keyHeight * 0.46)}px ${FONT}`;

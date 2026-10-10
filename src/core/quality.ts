@@ -47,8 +47,8 @@ export function nextPixelRatio(current: number, averageFrame: number, range: { m
   return clamped;
 }
 
-/** language null means "not chosen yet": the room page starts from the browser's language. */
-export type Preferences = { quality: QualityId; reducedMotion: boolean | null; language: Language | null };
+/** language null means "not chosen yet": the room page starts from the browser's language. Sound is on unless switched off. */
+export type Preferences = { quality: QualityId; reducedMotion: boolean | null; language: Language | null; sound: boolean };
 const STORAGE_KEY = 'simulation-3d:preferences';
 
 /** Stored viewer preferences; reducedMotion null means "follow the system setting". Storage may be unavailable. */
@@ -60,9 +60,10 @@ export function readPreferences(storage: Pick<Storage, 'getItem'> | undefined): 
       quality: isQualityId(stored.quality) ? stored.quality : defaultQuality,
       reducedMotion: typeof stored.reducedMotion === 'boolean' ? stored.reducedMotion : null,
       language: isLanguage(stored.language) ? stored.language : null,
+      sound: stored.sound !== false,
     };
   } catch {
-    return { quality: defaultQuality, reducedMotion: null, language: null };
+    return { quality: defaultQuality, reducedMotion: null, language: null, sound: true };
   }
 }
 

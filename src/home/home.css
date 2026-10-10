@@ -32,19 +32,13 @@ h1, p { margin: 0; }
 .room-canvas[data-camera='free'] canvas:active { cursor: grabbing; }
 
 /* Floating panels: dark glass with a raised edge, like the room's furniture under its key light. */
-.room-bar, .room-tools, .room-hud {
+.room-bar, .room-tools {
   position: absolute; z-index: 2; border: 1px solid var(--edge); border-radius: 10px; background: var(--panel);
   box-shadow: 0 1px 0 #ffffff12 inset, 0 10px 24px #00000055; backdrop-filter: blur(6px);
 }
-.room-bar { top: 16px; left: 16px; display: flex; align-items: center; gap: 16px; padding: 8px 14px 8px 10px; }
-.room-brand { display: flex; align-items: center; gap: 10px; color: #eee5f6; text-decoration: none; font-size: 10px; font-weight: 650; letter-spacing: 2px; white-space: nowrap; }
-.room-mark { display: grid; place-items: center; width: 28px; height: 30px; border: 1px solid #8c6eaa; border-radius: 8px 8px 8px 2px; color: #d6b8f4; font-size: 23px; font-weight: 800; letter-spacing: -3px; padding: 0 3px 5px 0; }
-.room-status { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
-.room-dot { width: 6px; height: 6px; border-radius: 50%; background: #b999da; }
-.room-status[data-state='ready'] .room-dot { background: #9ebba1; }
-.room-status[data-state='error'] .room-dot { background: #dfa297; }
+.room-bar { top: 16px; left: 16px; display: flex; align-items: center; padding: 6px; }
 
-/* Language switch, always visible beside the status. */
+/* Language switch: the only thing in the top bar. */
 .language-switch button { min-height: 28px; padding: 0 9px; font-size: 11px; letter-spacing: 1px; }
 
 /* Options behind a menu button, closed by default: one panel of labelled rows under the button. */
@@ -71,53 +65,34 @@ h1, p { margin: 0; }
 .tool-segmented { display: flex; gap: 4px; padding: 3px; border-radius: 8px; background: #120e18; box-shadow: 0 1px 2px #00000080 inset; }
 
 /* Keycap buttons: a lit top face over a darker base that sinks when pressed. */
-.tool-segmented button, .tool-toggle, .hud-actions button, .room-retry {
+.tool-segmented button, .tool-toggle, .room-retry {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 12px;
   border: 1px solid #ffffff10; border-radius: 6px; color: #d9cde6; font-size: 12px;
   background: linear-gradient(#ffffff0a, #00000000), var(--key);
   box-shadow: 0 2px 0 var(--key-shadow), 0 1px 0 #ffffff14 inset;
   transition: transform 120ms ease, box-shadow 120ms ease, background-color 160ms ease;
 }
-.tool-segmented button:hover, .tool-toggle:hover, .hud-actions button:not(:disabled):hover, .room-retry:hover { background-color: var(--key-top); color: #f3eafc; }
-.tool-segmented button:active, .tool-toggle:active, .hud-actions button:not(:disabled):active, .room-retry:active { transform: translateY(2px); box-shadow: 0 0 0 var(--key-shadow), 0 1px 0 #ffffff10 inset; }
+.tool-segmented button:hover, .tool-toggle:hover, .room-retry:hover { background-color: var(--key-top); color: #f3eafc; }
+.tool-segmented button:active, .tool-toggle:active, .room-retry:active { transform: translateY(2px); box-shadow: 0 0 0 var(--key-shadow), 0 1px 0 #ffffff10 inset; }
 .tool-segmented button[aria-pressed='true'], .tool-toggle[aria-pressed='true'] {
   color: #f6eeff; border-color: #b18cd277; background: linear-gradient(#ffffff14, #00000000), #5a3f75;
   box-shadow: 0 2px 0 #2a1b39, 0 0 12px #9a6fd640, 0 1px 0 #ffffff22 inset;
 }
-.tool-dot { width: 8px; height: 8px; border-radius: 50%; }
-.tool-dot.neutral { background: #e7dfd8; }
-.tool-dot.violet { background: #b590e5; }
 .toggle-track { position: relative; width: 26px; height: 14px; border-radius: 10px; background: #120e18; box-shadow: 0 1px 2px #000000a0 inset; }
 .toggle-track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: #9d90aa; transition: transform 140ms ease; }
 .tool-toggle[aria-pressed='true'] .toggle-track::after { transform: translateX(12px); background: #f1e4ff; }
-
-.room-hud { left: 16px; bottom: 16px; width: min(340px, calc(100% - 32px)); display: grid; gap: 9px; padding: 12px; font-size: 12px; line-height: 1.55; color: #ddd1e8; }
-.hud-actions { display: flex; gap: 8px; }
-.hud-actions button { flex: 1; min-height: 40px; }
-.hud-help { color: var(--muted); font-size: 11px; }
-.sign-link {
-  display: flex; align-items: center; justify-content: center; min-height: 44px; border-radius: 8px; text-decoration: none; font-weight: 600;
-  color: #fbf6ff; background: linear-gradient(#ffffff1c, #00000000), #6c48c9; border: 1px solid #c4a2ed88;
-  box-shadow: 0 3px 0 #2e1d52, 0 0 18px #8a5cf060; animation: sign-in 320ms cubic-bezier(.2, 1.4, .4, 1) both;
-}
-.sign-link:hover { background-color: #7d58da; }
-@keyframes sign-in { from { opacity: 0; transform: translateY(8px) scale(0.96); } }
 
 .room-overlay { position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; padding: 24px; background: #17121ecc; backdrop-filter: blur(8px); }
 .room-overlay-card { max-width: 380px; text-align: center; }
 .room-overlay-card h1 { font-size: 21px; font-weight: 500; color: #ece0f6; }
 .room-overlay-card p { margin-top: 12px; font-size: 13px; line-height: 1.75; color: var(--muted); }
-.room-ring { display: block; width: 28px; height: 28px; margin: 0 auto 22px; border: 1px solid #c4a2ed22; border-top-color: var(--accent); border-radius: 50%; animation: spin 1.2s linear infinite; }
 .room-retry { margin-top: 22px; }
-@keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 760px) {
-  .room-bar { top: 12px; left: 12px; right: 70px; justify-content: space-between; gap: 10px; }
-  .room-status { display: none; }
+  .room-bar { top: 12px; left: 12px; }
   .menu-toggle { top: 12px; right: 12px; }
   .room-tools { top: 66px; left: 12px; right: 12px; width: auto; max-width: none; }
   .tool-group { grid-template-columns: 84px auto; }
-  .room-hud { left: 12px; right: 12px; bottom: 12px; width: auto; }
 }
 
 :root[data-reduced-motion='true'] *, :root[data-reduced-motion='true'] *::before, :root[data-reduced-motion='true'] *::after { animation: none !important; transition: none !important; }

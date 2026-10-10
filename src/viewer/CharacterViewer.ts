@@ -15,8 +15,12 @@ import {
 import { getLanguage, onLanguage, t } from '../core/i18n.ts';
 import { KeyboardInput, type HoldAction, type PressAction } from '../input/KeyboardInput';
 import {
-  disposeObjects, laptopFile, loadCharacter, loadChick, loadCircuit, loadLaptop, loadOutside, loadRoom, modelVersions, outsideFile, roomFile, type ModelVersionId, type SceneId,
+  EXPECTED_BYTES, circuitFile, colombiaFile, disposeObjects, loadColombia, laptopFile, loadCharacter, loadChick, loadCircuit, loadLaptop, loadOutside, loadRoom, modelVersions, outsideFile, roomFile,
+  type ModelVersionId, type SceneId,
 } from '../core/loadAssets';
+import { DOWNLOAD_SHARE, ProgressMeter } from '../core/loadProgress.ts';
+import { distanceGain, type SoundName, type Sounds } from '../audio/Sounds.ts';
+import { pieceSound } from '../audio/pieceSounds.ts';
 import { InteractionController } from '../interactions/InteractionController.ts';
 import { readRoom, type RoomData } from '../scene/roomData.ts';
 import { groundAt, readOutside, type OutsideData, type Piece, type Sign } from '../scene/outsideData.ts';
@@ -31,7 +35,9 @@ import { PieceMeshes } from '../scene/PieceMeshes.ts';
 import { AboutPlaza } from '../scene/AboutPlaza.ts';
 import { TargetsView } from '../scene/TargetsView.ts';
 import { CircuitView } from '../scene/CircuitView.ts';
-import { chairAt, driveStep, forwardSpeed, type ChairState } from '../world/chairDrive.ts';
+import { DRIVE, NITRO, chairAt, driveStep, forwardSpeed, type ChairState } from '../world/chairDrive.ts';
+import { applyLean, leanStep, leanTarget, restHand, restLean, solveArm, type Lean } from '../character/riderPose.ts';
+import { SodaSpray } from '../scene/SodaSpray.ts';
 import type { SeatSpot } from '../interactions/InteractionController.ts';
 import type { FloorBlock } from '../scene/outsideData.ts';
 import { RoomReveal } from '../scene/RoomReveal.ts';
@@ -76,6 +82,10 @@ type ViewerOptions = {
   cameraMode?: CameraMode;
   /** Room only: where the character starts (and Restablecer returns it) instead of the room's Spawn anchor. */
   spawn?: { position: { x: number; z: number }; yaw: number };
+  /** Room only: the page's sound effects (the studio is silent). */
+  sounds?: Sounds;
+  /** Room only: a touch screen. The intro's keyboard keys and the controls panel are left off the floor (the controls are on screen). */
+  touch?: boolean;
 };
 
 // Isometric diorama: the camera stays on the open side of the two room walls.
@@ -94,6 +104,8 @@ type ViewerEvents = {
   run?: (running: boolean) => void;
   /** The character walked into a sign's floor zone (Enter opens its link) or left it. */
   sign?: (sign: SignLink | null) => void;
+  /** How much of the scene has loaded, 0…1 (downloads, then building it); 1 when it is ready. */
+  progress?: (fraction: number) => void;
 };
 
 const LOCOMOTION = new Set(['idle', 'walk', 'run', 'jump']);
@@ -102,6 +114,10 @@ const FOLLOW_RATE = 4;
 const SHADOWLESS = /^(FloorPlank|Platform|Wall|Baseboard|Poster|NightCity|WindowGlass)/;
 /** How quickly the character steps down to the outside ground or back up onto the room floor (1/s). */
 const STEP_RATE = 25;
+/** Radius of the round grass bed at the crossroads (CROSSROADS_GREEN in create_outside.py): footsteps there sound of grass. */
+const CROSSROADS_GREEN = 4;
+/** Where the rider's wrists rest on the office chair's arm pads: ahead of the pad's middle and above its top (m). */
+const RIDER_WRIST = { ahead: 0.02, up: 0.045 };
 /** How far ahead of the office chair's seat centre the rider sits (m). */
 const RIDER_FORWARD = 0.15;
 /** Blob shadow slots: the character first, then the signs, then the loose pieces, then the thrown laptops. */
@@ -153,6 +169,37 @@ export class CharacterViewer {
   private outsideData?: OutsideData;
   private areas?: SignAreas;
   private sign?: string;
+  /** The office chair's rider: trunk lean, how much the pose holds (0 standing … 1 seated), and the chair's last forward speed and heading. */
+  private riderLean: Lean = restLean();
+  private riderWeight = 0;
+  private riderAccel = 0;
+  private riderLast?: { forward: number; yaw: number };
+  /**
+   * Bones the rider pose turned last frame: their clip pose and what was written over it. A bone the seated clip has no
+   * track for keeps what was written, so it is put back before posing again (otherwise the lean would pile up).
+   */
+  private readonly riderBones = new Map<Object3D, { clip: Quaternion; posed: Quaternion }>();
+  /** The nitro: Space held while riding, the soda spray, where each bottle cap belongs, and whether it sprayed last frame. */
+  private nitroHeld = false;
+  /** What the sign zones' labels show to open them (setOpenKey). */
+  private openKeyLabel = 'ENTER';
+  private spray?: SodaSpray;
+  private readonly capHomes = new Map<Object3D, { parent: Object3D; position: Vector3; quaternion: Quaternion }>();
+  private capsPopped = false;
+  private wasBoosting = false;
+  /** Sound state followed frame by frame (see updateSounds). */
+  private wasAirborne = false;
+  private stepHalf?: number;
+  private lastStage = 'idle';
+  private typingIn = 0;
+  private rolling = 0;
+  private chairAirborne = false;
+  private lastLight = -1;
+  /** Loading progress for the loading screen (`data-progress`, the progress event). */
+  private readonly progress = new ProgressMeter((fraction) => {
+    this.host.dataset.progress = fraction.toFixed(2);
+    this.events.progress?.(fraction);
+  });
   private ground?: InfiniteFloor;
   private shadows?: BlobShadows;
   private pieces?: PieceMeshes;
@@ -350,14 +397,18 @@ export class CharacterViewer {
 
   private async load(): Promise<void> {
     try {
-      const [gltf, roomGltf, laptopGltf, outsideGltf, circuitGltf] = await Promise.all([
-        loadCharacter(this.options.modelId, this.abort.signal),
-        this.inRoom ? loadRoom(this.abort.signal) : Promise.resolve(undefined),
-        this.inRoom ? loadLaptop(this.abort.signal) : Promise.resolve(undefined),
-        this.inRoom ? loadOutside(this.abort.signal) : Promise.resolve(undefined),
-        this.inRoom ? loadCircuit(this.abort.signal) : Promise.resolve(undefined),
+      const meter = this.progress;
+      const track = (file: string) => meter.file(file, EXPECTED_BYTES[file] ?? 1_000_000);
+      const [gltf, roomGltf, laptopGltf, outsideGltf, circuitGltf, colombiaGltf] = await Promise.all([
+        loadCharacter(this.options.modelId, this.abort.signal, track(modelVersions[this.options.modelId].file)),
+        this.inRoom ? loadRoom(this.abort.signal, track(roomFile)) : Promise.resolve(undefined),
+        this.inRoom ? loadLaptop(this.abort.signal, track(laptopFile)) : Promise.resolve(undefined),
+        this.inRoom ? loadOutside(this.abort.signal, track(outsideFile)) : Promise.resolve(undefined),
+        this.inRoom ? loadCircuit(this.abort.signal, track(circuitFile)) : Promise.resolve(undefined),
+        this.inRoom ? loadColombia(this.abort.signal, track(colombiaFile)) : Promise.resolve(undefined),
       ]);
-      const scenes = [...gltf.scenes, ...(roomGltf?.scenes ?? []), ...(laptopGltf?.scenes ?? []), ...(outsideGltf?.scenes ?? []), ...(circuitGltf?.scenes ?? [])];
+      meter.report(DOWNLOAD_SHARE);
+      const scenes = [...gltf.scenes, ...(roomGltf?.scenes ?? []), ...(laptopGltf?.scenes ?? []), ...(outsideGltf?.scenes ?? []), ...(circuitGltf?.scenes ?? []), ...(colombiaGltf?.scenes ?? [])];
       if (this.disposed) {
         disposeObjects(scenes);
         return;
@@ -367,6 +418,7 @@ export class CharacterViewer {
       if (roomGltf) {
         // The circuit is read as part of the outside: its pieces, decor, floors and zones join the outside's.
         if (outsideGltf && circuitGltf) outsideGltf.scene.add(circuitGltf.scene);
+        if (outsideGltf && colombiaGltf) outsideGltf.scene.add(colombiaGltf.scene);
         if (outsideGltf) this.addOutside(outsideGltf.scene);
         this.placeInRoom(roomGltf.scene);
         // Everything receives shadows; only furniture casts them. Floor, walls, posters and the
@@ -445,6 +497,7 @@ export class CharacterViewer {
       this.setWireframe(this.wireframe);
       this.resize();
       this.ready = true;
+      this.progress.report(1);
       if (this.controls) this.controls.enabled = !this.contextLost;
       this.events.stats(stats);
       if (!this.contextLost) this.showReady();
@@ -569,6 +622,13 @@ export class CharacterViewer {
     for (const group of ['Letters', 'Tagline', 'Keys', 'Bowling', 'Bricks', 'Clutter', 'Tech', 'CircuitPieces']) outside.getObjectByName(group)?.removeFromParent();
     // The chair, the tapes and the traffic light's lenses move or change: the circuit view keeps them out of the merge.
     this.circuit = new CircuitView(data);
+    // The flag waves: its cloth stays out of the merge, keeping where it hangs.
+    const flag = outside.getObjectByName('ColombiaFlag_Cloth');
+    if (flag) {
+      outside.updateMatrixWorld(true);
+      flag.matrixWorld.decompose(flag.position, flag.quaternion, flag.scale);
+      flag.removeFromParent();
+    }
     // The targets rock when hit: they leave the static scene too, drawn by their own view.
     const targets = outside.getObjectByName('Targets');
     targets?.removeFromParent();
@@ -580,7 +640,8 @@ export class CharacterViewer {
     mergeStaticMeshes(outside);
     this.ground = new InfiniteFloor(data.groundY);
     // Loose pieces first (their order matches the physics bodies), then the floor keys, which stay put and only sink.
-    const fixed = data.props.filter((piece) => piece.group === 'keys');
+    // On a touch screen there are no keys on the floor: being last, leaving them out keeps the physics indices.
+    const fixed = this.options.touch ? [] : data.props.filter((piece) => piece.group === 'keys');
     this.pieceList = [...data.letters, ...data.props.filter((piece) => piece.group !== 'keys'), ...fixed];
     this.floorKeys = fixed.map((piece, i) => ({
       index: this.pieceList.length - fixed.length + i,
@@ -625,9 +686,11 @@ export class CharacterViewer {
     this.shadows.flush();
     this.zones = [...data.signs, ...data.zones];
     this.areas = new SignAreas(this.zones, data.groundY);
+    this.areas.setOpenKey(this.openKeyLabel);
     this.areas.setReducedMotion(this.reducedMotion);
-    this.floorTexts = new FloorTexts(data.floors, data.groundY);
-    this.about = new AboutPlaza(data.plaques, data.globe, { x: ROOM_VIEW.x, z: ROOM_VIEW.z });
+    this.floorTexts = new FloorTexts(this.options.touch ? data.floors.filter((floor) => floor.id !== 'controls') : data.floors, data.groundY, !!this.options.touch);
+    this.about = new AboutPlaza(data.plaques);
+    if (flag) this.about.waveFlag(flag);
     if (data.targets.length) {
       this.targetsView = new TargetsView(data.targets, data.scoreboard);
       if (targets) this.targetsView.root.add(targets);
@@ -675,7 +738,7 @@ export class CharacterViewer {
       const { position, height } = data.lamppost;
       statics.push({ center: { x: position.x, y: position.y + height / 2, z: position.z }, half: [0.12, height / 2, 0.12], yaw: 0 });
     }
-    // Trees, rocks, benches, racks, the bust, globe, glass case and scoreboard.
+    // Trees, rocks, benches, the bust, the Colombian corner and the scoreboard.
     for (const item of data.decor) {
       if (!item.solid) continue;
       const [w, h, d] = item.solid;
@@ -708,6 +771,11 @@ export class CharacterViewer {
       const physics = await PropPhysics.load(this.pieceList.slice(0, loose), statics, groundY, discs);
       if (this.disposed) return;
       physics.onTargetHit = this.onTargetHit;
+      physics.onImpact = (impact) => {
+        const name = impact.source === 'laptop' ? 'laptop' : impact.source === 'chick' ? 'chirp' : pieceSound(this.pieceList[impact.source]);
+        this.sound(name, impact.speed, impact.position);
+      };
+      physics.onBreak = () => this.sound('woodHeavy', 6);
       this.physics = physics;
       this.host.dataset.physics = 'ready';
     } catch {
@@ -776,6 +844,15 @@ export class CharacterViewer {
       if (this.ready) this.openSign(this.sign);
       return;
     }
+    if (action === 'reset') {
+      if (this.ready) this.resetPosition();
+      return;
+    }
+    if (action === 'jump' && this.riding) {
+      // On the office chair Space is the nitro, held as long as the key is down.
+      this.nitroHeld = true;
+      return;
+    }
     const interaction = this.interaction;
     if (!interaction || !this.controller || !this.ready || this.controller.jumping || this.throwing || this.strike) return;
     if (action === 'punch' || action === 'kick') {
@@ -810,6 +887,7 @@ export class CharacterViewer {
       // Only from free keyboard movement, never from a seat or a clip picked by hand.
       if (interaction.phase !== 'free' || !this.isLocomotion(this.activeClip) || !this.actions.has('jump')) return;
       this.controller.jump();
+      this.sound('cloth');
       this.driving = true;
       if (!this.playing) this.setPlaying(true);
       this.selectClip(this.gaitClip('jump'), false);
@@ -837,6 +915,10 @@ export class CharacterViewer {
 
   /** J, K or F let go: the held wind-up turns into the blow or the throw, stronger the longer it charged. */
   private readonly onRelease = (action: HoldAction): void => {
+    if (action === 'jump') {
+      this.nitroHeld = false;
+      return;
+    }
     const strike = this.strike;
     if (!strike || strike.kind !== action || !strike.held) return;
     strike.held = false;
@@ -867,6 +949,7 @@ export class CharacterViewer {
       // A tap before the stance is ready lets the clip get there first.
       if (action.time < spec.ready) return;
       strike.launched = true;
+      this.sound('whoosh', strike.power);
       action.time = strikeLaunch(spec, strike.charge);
       const snap = (strike.power - STRIKE_MIN_POWER) / (1 - STRIKE_MIN_POWER);
       action.setEffectiveTimeScale(1 + STRIKE_SNAP * snap);
@@ -882,7 +965,9 @@ export class CharacterViewer {
     const yaw = this.controller.yaw;
     const forward = { x: Math.sin(yaw), z: Math.cos(yaw) };
     const point = bone.getWorldPosition(new Vector3()).add(new Vector3(forward.x * spec.reach, 0, forward.z * spec.reach));
-    this.host.dataset.strikeHits = String(this.physics.strike(this.controller.position, point, forward, strike.power));
+    const hits = this.physics.strike(this.controller.position, point, forward, strike.power);
+    this.host.dataset.strikeHits = String(hits);
+    if (hits) this.sound('punch', strike.power);
   }
 
   private cancelStrike(): void {
@@ -1053,6 +1138,7 @@ export class CharacterViewer {
   /** ↑ ↑ ↓ ↓ ← → ← → B A: chicks in sunglasses rain round the character (outside, once the physics is ready). */
   private async rainChicks(): Promise<void> {
     if (!this.ready || !this.physics || !this.model || !this.outsideData || this.chickLoading) return;
+    this.sound('konami');
     if (!this.chickRain) {
       this.chickLoading = true;
       try {
@@ -1127,6 +1213,8 @@ export class CharacterViewer {
     for (const [index, radius] of target.rings.entries()) if (hit.distance <= radius) ring = index;
     if (this.countedThrows.has(hit.laptop)) this.targetGame.hit(hit.distance, target.rings, target.points);
     this.targetsView?.hit(hit.target, ring);
+    // The rings ring brighter towards the centre.
+    if (ring >= 0) this.sound('bell', (ring + 1) / target.rings.length, target.position);
     this.reportTargets();
   };
 
@@ -1280,6 +1368,12 @@ export class CharacterViewer {
     this.chairSpot = { seat: 'office', approaches: [], stand: { x: 0, z: 0 }, yaw };
     this.lap = { best: readBestLap() };
     this.interaction.setSeat(this.chairSpot);
+    this.spray = new SodaSpray();
+    this.spray.density = this.nitroDensity();
+    this.scene.add(this.spray.mesh);
+    for (const bottle of rig.bottles) {
+      if (bottle.cap?.parent) this.capHomes.set(bottle.cap, { parent: bottle.cap.parent, position: bottle.cap.position.clone(), quaternion: bottle.cap.quaternion.clone() });
+    }
     const checkers = data.floors.filter((floor) => floor.id === 'checker');
     if (checkers.length === 2) {
       const near = (floor: FloorBlock) => Math.hypot(floor.position.x - position.x, floor.position.z - position.z);
@@ -1341,7 +1435,8 @@ export class CharacterViewer {
     };
     if (driving) {
       const intent = this.keyboard?.intent ?? { forward: 0, right: 0, run: false };
-      driveStep(state, { throttle: intent.forward, steer: -intent.right }, delta, world);
+      const knock = driveStep(state, { throttle: intent.forward, steer: -intent.right, nitro: this.nitroHeld }, delta, world);
+      if (knock > 1) this.sound('crash', knock);
       this.setMovement('interacting', t('prompt.driving'));
     } else if (Math.hypot(state.vx, state.vz) > 0.01 || state.airborne || Math.abs(state.pitch) > 1e-3) {
       // Nobody pedalling: it rolls to a stop (quickly once the rider gets up) and the seat settles.
@@ -1350,7 +1445,12 @@ export class CharacterViewer {
       state.vz *= damping;
       driveStep(state, { throttle: 0, steer: 0 }, delta, world);
     }
+    if (!driving) {
+      this.nitroHeld = false;
+      state.boosting = false;
+    }
     this.poseChair();
+    this.updateNitro(delta);
     this.chairPusher = driving ? { x: state.x, y: data.groundY + state.y, z: state.z, yaw: state.yaw } : undefined;
     // What goes through a tape or a line: the chair while ridden, otherwise the character.
     const mover = riding ? { x: state.x, z: state.z } : this.model ? { x: this.model.position.x, z: this.model.position.z } : undefined;
@@ -1363,7 +1463,10 @@ export class CharacterViewer {
         const ax = { x: Math.cos(tape.yaw), z: -Math.sin(tape.yaw) };
         const a = { x: tape.position.x - ax.x * half, z: tape.position.z - ax.z * half };
         const b = { x: tape.position.x + ax.x * half, z: tape.position.z + ax.z * half };
-        if (crosses(last, mover, a, b)) this.circuit.cut(index);
+        if (crosses(last, mover, a, b)) {
+          this.circuit.cut(index);
+          this.sound('tape', 0, tape.position);
+        }
       }
       if (driving && this.lines) {
         const across = (line: FloorBlock) => {
@@ -1371,11 +1474,15 @@ export class CharacterViewer {
           const ax = { x: Math.cos(line.yaw), z: -Math.sin(line.yaw) };
           return crosses(last, mover, { x: line.position.x - ax.x * half, z: line.position.z - ax.z * half }, { x: line.position.x + ax.x * half, z: line.position.z + ax.z * half });
         };
-        if (across(this.lines.start) && forwardSpeed(state) > 0) this.lap = { start: this.circuitClock, best: this.lap.best };
+        if (across(this.lines.start) && forwardSpeed(state) > 0) {
+          this.lap = { start: this.circuitClock, best: this.lap.best };
+          this.sound('lap');
+        }
         else if (this.lap.start !== undefined && across(this.lines.finish)) {
           const time = this.circuitClock - this.lap.start;
           const best = Math.min(time, this.lap.best ?? Infinity);
           if (best === time) saveBestLap(time);
+          this.sound(best === time ? 'best' : 'lap');
           this.lap = { time, best };
         }
       }
@@ -1384,7 +1491,10 @@ export class CharacterViewer {
     const running = this.lap.start !== undefined;
     this.circuit.setLap(running ? this.circuitClock - this.lap.start! : this.lap.time, this.lap.best, running);
     const lit = this.circuitClock - this.lightsAt;
-    this.circuit.setLights(!riding ? -1 : lit < 0.8 ? 0 : lit < 1.6 ? 1 : lit < 4 ? 2 : -1);
+    const light = !riding ? -1 : lit < 0.8 ? 0 : lit < 1.6 ? 1 : lit < 4 ? 2 : -1;
+    if (light !== this.lastLight && light >= 0) this.sound(light === 2 ? 'beepGo' : 'beep');
+    this.lastLight = light;
+    this.circuit.setLights(light);
     this.circuit.update(delta, this.reducedMotion);
     const host = this.host.dataset;
     const drive = driving ? 'driving' : riding ? 'seated' : 'none';
@@ -1401,11 +1511,180 @@ export class CharacterViewer {
   /** The circuit's tapes whole again and, unless someone rides it, the chair back by the start. */
   private resetCircuit(): void {
     this.circuit?.reset();
+    this.spray?.reset((cap) => {
+      const home = this.capHomes.get(cap);
+      if (!home) return;
+      home.parent.add(cap);
+      cap.position.copy(home.position);
+      cap.quaternion.copy(home.quaternion);
+    });
+    this.capsPopped = false;
     if (!this.riding && this.chairRest) {
       this.chairDrive = chairAt(this.chairRest.x, this.chairRest.z, this.chairRest.yaw);
       this.poseChair();
     }
     this.lap = { best: this.lap.best };
+  }
+
+  /** A sound effect, quieter the further `at` is from the character; `data-sound-last` names the last one heard. */
+  private sound(name: SoundName, velocity = 0, at?: { x: number; z: number }): void {
+    const sounds = this.options.sounds;
+    if (!sounds) return;
+    const here = this.model?.position;
+    const distance = at && here ? Math.hypot(at.x - here.x, at.z - here.z) : 0;
+    if (sounds.play(name, velocity, distance)) this.host.dataset.soundLast = name;
+  }
+
+  /**
+   * Sounds that follow the state each frame: footsteps on the beats of the walk or run clip (wood in the room,
+   * grass on the crossroads green, ground elsewhere), landing, the seat and laptop stages, typing, and the office
+   * chair's casters rolling louder and brighter with speed, plus its landing after a ramp.
+   */
+  private updateSounds(delta: number): void {
+    const sounds = this.options.sounds;
+    const controller = this.controller;
+    if (!sounds || !controller || !this.model) return;
+    const airborne = controller.airborne;
+    if (this.wasAirborne && !airborne) this.sound(this.stepSound());
+    this.wasAirborne = airborne;
+    const action = this.actions.get(this.activeClip);
+    const locomotion = this.host.dataset.locomotion;
+    if (action && !airborne && (locomotion === 'walk' || locomotion === 'run')) {
+      // Two steps per loop: on its start and half way.
+      const phase = (action.time / action.getClip().duration) % 1;
+      const half = phase >= 0.5 ? 1 : 0;
+      if (this.stepHalf !== undefined && half !== this.stepHalf) this.sound(this.stepSound());
+      this.stepHalf = half;
+    } else this.stepHalf = undefined;
+    const stage = this.interaction?.phase === 'seated' ? this.interaction.state.stage : 'idle';
+    if (stage !== this.lastStage) {
+      if (stage === 'sitting' || stage === 'standing') this.sound('creak');
+      else if (stage === 'opening') this.sound('lidOpen');
+      else if (stage === 'closing') this.sound('lidClose');
+      this.lastStage = stage;
+    }
+    if (stage === 'typing') {
+      this.typingIn -= delta;
+      if (this.typingIn <= 0) {
+        this.sound('key');
+        this.typingIn = 0.07 + Math.random() * 0.16;
+      }
+    }
+    const chair = this.chairDrive;
+    if (chair) {
+      const speed = Math.hypot(chair.vx, chair.vz);
+      // The rumble rises quickly and dies away a little slower; it fades with the chair's distance.
+      const target = chair.airborne ? 0 : Math.min(speed / DRIVE.maxSpeed, 1);
+      this.rolling += (target - this.rolling) * (1 - Math.exp(-delta * (target > this.rolling ? 10 : 5)));
+      const away = distanceGain(Math.hypot(chair.x - this.model.position.x, chair.z - this.model.position.z));
+      sounds.loop('rolling', this.rolling < 0.02 ? 0 : this.rolling * away, this.rolling);
+      if (this.chairAirborne && !chair.airborne) this.sound('crash', 2.5, chair);
+      this.chairAirborne = chair.airborne;
+    }
+  }
+
+  /**
+   * The rider of the office chair over the seated clip: the trunk leans forwards when the chair speeds up, back when it
+   * brakes and into the turns, and the hands rest on the arm pads. The pose blends in at the end of sitting down and out
+   * as the rider stands up.
+   */
+  private poseRider(delta: number): void {
+    const rig = this.circuit?.chair;
+    const chair = this.chairDrive;
+    const model = this.model;
+    if (!rig || !chair || !model) return;
+    const stage = this.riding ? this.interaction!.state.stage : 'idle';
+    const action = this.actions.get(this.activeClip);
+    const progress = action ? action.time / action.getClip().duration : 0;
+    const target = stage === 'seated' || (stage === 'sitting' && progress > 0.6) ? 1 : 0;
+    this.riderWeight += (target - this.riderWeight) * (1 - Math.exp(-delta * 8));
+    if (target === 0 && this.riderWeight < 0.01) this.riderWeight = 0;
+    const forward = forwardSpeed(chair);
+    if (this.riderLast && delta > 0) {
+      const accel = (forward - this.riderLast.forward) / delta;
+      this.riderAccel += (accel - this.riderAccel) * (1 - Math.exp(-delta * 12));
+      let turned = chair.yaw - this.riderLast.yaw;
+      turned = Math.atan2(Math.sin(turned), Math.cos(turned));
+      leanStep(this.riderLean, leanTarget(this.riderAccel, turned / delta, chair.boosting), delta);
+    }
+    this.riderLast = { forward, yaw: chair.yaw };
+    for (const [bone, { clip, posed }] of this.riderBones) if (bone.quaternion.equals(posed)) bone.quaternion.copy(clip);
+    this.riderBones.clear();
+    const weight = this.riderWeight;
+    if (weight <= 0) return;
+    const names = ['spine', 'chest', 'neck', 'upper_arm_L', 'forearm_L', 'hand_L', 'upper_arm_R', 'forearm_R', 'hand_R'];
+    const touched = names.map((name) => model.getObjectByName(name)).filter((bone): bone is Object3D => !!bone);
+    for (const bone of touched) this.riderBones.set(bone, { clip: bone.quaternion.clone(), posed: new Quaternion() });
+    model.updateMatrixWorld(true);
+    const ahead = new Vector3(0, 0, 1).transformDirection(model.matrixWorld);
+    const right = new Vector3(-1, 0, 0).transformDirection(model.matrixWorld);
+    const bone = (name: string) => model.getObjectByName(name);
+    const lean = this.riderLean;
+    applyLean({ spine: bone('spine'), chest: bone('chest'), neck: bone('neck') },
+      { ...lean, pitch: lean.pitch * weight, roll: lean.roll * weight }, right, ahead);
+    // The rig's side names are mirrored: _L is the rider's right arm.
+    for (const [side, suffix, out] of [['right', 'L', 1], ['left', 'R', -1]] as const) {
+      const pad = rig.armrests[side];
+      const upper = bone(`upper_arm_${suffix}`);
+      const fore = bone(`forearm_${suffix}`);
+      const hand = bone(`hand_${suffix}`);
+      if (!pad || !upper || !fore || !hand) continue;
+      // The wrist just above the pad, a little ahead of its middle.
+      const wrist = pad.getWorldPosition(new Vector3()).addScaledVector(ahead, RIDER_WRIST.ahead).add(new Vector3(0, RIDER_WRIST.up, 0));
+      // The elbow bends outwards and back.
+      const pole = upper.getWorldPosition(new Vector3()).addScaledVector(right, 0.4 * out).addScaledVector(ahead, -0.5).add(new Vector3(0, -0.3, 0));
+      solveArm(upper, fore, hand, wrist, pole, weight);
+      restHand(hand, ahead, weight);
+    }
+    for (const [bone, entry] of this.riderBones) entry.posed.copy(bone.quaternion);
+  }
+
+  /** Half the soda drops in low quality or with reduced motion. */
+  private nitroDensity(): number {
+    return this.quality === 'low' || this.reducedMotion ? 0.5 : 1;
+  }
+
+  /**
+   * The nitro's show: a pop and a gush when it lights (the caps fly off the first time), the jet and the fizz while it
+   * pushes, the bottles emptying with the fuel; `data-nitro` (none | boosting | empty) and `data-fuel`.
+   */
+  private updateNitro(delta: number): void {
+    const rig = this.circuit?.chair;
+    const state = this.chairDrive;
+    const spray = this.spray;
+    if (!rig || !state || !spray || !this.outsideData) return;
+    const boosting = state.boosting;
+    const back = new Vector3(-Math.sin(state.yaw), 0, -Math.cos(state.yaw));
+    const carried = new Vector3(state.vx, state.vy, state.vz);
+    const lit = boosting && !this.wasBoosting;
+    if (lit) {
+      this.sound('pop');
+      if (!this.capsPopped) {
+        for (const bottle of rig.bottles) if (bottle.cap) spray.launchCap(bottle.cap, back, carried);
+        this.capsPopped = true;
+      }
+    }
+    if (boosting) spray.emit(rig.bottles.map((bottle) => bottle.nozzle.getWorldPosition(new Vector3())), back, carried, delta, lit);
+    this.wasBoosting = boosting;
+    this.options.sounds?.loop('fizz', boosting ? 0.9 : 0, 0.4 + state.fuel * 0.6);
+    for (const bottle of rig.bottles) if (bottle.liquid) bottle.liquid.scale.y = Math.max(0.03, state.fuel);
+    spray.update(delta, this.outsideData.groundY);
+    const nitro = boosting ? 'boosting' : state.fuel < NITRO.restart ? 'empty' : 'none';
+    if (this.host.dataset.nitro !== nitro) this.host.dataset.nitro = nitro;
+    const fuel = state.fuel.toFixed(2);
+    if (this.host.dataset.fuel !== fuel) this.host.dataset.fuel = fuel;
+  }
+
+  /** What the feet are on: the room's wooden floor, the crossroads green or the outside ground. */
+  private stepSound(): SoundName {
+    const position = this.model?.position;
+    const data = this.outsideData;
+    if (!position || !data) return 'stepWood';
+    const { platform } = data;
+    if (position.x >= platform.minX && position.x <= platform.maxX && position.z >= platform.minZ && position.z <= platform.maxZ) return 'stepWood';
+    const lamp = data.lamppost?.position;
+    if (lamp && Math.hypot(position.x - lamp.x, position.z - lamp.z) < CROSSROADS_GREEN) return 'stepGrass';
+    return 'stepGround';
   }
 
   /** Sign zones: the fence of the zone the character walks into rises; leaving it (or jumping out) lowers it. */
@@ -1414,6 +1693,7 @@ export class CharacterViewer {
     const sign = signAt({ x: this.model.position.x, z: this.model.position.z }, this.zones, this.sign);
     if (sign?.id === this.sign) return;
     this.sign = sign?.id;
+    if (sign) this.sound('zone');
     this.areas.show(sign?.id);
     this.host.dataset.sign = sign?.id ?? 'none';
     this.emitSign();
@@ -1430,6 +1710,7 @@ export class CharacterViewer {
     const sign = id ? this.zones.find((entry) => entry.id === id) : undefined;
     if (!sign) return;
     this.areas?.pulse(sign.id);
+    this.sound(sign.kind === 'reset' ? 'reset' : 'open');
     if (sign.kind === 'reset') {
       if (sign.target === 'targets') this.resetTargets();
       else if (sign.target) this.physics?.reset(sign.target);
@@ -1523,6 +1804,7 @@ export class CharacterViewer {
       if (down) pressed.push(key.name);
       const depth = pressStep(key.depth, down, delta, this.reducedMotion);
       if (depth === key.depth) continue;
+      if (key.depth === 0 && depth > 0) this.sound('floorKey');
       key.depth = depth;
       const { position, quaternion } = key.piece;
       this.pieces.set(key.index, { position: { x: position.x, y: position.y - KEY_SINK * depth, z: position.z }, quaternion });
@@ -1720,6 +2002,7 @@ export class CharacterViewer {
   setQuality(quality: QualityId): void {
     if (this.disposed) return;
     this.quality = quality;
+    if (this.spray) this.spray.density = this.nitroDensity();
     const profile = QUALITY[quality];
     const range = ratioRange(quality, window.devicePixelRatio);
     this.pixelRatio = Math.min(range.max, Math.max(range.min, quality === 'auto' ? this.pixelRatio : range.max));
@@ -1736,9 +2019,28 @@ export class CharacterViewer {
     this.resize();
   }
 
+  /** The key the sign zones' labels show: ENTER, a gamepad button, or none on a touch screen. */
+  setOpenKey(key: string): void {
+    this.openKeyLabel = key;
+    this.areas?.setOpenKey(key);
+  }
+
+  /** The page's actions: the keyboard, which the touch controls and a gamepad feed too. */
+  get input(): KeyboardInput | undefined {
+    return this.keyboard;
+  }
+
+  /** Keys drive the character only while this is on (the room page holds them until START is pressed). */
+  setInputEnabled(enabled: boolean): void {
+    if (!this.keyboard) return;
+    this.keyboard.enabled = enabled;
+    if (!enabled) this.keyboard.clear();
+  }
+
   setReducedMotion(enabled: boolean): void {
     if (this.disposed) return;
     this.reducedMotion = enabled;
+    if (this.spray) this.spray.density = this.nitroDensity();
     if (this.controls) this.controls.enableDamping = !enabled;
     this.areas?.setReducedMotion(enabled);
     this.host.dataset.reducedMotion = String(enabled);
@@ -1923,6 +2225,8 @@ export class CharacterViewer {
       if (this.interaction && this.interaction.phase !== 'free') this.driveInteraction(delta);
       else this.drive(delta);
       this.updateCircuit(delta);
+      // The chair moved after the rider was placed for this frame: put the rider back on its seat.
+      if (this.riding) this.placeForClip(this.activeClip);
       this.syncLaptop(delta);
       this.updateElevation(delta);
       this.updateOutside(delta);
@@ -1933,15 +2237,20 @@ export class CharacterViewer {
       this.mixer.update(delta);
       this.updateThrow();
       this.updateStrike(delta);
+      this.poseRider(delta);
       if (this.fadeRemaining > 0) {
         this.fadeRemaining -= delta * this.speed;
         if (this.fadeRemaining <= 0) this.finishFade();
       }
       this.emitAnimation();
     }
-    if (this.ready && this.room) this.followCharacter(delta);
+    if (this.ready && this.room) {
+      this.followCharacter(delta);
+      this.updateSounds(delta);
+    }
     this.controls?.update();
     this.areas?.update(delta);
+    this.about?.update(delta, this.reducedMotion);
     this.updateHover();
     this.reportSign();
     this.updateBubble();

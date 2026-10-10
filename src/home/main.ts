@@ -1,7 +1,13 @@
 import './home.css';
+import './startScreen.css';
+import './touch.css';
 import { LANGUAGES, getLanguage, initialLanguage, isLanguage, setLanguage, t, type MessageKey } from '../core/i18n.ts';
 import { QUALITY, isQualityId, readPreferences, savePreferences } from '../core/quality.ts';
-import { CharacterViewer, type CameraMode, type LightPreset, type MovementState, type SignLink, type ViewerStatus } from '../viewer/CharacterViewer';
+import { StartScreen } from './StartScreen.ts';
+import { TouchControls } from './TouchControls.ts';
+import { GamepadInput, type PadKind } from '../input/GamepadInput.ts';
+import { Sounds } from '../audio/Sounds.ts';
+import { CharacterViewer, type CameraMode, type LightPreset, type MovementState, type ViewerStatus } from '../viewer/CharacterViewer';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('#app not found');
@@ -16,8 +22,6 @@ app.innerHTML = `
   <div class="room-page">
     <div id="canvas-host" class="room-canvas" aria-busy="true" data-i18n-label="room.label" role="img"></div>
     <header class="room-bar">
-      <a class="room-brand" href="./" data-i18n-label="brand.label"><span class="room-mark" aria-hidden="true">d.</span><span>DEVELOPER ROOM</span></a>
-      <div class="room-status" role="status" aria-live="polite" aria-atomic="true" data-state="loading"><span class="room-dot" aria-hidden="true"></span><span id="status-label"></span></div>
       <div class="language-switch tool-segmented" role="group" data-i18n-label="language.label">
         ${LANGUAGES.map((language) => `<button type="button" data-language="${language}" lang="${language}" aria-pressed="false">${language.toUpperCase()}</button>`).join('')}
       </div>
@@ -26,17 +30,14 @@ app.innerHTML = `
       <span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>
     </button>
     <nav class="room-tools" id="room-tools" data-i18n-label="menu.label" hidden>
+      <div class="tool-group" role="group" aria-labelledby="sound-label">
+        <span class="tool-label" id="sound-label" data-i18n="sound.label"></span>
+        <button type="button" class="tool-toggle" id="sound-toggle" aria-pressed="true" aria-keyshortcuts="M"><span class="toggle-track" aria-hidden="true"></span><span id="sound-state"></span></button>
+      </div>
       <div class="tool-group" role="group" aria-labelledby="quality-label">
         <span class="tool-label" id="quality-label" data-i18n="quality.label"></span>
         <div class="tool-segmented">
           ${Object.keys(QUALITY).map((id) => `<button type="button" data-quality="${id}" aria-pressed="false" data-i18n="quality.${id}"></button>`).join('')}
-        </div>
-      </div>
-      <div class="tool-group" role="group" aria-labelledby="light-label">
-        <span class="tool-label" id="light-label" data-i18n="light.label"></span>
-        <div class="tool-segmented">
-          <button type="button" data-light="neutral" aria-pressed="true"><span class="tool-dot neutral" aria-hidden="true"></span><span data-i18n="light.neutral"></span></button>
-          <button type="button" data-light="violet" aria-pressed="false"><span class="tool-dot violet" aria-hidden="true"></span><span data-i18n="light.violet"></span></button>
         </div>
       </div>
       <div class="tool-group" role="group" aria-labelledby="camera-label">
@@ -49,18 +50,13 @@ app.innerHTML = `
         <button type="button" class="tool-toggle" id="reduced-motion" aria-pressed="false" aria-describedby="motion-copy"><span class="toggle-track" aria-hidden="true"></span><span data-i18n="motion.reduced"></span></button>
         <span id="motion-copy" class="sr-only" data-i18n="motion.copy"></span>
       </div>
-    </nav>
-    <section class="room-hud" data-i18n-label="hud.label">
-      <p id="hud-hint" role="status" aria-live="polite"></p>
-      <a id="sign-link" class="sign-link" href="#" target="_blank" rel="noopener noreferrer" hidden></a>
-      <div class="hud-actions">
-        <button type="button" id="hud-help" aria-expanded="false" aria-controls="hud-help-text" data-i18n="hud.help"></button>
-        <button type="button" id="hud-reset" data-i18n="hud.reset"></button>
+      <div class="tool-group" role="group" aria-labelledby="reset-label">
+        <span class="tool-label" id="reset-label" data-i18n="reset.label"></span>
+        <button type="button" class="tool-toggle" id="reset-position" aria-keyshortcuts="R" data-i18n="reset.button"></button>
       </div>
-      <p id="hud-help-text" class="hud-help" data-i18n="hud.helpText" hidden></p>
-    </section>
-    <div class="room-overlay" id="viewer-overlay">
-      <div class="room-overlay-card"><span class="room-ring" id="loading-ring" aria-hidden="true"></span><h1 id="overlay-title"></h1><p id="overlay-detail"></p><button type="button" class="room-retry" id="retry" data-i18n="overlay.retry" hidden></button></div>
+    </nav>
+    <div class="room-overlay" id="viewer-overlay" hidden>
+      <div class="room-overlay-card"><h1 id="overlay-title"></h1><p id="overlay-detail"></p><button type="button" class="room-retry" id="retry" data-i18n="overlay.retry" hidden></button></div>
     </div>
   </div>
 `;
@@ -72,35 +68,33 @@ function element<T extends HTMLElement>(selector: string): T {
 }
 
 const host = element<HTMLDivElement>('#canvas-host');
-const status = element<HTMLDivElement>('.room-status');
-const statusLabel = element<HTMLSpanElement>('#status-label');
 const overlay = element<HTMLDivElement>('#viewer-overlay');
 const overlayTitle = element<HTMLHeadingElement>('#overlay-title');
 const overlayDetail = element<HTMLParagraphElement>('#overlay-detail');
-const loadingRing = element<HTMLSpanElement>('#loading-ring');
 const retry = element<HTMLButtonElement>('#retry');
-const hint = element<HTMLParagraphElement>('#hud-hint');
-const help = element<HTMLButtonElement>('#hud-help');
-const helpText = element<HTMLParagraphElement>('#hud-help-text');
-const reset = element<HTMLButtonElement>('#hud-reset');
-const signLink = element<HTMLAnchorElement>('#sign-link');
+const reset = element<HTMLButtonElement>('#reset-position');
+const soundToggle = element<HTMLButtonElement>('#sound-toggle');
+const soundState = element<HTMLSpanElement>('#sound-state');
 const cameraFree = element<HTMLButtonElement>('#camera-free');
 const reducedMotion = element<HTMLButtonElement>('#reduced-motion');
 const menuToggle = element<HTMLButtonElement>('#menu-toggle');
 const tools = element<HTMLElement>('#room-tools');
 const qualityButtons = Array.from(app.querySelectorAll<HTMLButtonElement>('[data-quality]'));
-const lightButtons = Array.from(app.querySelectorAll<HTMLButtonElement>('[data-light]'));
 const languageButtons = Array.from(app.querySelectorAll<HTMLButtonElement>('[data-language]'));
 const listeners = new AbortController();
 /** The character starts on the room floor near its open front corner, facing +X (the way out towards the intro), so the whole room shows. */
 const SPAWN = { position: { x: 2.3, z: 2.3 }, yaw: Math.PI / 2 };
-const readyHint = (running: boolean) => t('hud.hint', { run: t(running ? 'hud.runOn' : 'hud.runOff') });
-let running = false;
-let movementState: MovementState | null = null;
-let movementText: string | undefined;
+/** The room page always uses the neutral light; only the studio offers the violet one. */
+const LIGHT: LightPreset = 'neutral';
 let lastStatus: ViewerStatus = { kind: 'loading', title: '', detail: '' };
-let currentSign: SignLink | null = null;
-let light: LightPreset = 'neutral';
+/** Whether START was pressed: until then the keys do not move the character. */
+let started = false;
+/**
+ * A touch screen (a coarse pointer and no fine one): on-screen controls instead of the keyboard keys and the controls
+ * panel on the floor. A first touch on any other device brings the on-screen controls too.
+ */
+let touch = window.matchMedia('(pointer: coarse)').matches && !window.matchMedia('(any-pointer: fine)').matches;
+document.documentElement.dataset.touch = String(touch);
 let camera: CameraMode = 'follow';
 let viewer: CharacterViewer | undefined;
 let generation = 0;
@@ -108,6 +102,57 @@ let disposed = false;
 
 // Off until switched on here or in the studio (the room page does not follow the system setting).
 const motionReduced = () => preferences.reducedMotion ?? false;
+
+/** Sound effects start with START (browsers only allow audio after a gesture); M or the menu switch mutes them. */
+const sounds = new Sounds({ muted: !preferences.sound, base: import.meta.env.BASE_URL });
+
+const touchControls = new TouchControls(app.querySelector<HTMLDivElement>('.room-page')!, host, () => viewer?.input);
+const gamepad = new GamepadInput(() => viewer?.input);
+gamepad.inZone = () => (host.dataset.sign ?? 'none') !== 'none';
+gamepad.onMenu = () => setMenu(tools.hidden !== false);
+gamepad.onUse = (kind) => setInputMode('gamepad', kind);
+
+/**
+ * What the player uses now, for the hints: `data-input` (keyboard | touch | gamepad) and `data-gamepad` on the page,
+ * and the key the sign zones show (ENTER, the pad's ✕ or A, nothing on a touch screen).
+ */
+let inputMode = '';
+function setInputMode(mode: 'keyboard' | 'touch' | 'gamepad', kind?: PadKind): void {
+  const key = `${mode}:${kind ?? ''}`;
+  if (key === inputMode) return;
+  inputMode = key;
+  const root = document.documentElement;
+  root.dataset.input = mode;
+  if (kind) root.dataset.gamepad = kind;
+  viewer?.setOpenKey(mode === 'gamepad' ? (kind === 'xbox' ? 'A' : '✕') : mode === 'touch' ? '' : 'ENTER');
+}
+
+const start = new StartScreen(app.querySelector<HTMLDivElement>('.room-page')!, {
+  label: t('start.label'),
+  reducedMotion: motionReduced,
+  onStart: () => {
+    started = true;
+    if (touch) touchControls.show();
+    gamepad.start();
+    sounds.unlock();
+    applySound();
+    viewer?.setInputEnabled(true);
+  },
+});
+
+function applySound(): void {
+  soundToggle.setAttribute('aria-pressed', String(preferences.sound));
+  soundState.textContent = t(preferences.sound ? 'sound.on' : 'sound.off');
+  host.dataset.sound = !sounds.unlocked ? 'locked' : preferences.sound ? 'on' : 'off';
+}
+
+function toggleSound(): void {
+  preferences.sound = !preferences.sound;
+  savePreferences(storage, preferences);
+  sounds.setMuted(!preferences.sound);
+  applySound();
+  sounds.play('ui');
+}
 
 function applyPreferences(): void {
   for (const button of qualityButtons) button.setAttribute('aria-pressed', String(button.dataset.quality === preferences.quality));
@@ -125,37 +170,28 @@ function applyTexts(): void {
   for (const node of app!.querySelectorAll<HTMLElement>('[data-i18n-label]')) node.setAttribute('aria-label', t(node.dataset.i18nLabel as MessageKey));
   for (const button of languageButtons) button.setAttribute('aria-pressed', String(button.dataset.language === language));
   menuToggle.setAttribute('aria-label', t(tools.hidden ? 'menu.open' : 'menu.close'));
+  start.setLabel(t('start.label'));
+  touchControls.setLabels(t);
+  applySound();
   updateStatus(lastStatus);
-  updateMovement(movementState, movementText);
-  updateSign(currentSign);
 }
 
 function updateStatus(state: ViewerStatus): void {
   lastStatus = state;
-  status.dataset.state = state.kind;
-  statusLabel.textContent = state.kind === 'ready' ? t('status.ready') : state.kind === 'loading' ? t('status.loading') : state.title;
+  host.dataset.state = state.kind;
   host.setAttribute('aria-busy', String(state.kind === 'loading'));
-  overlay.hidden = state.kind === 'ready';
-  overlayTitle.textContent = state.kind === 'loading' ? t('overlay.loading') : state.title;
-  overlayDetail.textContent = state.kind === 'loading' ? t('overlay.detail') : state.detail;
-  loadingRing.hidden = state.kind !== 'loading';
+  // While loading, the start screen draws the progress; the card only reports errors.
+  overlay.hidden = state.kind !== 'error';
+  if (state.kind === 'error') start.hide();
+  else if (start.current !== 'done') start.show();
+  if (state.kind === 'ready') start.ready();
+  overlayTitle.textContent = state.title;
+  overlayDetail.textContent = state.detail;
   retry.hidden = state.kind !== 'error';
 }
 
-function updateMovement(state: MovementState | null, text?: string): void {
-  movementState = state;
-  movementText = text;
-  hint.textContent = text ?? readyHint(running);
+function updateMovement(state: MovementState | null): void {
   reset.disabled = state !== 'ready' && state !== 'interacting';
-}
-
-function updateSign(sign: SignLink | null): void {
-  currentSign = sign;
-  signLink.hidden = !sign;
-  if (!sign) return;
-  signLink.href = sign.link;
-  signLink.textContent = `${sign.label} ↗`;
-  signLink.dataset.sign = sign.id;
 }
 
 /** The options panel: closed by default for a clean view; Escape, a click outside or the button close it. */
@@ -171,8 +207,8 @@ function mount(): void {
   const current = ++generation;
   const live = () => !disposed && current === generation;
   viewer?.dispose();
-  updateSign(null);
-  host.dataset.light = light;
+  updateMovement(null);
+  host.dataset.light = LIGHT;
   host.dataset.scene = 'room';
   host.dataset.model = 'v4rig';
   viewer = new CharacterViewer(host, {
@@ -180,17 +216,18 @@ function mount(): void {
     stats: () => {},
     orbit: () => {},
     animation: () => {},
-    movement: (state, text) => { if (live()) updateMovement(state, text); },
-    run: (on) => {
-      if (!live()) return;
-      running = on;
-      updateMovement(movementState, movementText);
-    },
-    sign: (sign) => { if (live()) updateSign(sign); },
+    movement: (state) => { if (live()) updateMovement(state); },
+    progress: (fraction) => { if (live()) start.setProgress(fraction); },
+    run: (on) => { if (live()) touchControls.setRunning(on); },
   }, {
-    modelId: 'v4rig', view: 'three-quarter', light, wireframe: false, scene: 'room',
-    quality: preferences.quality, reducedMotion: motionReduced(), cameraMode: camera, spawn: SPAWN,
+    modelId: 'v4rig', view: 'three-quarter', light: LIGHT, wireframe: false, scene: 'room',
+    quality: preferences.quality, reducedMotion: motionReduced(), cameraMode: camera, spawn: SPAWN, sounds, touch,
   });
+  viewer.setInputEnabled(started);
+  const mode = inputMode;
+  inputMode = '';
+  const [kind, pad] = mode.split(':');
+  setInputMode((kind || (touch ? 'touch' : 'keyboard')) as 'keyboard' | 'touch' | 'gamepad', (pad || undefined) as PadKind | undefined);
 }
 
 for (const button of languageButtons) {
@@ -204,6 +241,25 @@ for (const button of languageButtons) {
   }, { signal: listeners.signal });
 }
 menuToggle.addEventListener('click', () => setMenu(tools.hidden !== false), { signal: listeners.signal });
+soundToggle.addEventListener('click', toggleSound, { signal: listeners.signal });
+window.addEventListener('keydown', (event) => {
+  if (event.code !== 'KeyM' || event.repeat || event.ctrlKey || event.altKey || event.metaKey) return;
+  if (event.target instanceof Element && event.target.closest('input, select, textarea')) return;
+  toggleSound();
+}, { signal: listeners.signal });
+document.addEventListener('visibilitychange', () => sounds.setHidden(document.hidden), { signal: listeners.signal });
+window.addEventListener('keydown', () => setInputMode('keyboard'), { signal: listeners.signal });
+window.addEventListener('pointerdown', (event) => setInputMode(event.pointerType === 'touch' ? 'touch' : 'keyboard'), { signal: listeners.signal });
+window.addEventListener('touchstart', () => {
+  if (touch) return;
+  touch = true;
+  document.documentElement.dataset.touch = 'true';
+  if (started) touchControls.show();
+}, { signal: listeners.signal, passive: true });
+// A soft click for the page's own buttons (the sound switch plays its own once it is on).
+for (const button of app.querySelectorAll<HTMLButtonElement>('.room-tools button:not(#sound-toggle), .language-switch button, .menu-toggle')) {
+  button.addEventListener('click', () => sounds.play('ui'), { signal: listeners.signal });
+}
 window.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape' || tools.hidden) return;
   setMenu(false);
@@ -223,13 +279,6 @@ for (const button of qualityButtons) {
     viewer?.setQuality(quality);
   }, { signal: listeners.signal });
 }
-for (const button of lightButtons) {
-  button.addEventListener('click', () => {
-    light = button.dataset.light as LightPreset;
-    viewer?.setLight(light);
-    for (const option of lightButtons) option.setAttribute('aria-pressed', String(option === button));
-  }, { signal: listeners.signal });
-}
 cameraFree.addEventListener('click', () => {
   camera = camera === 'follow' ? 'free' : 'follow';
   cameraFree.setAttribute('aria-pressed', String(camera === 'free'));
@@ -242,13 +291,12 @@ reducedMotion.addEventListener('click', () => {
   viewer?.setReducedMotion(motionReduced());
 }, { signal: listeners.signal });
 retry.addEventListener('click', mount, { signal: listeners.signal });
-reset.addEventListener('click', () => viewer?.resetPosition(), { signal: listeners.signal });
-help.addEventListener('click', () => {
-  helpText.hidden = !helpText.hidden;
-  help.setAttribute('aria-expanded', String(!helpText.hidden));
+reset.addEventListener('click', () => {
+  viewer?.resetPosition();
+  setMenu(false);
 }, { signal: listeners.signal });
 // Buttons keep focus after a click; Space and arrows must still drive the character, not the button.
-for (const button of app.querySelectorAll<HTMLButtonElement>('.room-tools button, .hud-actions button, .language-switch button, .menu-toggle')) {
+for (const button of app.querySelectorAll<HTMLButtonElement>('.room-tools button, .language-switch button, .menu-toggle')) {
   button.addEventListener('pointerup', () => button.blur(), { signal: listeners.signal });
 }
 
@@ -256,7 +304,11 @@ function dispose(): void {
   if (disposed) return;
   disposed = true;
   listeners.abort();
+  start.dispose();
+  touchControls.dispose();
+  gamepad.dispose();
   viewer?.dispose();
+  sounds.dispose();
   viewer = undefined;
 }
 

@@ -20,6 +20,11 @@ export type StaticBox = { center: Vec; half: [number, number, number]; yaw: numb
 export type TargetDisc = { center: Vec; radius: number; yaw: number };
 /** A thrown laptop hitting a target disc: which target, how far from its centre (in the disc's plane) and the laptop. */
 export type TargetHit = { target: number; distance: number; laptop: ThrownLaptop };
+/** Something hit a loose piece (its index), a thrown laptop or a chick this hard (m/s along the contact normal), for its sound. */
+export type Impact = { source: number | 'laptop' | 'chick'; speed: number; position: Vec };
+/** Impacts slower than this make no sound and are not reported (resting contacts jitter well below it). */
+const IMPACT_MIN = 0.5;
+type CollideEvent = { body: BodyType; contact: { getImpactVelocityAlongNormal(): number } };
 /** Character feet; a kinematic capsule of spheres above them pushes the pieces. */
 export type Pusher = { x: number; y: number; z: number };
 /** The office chair while it is ridden: where its base stands on the ground and its heading (yaw about +Y). */
@@ -125,6 +130,10 @@ export class PropPhysics {
   private clock = 0;
   /** Called when a thrown laptop first touches a target disc (once per laptop and target). */
   onTargetHit?: (hit: TargetHit) => void;
+  /** Called when a piece, a laptop or a chick hits something hard enough to be heard. */
+  onImpact?: (impact: Impact) => void;
+  /** Called when a wooden fence breaks apart (its joint key). */
+  onBreak?: (key: string) => void;
   private readonly targetBodies: BodyType[] = [];
   /** Each piece's flaps (none for most). */
   readonly flaps: Flap[][] = [];
@@ -206,6 +215,8 @@ export class PropPhysics {
       } else body.addShape(new Box(new Vec3(...piece.half)));
       this.configure(body, settings);
       body.collisionFilterGroup = GROUP.piece;
+      const index = this.bodies.length;
+      body.addEventListener('collide', (event: CollideEvent) => this.report(index, body, event));
       this.world.addBody(body);
       this.bodies.push(body);
       this.flaps.push((piece.flaps ?? []).map((at) => this.addFlap(body, at)));
@@ -262,16 +273,26 @@ export class PropPhysics {
     if (key && speed >= BREAK_SPEED) this.toBreak.add(key);
   }
 
+  /** A contact on `body`, reported when it is hard enough to hear. */
+  private report(source: Impact['source'], body: BodyType, event: CollideEvent): void {
+    if (!this.onImpact) return;
+    const speed = Math.abs(event.contact.getImpactVelocityAlongNormal());
+    if (speed >= IMPACT_MIN) this.onImpact({ source, speed, position: body.position });
+  }
+
   /** The fences hit hard during the step let go of their planks, which fly on their own until the next reset. */
   private readonly breakJoints = (): void => {
     if (!this.toBreak.size) return;
+    const broke = new Set<string>();
     for (const joint of this.joints) {
       if (!joint.constraint || !this.toBreak.has(joint.key)) continue;
       this.world.removeConstraint(joint.constraint);
       joint.constraint = undefined;
       this.bodies[joint.plank].wakeUp();
+      broke.add(joint.key);
     }
     this.toBreak.clear();
+    for (const key of broke) this.onBreak?.(key);
   };
 
   /**
@@ -394,7 +415,12 @@ export class PropPhysics {
     // The lid is a hair shorter than the base and rests on it, hinged at the base's back (+Z) edge.
     const lid = new Body({ mass: LAPTOP.lidMass, material, shape: new Box(new Vec3(hw, LAPTOP.lid / 2, hd - 0.005)) });
     // A laptop flying into a fence breaks it like the chair does.
-    for (const part of [base, lid]) part.addEventListener('collide', (event: { body: BodyType }) => this.knock(event.body, part.velocity.vsub(event.body.velocity).length()));
+    for (const part of [base, lid]) {
+      part.addEventListener('collide', (event: CollideEvent) => {
+        this.knock(event.body, part.velocity.vsub(event.body.velocity).length());
+        this.report('laptop', part, event);
+      });
+    }
     const orientation = new Quaternion(pose.quaternion.x, pose.quaternion.y, pose.quaternion.z, pose.quaternion.w);
     base.position.set(pose.position.x, pose.position.y, pose.position.z);
     base.quaternion.copy(orientation);
@@ -476,6 +502,7 @@ export class PropPhysics {
     body.quaternion.setFromEuler(0, yaw, 0);
     body.velocity.set(velocity.x, velocity.y, velocity.z);
     body.angularVelocity.set(spin.x, spin.y, spin.z);
+    body.addEventListener('collide', (event: CollideEvent) => this.report('chick', body, event));
     this.world.addBody(body);
     this.chicks.push(body);
     this.idle = false;

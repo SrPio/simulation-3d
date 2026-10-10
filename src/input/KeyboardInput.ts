@@ -1,17 +1,32 @@
 import type { MoveIntent } from '../character/CharacterController';
 
-export type PressAction = 'interact' | 'laptop' | 'jump' | 'open' | 'throw' | 'punch' | 'kick' | 'konami';
+export type PressAction = 'interact' | 'laptop' | 'jump' | 'open' | 'throw' | 'punch' | 'kick' | 'konami' | 'reset';
 const PRESSES: Record<string, PressAction> = {
-  KeyE: 'interact', KeyL: 'laptop', Space: 'jump', Enter: 'open', NumpadEnter: 'open', KeyF: 'throw', KeyJ: 'punch', KeyK: 'kick',
+  KeyE: 'interact', KeyL: 'laptop', Space: 'jump', Enter: 'open', NumpadEnter: 'open', KeyF: 'throw', KeyJ: 'punch', KeyK: 'kick', KeyR: 'reset',
 };
-/** Keys whose release matters too: holding them charges a strike or a throw. */
-export type HoldAction = 'punch' | 'kick' | 'throw';
-const HOLDS = new Set<PressAction>(['punch', 'kick', 'throw']);
+/** Keys whose release matters too: holding them charges a strike or a throw, or keeps the office chair's nitro on (Space). */
+export type HoldAction = 'punch' | 'kick' | 'throw' | 'jump';
+const HOLDS = new Set<PressAction>(['punch', 'kick', 'throw', 'jump']);
 
 const BINDINGS: Record<string, 'forward' | 'back' | 'left' | 'right'> = {
   KeyW: 'forward', ArrowUp: 'forward', KeyS: 'back', ArrowDown: 'back',
   KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
 };
+
+/** Analog movement from another source (the touch joystick, a gamepad stick): forward up the screen and right, -1…1. */
+export type AnalogMove = { forward: number; right: number; run: boolean };
+
+/** Keys and analog movement together: the larger push on each axis wins, clamped to -1…1. */
+export function combineIntent(keys: { forward: number; right: number }, analog: Iterable<AnalogMove>, running: boolean): MoveIntent {
+  let { forward, right } = keys;
+  let run = running;
+  for (const move of analog) {
+    if (Math.abs(move.forward) > Math.abs(forward)) forward = move.forward;
+    if (Math.abs(move.right) > Math.abs(right)) right = move.right;
+    run ||= move.run;
+  }
+  return { forward: Math.max(-1, Math.min(1, forward)), right: Math.max(-1, Math.min(1, right)), run };
+}
 
 /** The Konami code: ↑ ↑ ↓ ↓ ← → ← → B A (key codes, so it works on any keyboard layout). */
 export const KONAMI = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'KeyB', 'KeyA'] as const;
@@ -33,8 +48,9 @@ function ownsKeyboard(target: EventTarget | null): boolean {
 }
 
 /**
- * WASD / arrows for movement, Shift toggles running on and off, Space to jump, F to throw, J to punch and K to kick
- * (each held to charge, released to let go), E and L for seats and the laptop, Enter to open a sign's link. Keys are released when the window loses focus or the
+ * The page's actions, from the keyboard and from the on-screen touch controls or a gamepad (`setAnalog`, `press`,
+ * `release`, `toggleRun`), so the viewer reads one source. WASD / arrows for movement, Shift toggles running on and off, Space to jump, F to throw, J to punch and K to kick
+ * (each held to charge, released to let go), E and L for seats and the laptop, Enter to open a sign's link, R to reset the position. Keys are released when the window loses focus or the
  * page is hidden, so a key held while switching away never keeps the character walking.
  */
 export class KeyboardInput {
@@ -60,14 +76,46 @@ export class KeyboardInput {
     target.document.addEventListener('visibilitychange', this.clear, { signal });
   }
 
+  /** Analog movement by source ('touch', 'gamepad'); a source with no push is removed. */
+  private readonly analog = new Map<string, AnalogMove>();
+
   get intent(): MoveIntent {
     const forward = (this.held.has('forward') ? 1 : 0) - (this.held.has('back') ? 1 : 0);
     const right = (this.held.has('right') ? 1 : 0) - (this.held.has('left') ? 1 : 0);
-    return { forward, right, run: this.running };
+    return combineIntent({ forward, right }, this.analog.values(), this.running);
   }
 
   get active(): boolean {
-    return this.held.size > 0;
+    return this.held.size > 0 || this.analog.size > 0;
+  }
+
+  /** Movement from a stick: undefined (or no push) lets go of it. */
+  setAnalog(source: string, move: AnalogMove | undefined): void {
+    if (!this.enabled || !move || (move.forward === 0 && move.right === 0)) this.analog.delete(source);
+    else this.analog.set(source, move);
+  }
+
+  /** An action from a button: like its key going down (a hold action stays down until `release`). */
+  press(action: PressAction): void {
+    if (!this.enabled) return;
+    if (HOLDS.has(action)) {
+      if (this.holding.has(action as HoldAction)) return;
+      this.holding.add(action as HoldAction);
+    }
+    this.onPress?.(action);
+  }
+
+  /** A button's hold action let go. */
+  release(action: HoldAction): void {
+    if (!this.holding.delete(action)) return;
+    this.onRelease?.(action);
+  }
+
+  /** Running on or off, like Shift. */
+  toggleRun(): void {
+    if (!this.enabled) return;
+    this.running = !this.running;
+    this.onRunChange?.(this.running);
   }
 
   get run(): boolean {
@@ -76,13 +124,9 @@ export class KeyboardInput {
 
   readonly clear = (): void => {
     this.held.clear();
+    this.analog.clear();
     for (const action of [...this.holding]) this.release(action);
   };
-
-  private release(action: HoldAction): void {
-    if (!this.holding.delete(action)) return;
-    this.onRelease?.(action);
-  }
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (!event.repeat && this.enabled && !event.ctrlKey && !event.altKey && !event.metaKey && !ownsKeyboard(event.target) && pushKonami(this.recent, event.code)) {

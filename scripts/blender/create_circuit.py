@@ -12,7 +12,10 @@ outside.glb and reads it the same way (src/scene/outsideData.ts), so the extras 
 - `Tapes`: safety tapes, `Tape_<i>` anchors (`tape` [length]) with two halves `Tape_<i>_L`/`_R` pivoting at their
   post; the viewer lets them drop when something fast goes through.
 - `OfficeChair`: the chair the character rides: `ChairBase` with `ChairCaster_<i>` (swivel, `ChairWheel_<i>` inside),
-  and `ChairUpper` pivoting on the gas lift top (seat, back and arms; `OfficeChair_Seat` where the hips go, the same
+  and `ChairUpper` pivoting on the gas lift top (seat, back and arms; `ChairArmrest_<side>` on top of each arm pad,
+  `armrest` 'right' or 'left' for the rider's side; `ChairBottle_<side>` soda bottles strapped under the arms with their
+  mouths backwards: shell, `ChairBottleLiquid_<side>` (its origin at the bottom, scaled along local Y with the fuel),
+  `ChairBottleCap_<side>` and the `ChairNozzle_<side>` anchor at the mouth; `OfficeChair_Seat` where the hips go, the same
   height above the ground as the room chair's seat so its clips fit).
 - `Floor_StartLine`/`Floor_FinishLine` (floor `checker`) and `Floor_ChairHint` (floor `chairhint`: an arrow towards the
   chair and "How did that get here?"), `Zone_Circuit` (reset zone, target 'circuit').
@@ -204,6 +207,8 @@ def palette():
         'plastic': m('ChairPlastic', (0.05, 0.05, 0.06), 0.5),
         'chrome': m('ChairChrome', (0.75, 0.75, 0.8), 0.25, 0.9),
         'board': m('LapBoardFace', (0.03, 0.025, 0.05), 0.5),
+        'pet': m('BottlePET', (0.86, 0.93, 0.9), 0.12, alpha=0.32),
+        'cola': m('Cola', (0.11, 0.035, 0.015), 0.18),
         'lens': [m(f'Lens_{k}', c, 0.3) for k, c in enumerate(((0.25, 0.03, 0.03), (0.25, 0.2, 0.02), (0.02, 0.2, 0.06)))],
     }
 
@@ -262,7 +267,40 @@ def build_chair(m, root):
     upper_obj = obj('ChairUpper', upper_mesh, chair, (0, 0, LIFT_TOP))
     # Where the hips go: the seat's top centre, facing forward (Blender -Y), like the room chair's seat anchor.
     room.anchor('OfficeChair_Seat', (0, 0.02 * CHAIR_SCALE, SEAT_TOP - LIFT_TOP), upper_obj, 0.0, seat='office', stand_offset=SEAT_STAND_OFFSET)
+    # The arm pads' tops, where the rider's hands rest (Blender -X is the rider's right: the rider faces -Y).
+    for side, name in ((-1, 'right'), (1, 'left')):
+        room.anchor(f'ChairArmrest_{name}', (side * 0.29 * CHAIR_SCALE, 0, SEAT_TOP - LIFT_TOP + 0.21 * CHAIR_SCALE), upper_obj, 0.0, armrest=name)
+    build_bottles(m, upper_obj)
     return chair
+
+
+BOTTLE = {'radius': 0.045, 'body': (-0.15, 0.08), 'neck': (0.13, 0.15), 'x': 0.43, 'z': 0.3}
+
+
+def build_bottles(m, upper):
+    """Two cola bottles strapped under the arms, lying along the seat with their mouths backwards (Blender +Y): the nitro.
+    The clear shell and its label, the dark liquid inside (scaled along Y by the viewer as it empties), a cap that pops off
+    and an anchor at the mouth where the spray comes out. Shared meshes; positions are in ChairUpper's space."""
+    r, (y0, y1), (n0, n1) = BOTTLE['radius'], BOTTLE['body'], BOTTLE['neck']
+
+    def shell(bm):
+        bm_cylinder(bm, (0, (y0 + y1) / 2, 0), r, y1 - y0, 10, 0, 'Y')
+        bm_cylinder(bm, (0, (y1 + n0) / 2, 0), r, n0 - y1, 10, 0, 'Y', top=0.016)
+        bm_cylinder(bm, (0, (n0 + n1) / 2, 0), 0.015, n1 - n0, 8, 0, 'Y')
+        bm_cylinder(bm, (0, -0.02, 0), r + 0.0015, 0.08, 10, 1, 'Y')
+    shell_mesh = mesh('Chair_Bottle', shell, [m['pet'], m['red']], 40)
+    liquid_mesh = mesh('Chair_BottleLiquid', lambda bm: bm_cylinder(bm, (0, (y1 - 0.02 - y0) / 2, 0), r - 0.004, y1 - 0.02 - y0, 10, 0, 'Y'), [m['cola']], 40)
+    cap_mesh = mesh('Chair_BottleCap', lambda bm: bm_cylinder(bm, (0, 0, 0), 0.0175, 0.018, 8, 0, 'Y'), [m['red']], 40)
+    strap_mesh = mesh('Chair_BottleStrap', lambda bm: (bm_box(bm, (-0.06, -0.012, -0.012), (0.06, 0.012, 0.012), 0),), [m['plastic']])
+    for side, name in ((-1, 'right'), (1, 'left')):
+        x, z = side * BOTTLE['x'], BOTTLE['z']
+        obj(f'ChairBottle_{name}', shell_mesh, upper, (x, 0, z), bottle=name)
+        obj(f'ChairBottleLiquid_{name}', liquid_mesh, upper, (x, y0 + 0.005, z), liquid=name)
+        obj(f'ChairBottleCap_{name}', cap_mesh, upper, (x, n1 + 0.008, z), cap=name)
+        room.anchor(f'ChairNozzle_{name}', (x, n1 + 0.02, z), upper, 0.0, nozzle=name)
+        # Straps from the bottle to the arm post, front and back.
+        for y in (-0.08, 0.03):
+            obj(f'ChairBottleStrap_{name}_{"F" if y < 0 else "B"}', strap_mesh, upper, (side * (BOTTLE['x'] - 0.05), y, z))
 
 
 # ------------------------------------------------------------------ sandbags

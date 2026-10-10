@@ -31,7 +31,14 @@ export type ChairRig = {
   seat: Object3D;
   casters: Object3D[];
   wheels: Object3D[];
+  /** Tops of the arm pads, by the rider's side: the hands rest there. */
+  armrests: Partial<Record<Side, Object3D>>;
+  /** The nitro's soda bottles: the liquid (scaled along its local Y as it empties), the cap that pops off, the mouth. */
+  bottles: ChairBottle[];
 };
+
+export type Side = 'right' | 'left';
+export type ChairBottle = { side: Side; liquid?: Object3D; cap?: Object3D; nozzle: Object3D };
 
 type TapeState = Tape & { halves: Object3D[]; cut: number | undefined };
 
@@ -91,7 +98,15 @@ export class CircuitView {
         wheels.push(wheel);
       }
     }
-    return { root: object, base, upper, seat, casters, wheels };
+    const armrests: Partial<Record<Side, Object3D>> = {};
+    const bottles: ChairBottle[] = [];
+    for (const side of ['right', 'left'] as const) {
+      const armrest = object.getObjectByName(`ChairArmrest_${side}`);
+      if (armrest) armrests[side] = armrest;
+      const nozzle = object.getObjectByName(`ChairNozzle_${side}`);
+      if (nozzle) bottles.push({ side, nozzle, liquid: object.getObjectByName(`ChairBottleLiquid_${side}`), cap: object.getObjectByName(`ChairBottleCap_${side}`) });
+    }
+    return { root: object, base, upper, seat, casters, wheels, armrests, bottles };
   }
 
   /** The lap board: the running (or last) lap time and the best one. */

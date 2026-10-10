@@ -108,7 +108,7 @@ export function signText(sign: Sign): { title: string; label: string } {
   return { title: known ? t(key('title')) : sign.title || sign.id.toUpperCase(), label: known ? t(key('label')) : sign.label };
 }
 
-function labelTexture(text: string, external: boolean): CanvasTexture {
+function labelTexture(text: string, external: boolean, key: string): CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 840;
   canvas.height = 160;
@@ -118,13 +118,14 @@ function labelTexture(text: string, external: boolean): CanvasTexture {
   context.lineWidth = 7;
   context.font = `700 54px ${FONT}`;
   context.textBaseline = 'middle';
-  // The Enter key cap, then the destination.
-  const key = 'ENTER';
-  const keyWidth = context.measureText(key).width + 56;
-  context.beginPath();
-  context.roundRect(8, 28, keyWidth, 104, 18);
-  context.stroke();
-  context.fillText(key, 36, 82);
+  // The key cap (Enter, a gamepad button, or none on a touch screen), then the destination.
+  const keyWidth = key ? context.measureText(key).width + 56 : -36;
+  if (key) {
+    context.beginPath();
+    context.roundRect(8, 28, keyWidth, 104, 18);
+    context.stroke();
+    context.fillText(key, 36, 82);
+  }
   context.font = `600 60px ${FONT}`;
   context.fillText(external ? `${text}  ↗` : text, keyWidth + 44, 82, canvas.width - keyWidth - 52);
   const texture = new CanvasTexture(canvas);
@@ -238,7 +239,7 @@ export class SignAreas {
         depthWrite: false,
         side: DoubleSide,
       })), groundY - FENCE_HEIGHT) as Zone['fence'];
-      const label = new Mesh(this.labelGeometry, new MeshBasicMaterial({ map: labelTexture(signText(sign).label, sign.kind === 'link'), transparent: true, depthWrite: false }));
+      const label = new Mesh(this.labelGeometry, new MeshBasicMaterial({ map: labelTexture(signText(sign).label, sign.kind === 'link', this.openKey), transparent: true, depthWrite: false }));
       label.position.set(...onZone(sign, -area.halfX + LABEL_WIDTH / 2, area.halfZ + LABEL_AHEAD + LABEL_WIDTH * 160 / 840 / 2, groundY + 0.008));
       label.rotation.y = sign.yaw;
       label.userData.rest = label.position.clone();
@@ -266,6 +267,15 @@ export class SignAreas {
     this.reducedMotion = enabled;
   }
 
+  /** The key shown on the zones' labels: ENTER, the gamepad button that opens, or none on a touch screen. */
+  private openKey = 'ENTER';
+
+  setOpenKey(key: string): void {
+    if (key === this.openKey) return;
+    this.openKey = key;
+    this.setLanguage();
+  }
+
   /** Rewrite the titles on the ground and the ENTER labels in the current language. */
   setLanguage(): void {
     this.titles.geometry.dispose();
@@ -276,7 +286,7 @@ export class SignAreas {
     this.root.add(this.titles);
     for (const zone of this.zones) {
       zone.label.material.map?.dispose();
-      zone.label.material.map = labelTexture(signText(zone.sign).label, zone.sign.kind === 'link');
+      zone.label.material.map = labelTexture(signText(zone.sign).label, zone.sign.kind === 'link', this.openKey);
       zone.label.material.needsUpdate = true;
     }
   }

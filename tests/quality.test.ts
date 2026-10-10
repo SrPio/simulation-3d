@@ -29,17 +29,17 @@ test('adaptive resolution steps down on slow frames, up with headroom, and holds
 test('preferences survive a reload and tolerate missing, corrupt or blocked storage', () => {
   const store = new Map<string, string>();
   const storage = { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => { store.set(key, value); } };
-  assert.deepEqual(readPreferences(storage), { quality: 'auto', reducedMotion: null, language: null });
-  savePreferences(storage, { quality: 'low', reducedMotion: true, language: 'en' });
-  assert.deepEqual(readPreferences(storage), { quality: 'low', reducedMotion: true, language: 'en' });
+  assert.deepEqual(readPreferences(storage), { quality: 'auto', reducedMotion: null, language: null, sound: true });
+  savePreferences(storage, { quality: 'low', reducedMotion: true, language: 'en', sound: false });
+  assert.deepEqual(readPreferences(storage), { quality: 'low', reducedMotion: true, language: 'en', sound: false });
   store.set([...store.keys()][0], '{"quality":"ultra","reducedMotion":"yes","language":"fr"}');
-  assert.deepEqual(readPreferences(storage), { quality: 'auto', reducedMotion: null, language: null });
+  assert.deepEqual(readPreferences(storage), { quality: 'auto', reducedMotion: null, language: null, sound: true });
   store.set([...store.keys()][0], '{not json');
-  assert.deepEqual(readPreferences(storage), { quality: 'auto', reducedMotion: null, language: null });
+  assert.deepEqual(readPreferences(storage), { quality: 'auto', reducedMotion: null, language: null, sound: true });
   const blocked = { getItem: () => { throw new Error('SecurityError'); }, setItem: () => { throw new Error('QuotaExceededError'); } };
-  assert.deepEqual(readPreferences(blocked), { quality: 'auto', reducedMotion: null, language: null });
-  assert.doesNotThrow(() => savePreferences(blocked, { quality: 'high', reducedMotion: false, language: 'es' }));
-  assert.deepEqual(readPreferences(undefined), { quality: 'auto', reducedMotion: null, language: null });
+  assert.deepEqual(readPreferences(blocked), { quality: 'auto', reducedMotion: null, language: null, sound: true });
+  assert.doesNotThrow(() => savePreferences(blocked, { quality: 'high', reducedMotion: false, language: 'es', sound: true }));
+  assert.deepEqual(readPreferences(undefined), { quality: 'auto', reducedMotion: null, language: null, sound: true });
 });
 
 test('room and laptop embed their textures as WebP, keeping the downloads small', async () => {

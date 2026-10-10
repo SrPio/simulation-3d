@@ -21,9 +21,17 @@ async function openMenu(page: Page) {
   await expect(page.locator('#room-tools')).toBeVisible();
 }
 
+/** Through the loading screen: the head's outline fills, START shows inside it, a press opens the scene. */
+async function start(page: Page) {
+  await expect(page.locator('.start-screen')).toHaveAttribute('data-start', 'ready', { timeout: 30000 });
+  await expect(host(page)).toHaveAttribute('data-state', 'ready');
+  await page.locator('.start-button').click();
+  await expect(page.locator('.start-screen')).toBeHidden({ timeout: 5000 });
+}
+
 async function ready(page: Page) {
   await page.goto(baseURL);
-  await expect(page.locator('.room-status')).toHaveAttribute('data-state', 'ready', { timeout: 30000 });
+  await start(page);
   await expect(page.locator('#viewer-overlay')).toBeHidden();
   await expect(host(page)).toHaveAttribute('data-movement', 'ready');
 }
@@ -95,13 +103,13 @@ test('the root shows only the room with V4, neutral light, a fixed following cam
   await expect(motion).toHaveAttribute('aria-pressed', 'true');
   await expect(host(page)).toHaveAttribute('data-reduced-motion', 'true');
   await expect(page.locator('html')).toHaveAttribute('data-reduced-motion', 'true');
-  assert.deepEqual(models.sort(), ['circuit.glb', 'developer-v4-interactions.glb', 'laptop.glb', 'outside.glb', 'room.glb']);
+  assert.deepEqual(models.sort(), ['circuit.glb', 'colombia.glb', 'developer-v4-interactions.glb', 'laptop.glb', 'outside.glb', 'room.glb']);
   await expect(host(page)).toHaveAttribute('data-letters', '0');
   await expect(page.locator('.sidebar, .version-selector, #animation-controls')).toHaveCount(0);
   await expect(page.locator('canvas')).toHaveCount(1);
   await expect(host(page)).toHaveAttribute('data-scene', 'room');
   await expect(host(page)).toHaveAttribute('data-light', 'neutral');
-  await expect(page.getByRole('button', { name: 'Neutra' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('[data-light]:is(button)')).toHaveCount(0);
   await expect(host(page)).toHaveAttribute('data-camera', 'follow');
   await expect(page.locator('#camera-free')).toHaveAttribute('aria-pressed', 'false');
   const before = await host(page).getAttribute('data-orbit');
@@ -124,9 +132,6 @@ test('the root shows only the room with V4, neutral light, a fixed following cam
   await page.locator('#camera-free').click();
   await expect(host(page)).toHaveAttribute('data-camera', 'follow');
   await expect(host(page)).toHaveAttribute('data-orbit', before!);
-  await page.getByRole('button', { name: 'Violeta' }).click();
-  await expect(host(page)).toHaveAttribute('data-light', 'violet');
-  await page.getByRole('button', { name: 'Neutra' }).click();
   await page.getByRole('button', { name: 'Baja' }).click();
   await expect(host(page)).toHaveAttribute('data-quality', 'low');
   await expect(host(page)).toHaveAttribute('data-shadows', 'false');
@@ -194,7 +199,7 @@ test('Space hops forward, F throws a laptop (held, it charges), the character kn
   await expect.poll(async () => Number(await host(page).getAttribute('data-letters')), { timeout: 5000 }).toBeGreaterThan(0);
   await page.waitForTimeout(800);
   await page.screenshot({ path: shot('home-letters.png') });
-  await page.locator('#hud-reset').click();
+  await page.keyboard.press('KeyR');
   await expect(host(page)).toHaveAttribute('data-letters', '0');
   await expect(host(page)).toHaveAttribute('data-thrown', '0');
   await expect(host(page)).toHaveAttribute('data-elevation', '0.00');
@@ -296,19 +301,16 @@ test('the language switch turns the page and the floor texts to English or Spani
   await ready(page);
   // First visit: the browser language.
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(page.locator('#hud-hint')).toHaveText(/^E: sit on the bed$|W A S D or arrows/);
   await expect(page.getByRole('button', { name: 'EN', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator('#status-label')).toHaveText('Ready');
   await expect(page.locator('.seat-bubble')).toContainText('Sit down');
   await page.getByRole('button', { name: 'ES', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'es');
-  await expect(page.locator('#status-label')).toHaveText('Listo');
-  await expect(page.locator('#hud-reset')).toHaveText('Restablecer posición');
-  await expect(page.locator('.seat-bubble')).toContainText('Sentarse');
   await openMenu(page);
-  await expect(page.getByRole('button', { name: 'Neutra' })).toBeVisible();
+  await expect(page.locator('#reset-position')).toHaveText('Restablecer (R)');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.seat-bubble')).toContainText('Sentarse');
   await page.reload();
-  await expect(page.locator('.room-status')).toHaveAttribute('data-state', 'ready', { timeout: 30000 });
+  await start(page);
   await expect(page.locator('html')).toHaveAttribute('lang', 'es');
   await expect(page.getByRole('button', { name: 'ES', exact: true })).toHaveAttribute('aria-pressed', 'true');
   assert.deepEqual(errors, []);
@@ -320,7 +322,6 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await ready(page);
-  await expect(page.locator('#sign-link')).toBeHidden();
   await expect(host(page)).toHaveAttribute('data-sign', 'none');
   await expect(host(page)).toHaveAttribute('data-sign-area', 'none');
   // Out through the open +X side, past the intro keys to the crossroads; the zones lie in front of the row of signs.
@@ -341,11 +342,6 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
   ] as const) {
     await walkTo(page, target, async () => (await host(page).getAttribute('data-sign')) === id);
     await expect(host(page)).toHaveAttribute('data-sign', id);
-    const anchor = page.locator('#sign-link');
-    await expect(anchor).toBeVisible();
-    await expect(anchor).toHaveAttribute('href', link);
-    await expect(anchor).toHaveAttribute('target', '_blank');
-    await expect(anchor).toHaveAttribute('rel', /noopener/);
     await expect(host(page)).toHaveAttribute('data-sign-area', /^\d+,\d+$/);
     await page.waitForTimeout(600);
     await page.screenshot({ path: shot(`home-sign-${id}.png`) });
@@ -365,7 +361,6 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
   // Out of the zones, past the glass case on the plaza's right.
   await walkTo(page, { x: 36.8, z: 0.5 });
   await expect(host(page)).toHaveAttribute('data-sign', 'none');
-  await expect(page.locator('#sign-link')).toBeHidden();
   await expect(host(page)).toHaveAttribute('data-sign-area', 'none');
   // Away from every zone Enter opens nothing.
   let opened = false;
@@ -377,7 +372,6 @@ test('each sign has a floor zone: walking in raises it, and Enter or a click ope
   for (const point of [{ x: 40.5, z: 12 }, { x: 40.5, z: 24 }, { x: 14, z: 24 }, { x: 14, z: 36.5 }]) await walkTo(page, point);
   await walkTo(page, { x: 15.6, z: 36.5 }, async () => (await host(page).getAttribute('data-sign')) === 'reset-bowling');
   await expect(host(page)).toHaveAttribute('data-sign', 'reset-bowling');
-  await expect(page.locator('#sign-link')).toBeHidden();
   await page.keyboard.press('Enter');
   await expect(host(page)).toHaveAttribute('data-pins', '0');
   await page.waitForTimeout(500);
@@ -499,7 +493,7 @@ test('the root works on a phone-sized viewport without horizontal scrolling', as
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal overflow');
   await expect(page.getByRole('button', { name: 'ES', exact: true })).toBeVisible();
   await openMenu(page);
-  for (const name of ['Auto', 'Alta', 'Baja', 'Neutra', 'Violeta', 'Libre']) {
+  for (const name of ['Auto', 'Alta', 'Baja', 'Libre', 'Restablecer (R)']) {
     const button = page.getByRole('button', { name, exact: true });
     await expect(button).toBeVisible();
     const box = (await button.boundingBox())!;

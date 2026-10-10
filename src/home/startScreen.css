@@ -1,0 +1,36 @@
+/* Loading screen: a dark violet sheet with the character's head cut out of it once everything is loaded. */
+.start-screen { position: fixed; inset: 0; z-index: 5; --start-head: 300px; }
+.start-art { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.start-backdrop { fill: #17121e; }
+.start-hole { fill: #fff; transition: fill 420ms ease; }
+.start-screen:is([data-start='ready'], [data-start='opening']) .start-hole { fill: #000; }
+
+/* The line round the head: a faint guide under it, the bright line drawn with the loading. */
+.start-ghost, .start-line { fill: none; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
+.start-ghost { stroke: #c4a2ed22; stroke-width: 2px; }
+.start-line {
+  stroke: #c4a2ed; stroke-width: 3px; stroke-dasharray: 1; stroke-dashoffset: 1;
+  filter: drop-shadow(0 0 6px #a77ff099); transition: stroke-dashoffset 260ms ease-out, stroke-width 420ms ease;
+}
+.start-screen:is([data-start='ready'], [data-start='opening']) .start-line { stroke-width: 6px; }
+
+/* START sits inside the hollow head, in front of the room showing through it. */
+.start-screen .start-button {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(0.9);
+  min-width: 132px; min-height: 52px; padding: 0 24px; border: 1px solid #e3cdfb; border-radius: 12px;
+  color: #fbf6ff; font: 700 20px/1 var(--font); letter-spacing: 6px; text-indent: 6px;
+  background: linear-gradient(#ffffff22, #00000000), #6c48c9; box-shadow: 0 4px 0 #2e1d52, 0 0 26px #8a5cf088;
+  opacity: 0; pointer-events: none; transition: opacity 300ms ease 150ms, transform 300ms cubic-bezier(.2, 1.4, .4, 1) 150ms;
+}
+.start-screen .start-button:hover { background-color: #7d58da; }
+.start-screen .start-button:active { transform: translate(-50%, calc(-50% + 3px)); box-shadow: 0 1px 0 #2e1d52, 0 0 26px #8a5cf088; }
+.start-screen[data-start='ready'] .start-button { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%); }
+.start-screen[data-start='opening'] .start-button { opacity: 0; transition: opacity 160ms ease; }
+
+.start-percent {
+  position: absolute; left: 50%; top: calc(50% + var(--start-head) / 2 + 22px); transform: translateX(-50%);
+  color: #b3a6c0; font: 500 12px/1 var(--font); letter-spacing: 3px; transition: opacity 300ms ease;
+}
+.start-screen:not([data-start='loading']) .start-percent { opacity: 0; }
+
+.start-screen.start-fade { opacity: 0; transition: opacity 280ms ease; }

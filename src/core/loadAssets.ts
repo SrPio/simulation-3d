@@ -86,34 +86,54 @@ export function disposeObjects(roots: Object3D[]): void {
 export const roomFile = 'models/room.glb';
 export type SceneId = 'studio' | 'room';
 
-export async function loadCharacter(modelId: ModelVersionId, signal: AbortSignal): Promise<GLTF> {
+/** Bytes received and expected so far for one file (the expected size is an estimate when the server compresses). */
+export type LoadProgress = (loaded: number, total: number) => void;
+
+/** Rough sizes of the room page's files, for the loading line when the response has no usable Content-Length. */
+export const EXPECTED_BYTES: Record<string, number> = {
+  'models/developer-v4-interactions.glb': 6_300_000,
+  'models/room.glb': 1_220_000,
+  'models/laptop.glb': 24_000,
+  'models/outside.glb': 880_000,
+  'models/circuit.glb': 300_000,
+  'models/colombia.glb': 153_000,
+};
+
+export async function loadCharacter(modelId: ModelVersionId, signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
   if (!isModelVersionId(modelId)) throw new Error('MODEL_VERSION_INVALID');
-  return loadGlb(modelVersions[modelId].file, 'MODEL', signal);
+  return loadGlb(modelVersions[modelId].file, 'MODEL', signal, progress);
 }
 
-export function loadRoom(signal: AbortSignal): Promise<GLTF> {
-  return loadGlb(roomFile, 'ROOM', signal);
+export function loadRoom(signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
+  return loadGlb(roomFile, 'ROOM', signal, progress);
 }
 
 export const laptopFile = 'models/laptop.glb';
 
 /** The laptop model, shown on the desk and on the lap. Its failures are reported as room failures. */
-export function loadLaptop(signal: AbortSignal): Promise<GLTF> {
-  return loadGlb(laptopFile, 'ROOM', signal);
+export function loadLaptop(signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
+  return loadGlb(laptopFile, 'ROOM', signal, progress);
 }
 
 export const outsideFile = 'models/outside.glb';
 
 /** Signs, name letters and walkable bounds outside the room. Its failures are reported as room failures. */
-export function loadOutside(signal: AbortSignal): Promise<GLTF> {
-  return loadGlb(outsideFile, 'ROOM', signal);
+export function loadOutside(signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
+  return loadGlb(outsideFile, 'ROOM', signal, progress);
 }
 
 export const circuitFile = 'models/circuit.glb';
 
 /** The circuit's office chair, ramps, obstacles and fences, read together with the outside. Failures count as room failures. */
-export function loadCircuit(signal: AbortSignal): Promise<GLTF> {
-  return loadGlb(circuitFile, 'ROOM', signal);
+export function loadCircuit(signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
+  return loadGlb(circuitFile, 'ROOM', signal, progress);
+}
+
+export const colombiaFile = 'models/colombia.glb';
+
+/** The about-me plaza's Colombian corner (hat, cup, pin and flag), read together with the outside. Failures count as room failures. */
+export function loadColombia(signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
+  return loadGlb(colombiaFile, 'ROOM', signal, progress);
 }
 
 export const chickFile = 'models/chick.glb';
@@ -123,12 +143,39 @@ export function loadChick(signal: AbortSignal): Promise<GLTF> {
   return loadGlb(chickFile, 'ROOM', signal);
 }
 
-async function loadGlb(file: string, kind: 'MODEL' | 'ROOM', signal: AbortSignal): Promise<GLTF> {
+/** The body as it arrives, reporting the bytes so far (the loading screen draws its line with them). */
+async function readBody(response: Response, file: string, progress?: LoadProgress): Promise<ArrayBuffer> {
+  if (!progress || !response.body) return response.arrayBuffer();
+  // A compressed response's Content-Length counts the compressed bytes, not the ones the reader hands over.
+  const length = response.headers.get('content-encoding') ? 0 : Number(response.headers.get('content-length') ?? 0);
+  let total = length > 0 ? length : EXPECTED_BYTES[file] ?? 1_000_000;
+  const parts: Uint8Array[] = [];
+  let loaded = 0;
+  const reader = response.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    loaded += value.byteLength;
+    total = Math.max(total, loaded);
+    progress(loaded, total);
+  }
+  progress(loaded, loaded);
+  const data = new Uint8Array(loaded);
+  let offset = 0;
+  for (const part of parts) {
+    data.set(part, offset);
+    offset += part.byteLength;
+  }
+  return data.buffer;
+}
+
+async function loadGlb(file: string, kind: 'MODEL' | 'ROOM', signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
   signal.throwIfAborted();
   const url = new URL(`${import.meta.env.BASE_URL}${file}`, window.location.href);
   const response = await fetch(url, { signal });
   if (!response.ok) throw new Error(`${kind}_HTTP_${response.status}`);
-  const data = await response.arrayBuffer();
+  const data = await readBody(response, file, progress);
   signal.throwIfAborted();
   if (data.byteLength < 12 || new DataView(data).getUint32(0, true) !== 0x46546c67) {
     throw new Error('MODEL_INVALID_GLB');

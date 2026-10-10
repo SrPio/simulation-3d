@@ -50,6 +50,8 @@ export type Piece = {
   half: [number, number, number];
   shape: PieceShape;
   mass: number;
+  /** What a loose prop is ('brick', 'pin', 'pallet', 'tyre', …); letters have none. */
+  prop?: string;
   /** The tool a tech cube shows ('typescript', 'node', …). */
   tech?: string;
   /** Pieces sharing a joint are held together until a hard knock breaks them apart (a wooden fence's legs and planks). */
@@ -106,7 +108,7 @@ export type Lamppost = {
   arrows: { id: string; target: Point2 }[];
 };
 
-/** A fixed decor object (tree, rock, bench, rack, the bust, globe, glass case, scoreboard): its blob shadow and the box pieces bounce off. */
+/** A fixed decor object (tree, rock, bench, the bust, the Colombian corner, scoreboard): its blob shadow and the box pieces bounce off. */
 export type Decor = {
   name: string;
   kind: string;
@@ -117,7 +119,7 @@ export type Decor = {
   solid?: [number, number, number];
 };
 
-/** Where the viewer paints a plaque (the bust's, the globe's, the diplomas): a rectangle facing local +Z. */
+/** Where the viewer paints a plaque (the bust's, the Colombian corner's): a rectangle facing local +Z. */
 export type Plaque = { id: string; position: Vector3; yaw: number; size: [number, number] };
 
 /** A standing target: its foot, the centre height of its disc, the ring radii (outer to inner) and their points. */
@@ -126,8 +128,6 @@ export type Target = { index: number; object: Object3D; position: Vector3; yaw: 
 /** Board next to the targets where the viewer paints the score. */
 export type Scoreboard = { position: Vector3; yaw: number; width: number; height: number; bottom: number };
 
-/** Stand of the globe: the viewer draws the sphere (radius, centre height above the foot) with its pin on Colombia. */
-export type Globe = { position: Vector3; radius: number; centre: number };
 
 export type OutsideData = {
   bounds: Bounds;
@@ -148,7 +148,6 @@ export type OutsideData = {
   plaques: Plaque[];
   targets: Target[];
   scoreboard?: Scoreboard;
-  globe?: Globe;
   /** The circuit (circuit.glb, read together with the outside): ramps, tapes, the chair, the lap board and the traffic light. */
   ramps: Ramp[];
   tapes: Tape[];
@@ -242,7 +241,6 @@ export function readOutside(root: Object3D): OutsideData {
   const plaques: Plaque[] = [];
   const targets: Target[] = [];
   let scoreboard: Scoreboard | undefined;
-  let globe: Globe | undefined;
   const ramps: Ramp[] = [];
   const tapes: Tape[] = [];
   let chair: OfficeChair | undefined;
@@ -268,7 +266,6 @@ export function readOutside(root: Object3D): OutsideData {
         name: object.name, kind: data.decor, position, yaw, shadow: [data.shadow[0], data.shadow[1]],
         ...(data.solid?.length === 3 ? { solid: [data.solid[0], data.solid[1], data.solid[2]] as [number, number, number] } : {}),
       });
-      if (object.name === 'Globe' && data.radius && data.centre) globe = { position, radius: data.radius, centre: data.centre };
       if (object.name === 'Scoreboard' && data.board?.length === 3) {
         scoreboard = { position, yaw, width: data.board[0], height: data.board[1], bottom: data.board[2] };
       }
@@ -328,6 +325,7 @@ export function readOutside(root: Object3D): OutsideData {
         half: [data.box[0] / 2, data.box[1] / 2, data.box[2] / 2],
         shape: shapeOf(data),
         mass: data.mass ?? 1,
+        prop: String(data.prop),
         ...(data.tech ? { tech: data.tech } : {}),
         ...(data.joint ? { joint: data.joint } : {}),
         ...flapsOf(object),
@@ -357,7 +355,7 @@ export function readOutside(root: Object3D): OutsideData {
   if (lamppost && crossroads) lamppost.arrows = crossroads.targets.map((target, i) => ({ id: crossroads.labels[i] ?? '', target }));
   targets.sort((a, b) => a.index - b.index);
   tapes.sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }));
-  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost, decor, plaques, targets, scoreboard, globe, ramps, tapes, chair, lapBoard, trafficLight, benches };
+  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost, decor, plaques, targets, scoreboard, ramps, tapes, chair, lapBoard, trafficLight, benches };
 }
 
 /** Height of a ramp's surface above the ground at a point, 0 off it. */
