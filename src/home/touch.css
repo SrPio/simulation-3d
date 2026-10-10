@@ -19,6 +19,22 @@
   background: linear-gradient(#ffffff26, #00000000), #6c48c9; border: 1px solid #e3cdfb; box-shadow: 0 4px 0 #2e1d52, 0 0 18px #8a5cf066;
 }
 
+/* Right side: the zone button (visit the site, reset the pieces) sits above the round buttons. */
+.touch-side { display: flex; flex-direction: column; align-items: flex-end; gap: 12px; pointer-events: none; }
+.touch-zone {
+  display: inline-flex; align-items: center; gap: 6px; height: 46px; max-width: 220px; padding: 0 18px 0 10px; border-radius: 23px;
+  pointer-events: auto; touch-action: none; color: #f6eeff; border: 1px solid #b18cd277; font: 600 15px/1 var(--font);
+  letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: radial-gradient(circle at 50% 35%, #5a3f75e6, #2a2135e6); box-shadow: 0 3px 0 #120e18, 0 8px 18px #00000066;
+  transition: transform 90ms ease, background-color 120ms ease; animation: touch-zone-in 220ms ease both;
+}
+.touch-zone[hidden] { display: none; }
+.touch-zone svg { flex: none; width: 30px; height: 30px; fill: currentColor; }
+.touch-zone span { overflow: hidden; text-overflow: ellipsis; }
+.touch-zone[data-zone='link'] { border-color: #e3cdfbaa; box-shadow: 0 3px 0 #120e18, 0 8px 18px #00000066, 0 0 16px #8a5cf055; }
+.touch-zone.is-down { transform: translateY(2px) scale(0.96); color: #2a2135; background: radial-gradient(circle at 50% 35%, #f1e4ff, #c4a2ed); }
+@keyframes touch-zone-in { from { opacity: 0; transform: translateY(8px) scale(0.9); } }
+
 .touch-buttons {
   display: grid; grid-template-columns: repeat(3, 66px); grid-auto-rows: 66px; gap: 10px; direction: rtl;
   pointer-events: none;
@@ -32,6 +48,17 @@
 .touch-button svg { width: 100%; height: 100%; display: block; fill: currentColor; }
 .touch-button.is-down { transform: translateY(2px) scale(0.95); color: #2a2135; background: radial-gradient(circle at 50% 35%, #f1e4ff, #c4a2ed); }
 .touch-button[aria-pressed='true'] { color: #2a2135; background: radial-gradient(circle at 50% 35%, #f1e4ff, #c4a2ed); }
+/* Riding: the pedals in the column nearest the thumb (accelerate above reverse), nitro and stand up beside them. */
+.touch-controls[data-mode='riding'] .touch-button[data-action='accelerate'] { grid-area: 1 / 1; }
+.touch-controls[data-mode='riding'] .touch-button[data-action='reverse'] { grid-area: 2 / 1; }
+.touch-controls[data-mode='riding'] .touch-button[data-action='nitro'] { grid-area: 2 / 2; }
+.touch-controls[data-mode='riding'] .touch-button[data-action='sit'] { grid-area: 1 / 2; }
+/* Near a seat the sit button glows on and off softly. */
+.touch-button.is-hint { animation: touch-hint 1.6s ease-in-out infinite; }
+@keyframes touch-hint {
+  0%, 100% { color: #f6eeff; border-color: #b18cd277; box-shadow: 0 3px 0 #120e18, 0 8px 18px #00000066; }
+  50% { color: #ffffff; border-color: #e3cdfb; box-shadow: 0 3px 0 #120e18, 0 8px 18px #00000066, 0 0 0 3px #c4a2ed55, 0 0 22px #a77bf0cc, inset 0 0 16px #c4a2ed88; }
+}
 .touch-button[data-action='nitro'] { background: radial-gradient(circle at 50% 35%, #c2462fe6, #5a1f1ae6); }
 
 @media (max-width: 440px) {
@@ -40,9 +67,14 @@
   .touch-knob { width: 54px; height: 54px; margin: -27px 0 0 -27px; }
   .touch-buttons { grid-template-columns: repeat(3, 56px); grid-auto-rows: 56px; gap: 8px; }
   .touch-button { width: 56px; height: 56px; padding: 7px; }
+  .touch-zone { height: 42px; font-size: 14px; padding: 0 15px 0 8px; }
+  .touch-zone svg { width: 27px; height: 27px; }
 }
 @media (max-height: 460px) {
   .touch-stick { width: 124px; height: 124px; }
   .touch-buttons { grid-template-columns: repeat(5, 54px); grid-auto-rows: 54px; gap: 8px; }
   .touch-button { width: 54px; height: 54px; padding: 7px; }
+  .touch-side { gap: 8px; }
+  .touch-zone { height: 40px; font-size: 14px; padding: 0 14px 0 8px; }
+  .touch-zone svg { width: 26px; height: 26px; }
 }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { STICK, stickMove } from '../src/home/TouchControls.ts';
+import { PEDAL_ARROWS, STICK, stickMove, zoneAction } from '../src/home/TouchControls.ts';
+import { MESSAGES } from '../src/core/i18n.ts';
 import { combineIntent } from '../src/input/KeyboardInput.ts';
 
 test('the joystick ignores a light touch, pushes up the screen as forward and runs at full tilt', () => {
@@ -21,4 +22,24 @@ test('keys and sticks combine: the stronger push on each axis wins, any of them 
   assert.deepEqual(combineIntent({ forward: 1, right: 0 }, [{ forward: 0.3, right: -0.6, run: false }], false), { forward: 1, right: -0.6, run: false });
   assert.deepEqual(combineIntent({ forward: 0, right: 0 }, [{ forward: 0.2, right: 0, run: false }, { forward: -0.9, right: 0.1, run: true }], false), { forward: -0.9, right: 0.1, run: true });
   assert.equal(combineIntent({ forward: 0, right: 0 }, [], true).run, true, 'Shift still runs');
+});
+
+test('the zone button names the zone: a short visit for each sign, reset for the reset zones', () => {
+  assert.equal(zoneAction('none'), undefined);
+  for (const sign of ['portfolio', 'github', 'linkedin']) {
+    const action = zoneAction(sign)!;
+    assert.equal(action.kind, 'link');
+    assert.equal(action.key, `touch.visit.${sign}`);
+    for (const language of ['es', 'en'] as const) assert.ok(MESSAGES[language][action.key].length <= 14, `${sign} is short in ${language}`);
+  }
+  assert.deepEqual(zoneAction('reset-bowling'), { kind: 'reset', key: 'touch.reset' });
+  assert.deepEqual(zoneAction('reset-circuit'), { kind: 'reset', key: 'touch.reset' });
+  assert.equal(zoneAction('somewhere')!.key, 'touch.open', 'an unknown sign falls back to Open');
+});
+
+test('the pedal arrows point up and down inside the button box', () => {
+  const points = (d: string) => [...d.matchAll(/(\d+) (\d+)/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  for (const d of Object.values(PEDAL_ARROWS)) for (const [x, y] of points(d)) assert.ok(x >= 0 && x <= 100 && y >= 0 && y <= 100);
+  assert.deepEqual(points(PEDAL_ARROWS.up)[0], [50, 12], 'the up arrow tip is at the top');
+  assert.deepEqual(points(PEDAL_ARROWS.down)[0], [50, 88], 'the down arrow tip is at the bottom');
 });
