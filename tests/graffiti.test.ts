@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { Texture, type Object3D } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { Matrix4, Mesh, Vector3 } from 'three';
+import { Matrix4, Mesh, Raycaster, Vector3 } from 'three';
 import { GRAFFITI, GRAFFITI_SYMBOLS, JITTER, glyphLayout, seeded, surfaceFor, textFor, type GraffitiSpot } from '../src/scene/graffitiData.ts';
 import { SPRAY_CHARACTERS, SPRAY_SYMBOLS, sprayGlyph } from '../src/scene/sprayFont.ts';
 import { readOutside } from '../src/scene/outsideData.ts';
@@ -95,6 +95,25 @@ test('graffiti find the surface in front of them (a circuit barrier) or lie flat
     const [x, , z] = placed.at;
     assert.ok(x > data.bounds.minX && x < data.bounds.maxX && z > data.bounds.minZ && z < data.bounds.maxZ, `${placed.id}: inside the bounds`);
     if (placed.at[1] !== 'ground') assert.ok(surfaceFor(placed, [outside], data.groundY), `${placed.id}: found its surface`);
+  }
+});
+
+test('paint lying on a slope (the ramp) reaches the surface from one end of the words to the other', async () => {
+  const outside = await parse('outside');
+  outside.add(await parse('circuit'));
+  outside.updateMatrixWorld(true);
+  const data = readOutside(outside);
+  const ramp = GRAFFITI.find((spot) => spot.id === 'ramp-jump')!;
+  const centre = surfaceFor(ramp, [outside], data.groundY)!.point;
+  const tilt = ((ramp.tilt ?? 0) * Math.PI) / 180;
+  const along = new Vector3(Math.cos(tilt), 0, -Math.sin(tilt));
+  // The decal box reaches half its depth above and below the centre; the slope under both ends must stay inside it.
+  const half = (ramp.depth ?? 0.45) / 2;
+  for (const side of [-0.48, 0.48]) {
+    const at = centre.clone().addScaledVector(along, side * ramp.width);
+    const hit = new Raycaster(at.clone().setY(at.y + 2), new Vector3(0, -1, 0)).intersectObject(outside, true)[0];
+    assert.ok(hit, `slope under the ${side < 0 ? 'start' : 'end'}`);
+    assert.ok(Math.abs(hit.point.y - centre.y) < half, `${side < 0 ? 'start' : 'end'}: ${(hit.point.y - centre.y).toFixed(2)} m from the centre, box reaches ${half} m`);
   }
 });
 

@@ -201,7 +201,7 @@ export class Graffiti {
       const cell = this.cells[index];
       // The canvas' top row is the top of the texture (flipY): v runs from the bottom of the cell up.
       const uv = { u: cell.x / ATLAS_WIDTH, v: 1 - (cell.y + cell.height) / this.atlas.height, w: cell.width / ATLAS_WIDTH, h: cell.height / this.atlas.height };
-      const size = new Vector3(spot.width, (spot.width * cell.height) / cell.width, DECAL_DEPTH);
+      const size = new Vector3(spot.width, (spot.width * cell.height) / cell.width, spot.depth ?? DECAL_DEPTH);
       const rotation = faceRotation(spot.face, spot.tilt ?? 0);
       const normal = faceNormal(spot.face);
       const placed: BufferGeometry[] = [];

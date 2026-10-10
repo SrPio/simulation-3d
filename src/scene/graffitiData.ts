@@ -53,6 +53,8 @@ export type GraffitiSpot = {
   width: number;
   /** Turn within the surface (degrees, counter-clockwise as seen facing the surface). */
   tilt?: number;
+  /** How deep the projector box reaches along the face's normal (metres); deeper for paint on a slope. */
+  depth?: number;
   /** The paint's colour; a 'piece' symbol also fades to `fade` and may have an `outline`. */
   color: string;
   fade?: string;
@@ -78,7 +80,7 @@ export const GRAFFITI: readonly GraffitiSpot[] = [
   // The playground's brick wall: each brick carries its part, so a knocked wall scatters the paint.
   { id: 'wall-java', text: 'JAVA\nSH*T', crossed: [0], loose: 'bricks', style: 'spray', at: [26.0, 0.5, 31.43], face: 'z', width: 2.2, tilt: -4, color: C.black, seed: 203 },
   // A ramp behind the plaza, on its slope, and the road just past the start line.
-  { id: 'ramp-jump', text: { es: '¡SALTA!', en: 'JUMP!' }, style: 'spray', at: [29.45, 1.5, -10.7], face: 'up', width: 2.0, tilt: 6, color: C.pink, seed: 13 },
+  { id: 'ramp-jump', text: { es: '¡SALTA!', en: 'JUMP!' }, style: 'spray', at: [29.45, 1.5, -10.7], face: 'up', width: 2.0, tilt: 6, depth: 1.2, color: C.pink, seed: 13 },
   { id: 'road-go', text: { es: '¡VAMOS!', en: 'GO!' }, style: 'spray', at: [29.7, 'ground', 18.65], face: 'up', width: 2.6, tilt: 4, color: C.yellow, seed: 11 },
   // A planter in the plaza, the park and the work site.
   { id: 'planter-heart', symbol: 'heartline', style: 'spray', at: [33.9, 0.14, 9.25], face: 'z', width: 0.62, tilt: -8, color: C.pink, seed: 37 },
