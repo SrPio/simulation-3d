@@ -3,7 +3,7 @@ export const LANGUAGES: readonly Language[] = ['es', 'en'];
 
 const es = {
   'page.title': 'Developer Room',
-  'page.description': 'Developer Room: el cuarto isométrico de un developer con su personaje en 3D.',
+  'page.description': 'Sal del cuarto del developer y explora un mundo 3D: lanza la laptop a las dianas, derriba bolos y muros, corre el circuito en una silla de oficina con nitro y encuentra mi portafolio, GitHub y LinkedIn.',
   'room.label': 'Habitación del developer en 3D',
   'language.label': 'Idioma',
   'menu.open': 'Abrir opciones',
@@ -126,7 +126,7 @@ export type MessageKey = keyof typeof es;
 
 const en: Record<MessageKey, string> = {
   'page.title': 'Developer Room',
-  'page.description': "Developer Room: a developer's isometric room with a 3D character.",
+  'page.description': "Step out of the developer's room and explore a 3D world: throw the laptop at the targets, knock down pins and walls, race the circuit on an office chair with nitro and find my portfolio, GitHub and LinkedIn.",
   'room.label': "The developer's 3D room",
   'language.label': 'Language',
   'menu.open': 'Open options',
