@@ -43,6 +43,8 @@ export type DriveInput = {
   steer: number;
   /** The nitro button held (Space). */
   nitro?: boolean;
+  /** Nobody on it: the casters roll it any way it is pushed (no grip, no steering), only slowed by rolling resistance. */
+  free?: boolean;
 };
 
 export type ChairState = {
@@ -88,6 +90,45 @@ export function forwardSpeed(state: ChairState): number {
   return state.vx * Math.sin(state.yaw) + state.vz * Math.cos(state.yaw);
 }
 
+/**
+ * The chair standing free is pushed by what walks into it (the character): within `radius` plus the pusher's radius
+ * it rolls away along the line between them, a little faster than the pusher closes in, plus `separate` per metre of
+ * overlap. It never tips over: only its position and velocity change. `block` is the half size of the square round
+ * its base that stops the character when the chair cannot roll any further (against a wall).
+ */
+export const PUSH = { radius: DRIVE.radius, carry: 1.05, separate: 8, block: 0.32 } as const;
+/** A blow (punch or kick) within `reach` of the base sends it rolling at these speeds (m/s, by power). */
+export const CHAIR_STRIKE = { reach: 0.5, height: 1.4, min: 1.2, max: 4.5 } as const;
+
+/** Push the free chair away from a round `pusher` (x, z, velocity, radius). Returns the speed it gained (m/s). */
+export function pushChair(state: ChairState, pusher: { x: number; z: number; vx: number; vz: number; radius: number }): number {
+  if (state.airborne) return 0;
+  const dx = state.x - pusher.x;
+  const dz = state.z - pusher.z;
+  const reach = PUSH.radius + pusher.radius;
+  const gap = Math.hypot(dx, dz);
+  if (gap >= reach) return 0;
+  const n = gap > 1e-6 ? { x: dx / gap, z: dz / gap } : { x: Math.sin(state.yaw), z: Math.cos(state.yaw) };
+  const closing = pusher.vx * n.x + pusher.vz * n.z;
+  const wanted = Math.max(0, closing) * PUSH.carry + (reach - gap) * PUSH.separate;
+  const along = state.vx * n.x + state.vz * n.z;
+  if (along >= wanted) return 0;
+  state.vx += n.x * (wanted - along);
+  state.vz += n.z * (wanted - along);
+  return wanted - along;
+}
+
+/** A punch or kick landing at `point` (height above the outside ground in `y`) along `direction`: the chair rolls off. Returns whether it was hit. */
+export function strikeChair(state: ChairState, point: { x: number; y: number; z: number }, direction: { x: number; z: number }, power: number): boolean {
+  const gap = Math.hypot(point.x - state.x, point.z - state.z);
+  if (state.airborne || gap > PUSH.radius + CHAIR_STRIKE.reach || point.y > state.y + CHAIR_STRIKE.height) return false;
+  const length = Math.hypot(direction.x, direction.z) || 1;
+  const speed = CHAIR_STRIKE.min + (CHAIR_STRIKE.max - CHAIR_STRIKE.min) * Math.min(Math.max(power, 0), 1);
+  state.vx += (direction.x / length) * speed;
+  state.vz += (direction.z / length) * speed;
+  return true;
+}
+
 const approach = (value: number, target: number, step: number) => (value < target ? Math.min(value + step, target) : Math.max(value - step, target));
 
 /** Advance the chair by `dt` seconds (sub-stepped for long frames). Returns how hard it hit something (m/s lost), 0 if not. */
@@ -111,7 +152,13 @@ function subStep(state: ChairState, input: DriveInput, dt: number, world: DriveW
   state.boosting = lit;
   if (lit) state.fuel = Math.max(0, state.fuel - dt / NITRO.burn);
   else if (!input.nitro) state.fuel = Math.min(1, state.fuel + dt / NITRO.refill);
-  if (!state.airborne) {
+  if (!state.airborne && input.free) {
+    const speed = Math.hypot(state.vx, state.vz);
+    const slowed = approach(speed, 0, (DRIVE.rolling + DRIVE.drag * speed) * dt);
+    const scale = speed > 1e-6 ? slowed / speed : 0;
+    state.vx *= scale;
+    state.vz *= scale;
+  } else if (!state.airborne) {
     // Engine (legs, really): forward up to maxSpeed; S brakes hard while rolling forward, then backs off slowly.
     if (throttle > 0) forward = forward < 0 ? approach(forward, 0, DRIVE.brake * dt) : Math.min(forward + DRIVE.accel * throttle * dt, Math.max(forward, DRIVE.maxSpeed));
     else if (throttle < 0) forward = forward > 0 ? approach(forward, 0, DRIVE.brake * dt) : Math.max(forward - DRIVE.accel * 0.6 * -throttle * dt, Math.min(forward, -DRIVE.reverseSpeed));

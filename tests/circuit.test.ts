@@ -6,7 +6,9 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as cannon from 'cannon-es';
 import { BREAK_SPEED, PropPhysics } from '../src/world/PropPhysics.ts';
 import { groundAt, rampHeight, readOutside, type OutsideData } from '../src/scene/outsideData.ts';
-import { chairAt, driveStep, forwardSpeed, NITRO, SWAY, type DriveInput, type DriveWorld } from '../src/world/chairDrive.ts';
+import { chairAt, driveStep, forwardSpeed, NITRO, PUSH, pushChair, strikeChair, SWAY, type DriveInput, type DriveWorld } from '../src/world/chairDrive.ts';
+import { sweep, type Box2 } from '../src/world/collisions.ts';
+import { CHARACTER_RADIUS } from '../src/character/CharacterController.ts';
 
 async function parse(file: string) {
   const data = await readFile(new URL(`../public/models/${file}.glb`, import.meta.url));
@@ -171,6 +173,54 @@ test('the chair flies off a ramp and lands, and slides along walls instead of pa
   run(blocked, { throttle: 1, steer: 0 }, 3, walled);
   assert.ok(blocked.z < 2 - 0.4, `stopped by the wall ${blocked.z}`);
   assert.ok(blocked.x > 0.3, `slid along it ${blocked.x}`);
+});
+
+/** The character walking at `speed` along +X from x = -1.5 into a free chair at the origin, as the viewer runs it. */
+function walkInto(chair: ReturnType<typeof chairAt>, speed: number, seconds: number, at: DriveWorld = flat, offset = 0.1) {
+  const block: Box2 = { name: 'OfficeChair', minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
+  let character = { x: -1.5, z: offset };
+  let closest = Infinity;
+  for (let t = 0; t < seconds; t += 1 / 60) {
+    Object.assign(block, { minX: chair.x - PUSH.block, maxX: chair.x + PUSH.block, minZ: chair.z - PUSH.block, maxZ: chair.z + PUSH.block, yaw: chair.yaw });
+    const from = character;
+    character = sweep(character, { x: speed / 60, z: 0 }, CHARACTER_RADIUS, [block, ...at.boxes], at.floor);
+    pushChair(chair, { ...character, vx: (character.x - from.x) * 60, vz: (character.z - from.z) * 60, radius: CHARACTER_RADIUS });
+    const damping = Math.exp(-2.5 / 60);
+    chair.vx *= damping;
+    chair.vz *= damping;
+    driveStep(chair, { throttle: 0, steer: 0, free: true }, 1 / 60, at);
+    closest = Math.min(closest, Math.hypot(chair.x - character.x, chair.z - character.z));
+  }
+  return { character, closest };
+}
+
+test('the chair standing free is pushed out of the way by the character, rolling sideways too, and never tips', () => {
+  // Facing +Z, pushed from its side along +X: the casters roll it that way, it keeps its heading and stays upright.
+  const chair = chairAt(0, 0, 0);
+  const { character, closest } = walkInto(chair, 1.6, 2);
+  assert.ok(chair.x > 2, `rolled ahead of the character ${chair.x}`);
+  assert.ok(character.x > 1.5, `the character kept walking ${character.x}`);
+  assert.ok(closest > CHARACTER_RADIUS + PUSH.block - 1e-6, `never walked through it ${closest}`);
+  assert.equal(chair.yaw, 0);
+  assert.ok(Math.abs(chair.pitch) <= SWAY.limit * 1.5 && Math.abs(chair.roll) <= SWAY.limit * 1.5, 'upright');
+  // Let go, it rolls to a stop.
+  run(chair, { throttle: 0, steer: 0, free: true }, 6);
+  assert.ok(Math.hypot(chair.vx, chair.vz) < 1e-6, 'comes to rest');
+  // Pushed straight against a wall it can go no further and stops the character; a little off its middle, it slides along the wall out of the way.
+  const walled: DriveWorld = { ...flat, boxes: [{ name: 'wall', minX: 1.2, maxX: 2, minZ: -5, maxZ: 5 }] };
+  const stuck = chairAt(0, 0, 0);
+  const pinned = walkInto(stuck, 1.6, 4, walled, 0);
+  assert.ok(stuck.x < 1.2 - PUSH.radius + 1e-3, `held by the wall ${stuck.x}`);
+  assert.ok(pinned.character.x < stuck.x - CHARACTER_RADIUS - PUSH.block + 1e-3, `the character is stopped by it ${pinned.character.x}`);
+  const sliding = chairAt(0, 0, 0);
+  const past = walkInto(sliding, 1.6, 4, walled, 0.2);
+  assert.ok(sliding.z < -0.3 && past.closest > CHARACTER_RADIUS + PUSH.block - 1e-6, `slid aside ${sliding.z}`);
+  // A kick sends it rolling along the blow; one too far away or too high misses.
+  const kicked = chairAt(0, 0, 0);
+  assert.ok(strikeChair(kicked, { x: -0.6, y: 0.3, z: 0 }, { x: 1, z: 0 }, 1));
+  assert.ok(kicked.vx > 4 && Math.abs(kicked.vz) < 1e-9);
+  assert.ok(!strikeChair(chairAt(0, 0, 0), { x: -2, y: 0.3, z: 0 }, { x: 1, z: 0 }, 1));
+  assert.ok(!strikeChair(chairAt(0, 0, 0), { x: -0.6, y: 2, z: 0 }, { x: 1, z: 0 }, 1));
 });
 
 test('a wooden fence holds together when the character runs into it and breaks into planks when the chair hits it fast', async () => {

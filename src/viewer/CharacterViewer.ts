@@ -39,7 +39,7 @@ import { PieceMeshes } from '../scene/PieceMeshes.ts';
 import { AboutPlaza } from '../scene/AboutPlaza.ts';
 import { TargetsView } from '../scene/TargetsView.ts';
 import { CircuitView } from '../scene/CircuitView.ts';
-import { DRIVE, NITRO, chairAt, driveStep, forwardSpeed, type ChairState } from '../world/chairDrive.ts';
+import { DRIVE, NITRO, PUSH, chairAt, driveStep, forwardSpeed, pushChair, strikeChair, type ChairState } from '../world/chairDrive.ts';
 import { applyLean, leanStep, leanTarget, restHand, restLean, solveArm, type Lean } from '../character/riderPose.ts';
 import { SodaSpray } from '../scene/SodaSpray.ts';
 import type { SeatSpot } from '../interactions/InteractionController.ts';
@@ -254,6 +254,10 @@ export class CharacterViewer {
   private chairSpot?: SeatSpot;
   private chairRider?: Group;
   private chairPusher?: ChairPusher;
+  /** The chair standing free stops the character (PUSH.block, turned with it) when it cannot roll away; far off while ridden. */
+  private readonly chairBlock: Box2 = { name: 'OfficeChair', minX: 1e6, maxX: 1e6, minZ: 1e6, maxZ: 1e6 };
+  /** Where the character stood last frame, for the speed it pushes the free chair with. */
+  private chairPushFrom?: { x: number; z: number };
   private circuitClock = 0;
   private chairShadow = -1;
   /**
@@ -691,7 +695,7 @@ export class CharacterViewer {
     for (const [seat, placement] of data.seatPlacements) this.standPoints.set(seat, placement);
     // With the outside ground the character can leave the room through its two open sides.
     const floor = this.outsideData?.bounds ?? data.halfSize;
-    const boxes = [...data.boxes, ...(this.outsideData?.boxes ?? [])];
+    const boxes = [...data.boxes, ...(this.outsideData?.boxes ?? []), this.chairBlock];
     this.controller = new CharacterController(spawn, boxes, floor);
     // The park benches outside are seats too (the bed's clips, the laptop on the lap).
     this.interaction = new InteractionController([...data.seats, ...(this.outsideData?.benches ?? [])], boxes, floor, CHARACTER_RADIUS);
@@ -1138,7 +1142,9 @@ export class CharacterViewer {
     const yaw = this.controller.yaw;
     const forward = { x: Math.sin(yaw), z: Math.cos(yaw) };
     const point = bone.getWorldPosition(new Vector3()).add(new Vector3(forward.x * spec.reach, 0, forward.z * spec.reach));
-    const hits = this.physics.strike(this.controller.position, point, forward, strike.power);
+    let hits = this.physics.strike(this.controller.position, point, forward, strike.power);
+    const ground = this.outsideData?.groundY ?? 0;
+    if (!this.riding && this.chairDrive && strikeChair(this.chairDrive, { x: point.x, y: point.y - ground, z: point.z }, forward, strike.power)) hits++;
     this.host.dataset.strikeHits = String(hits);
     if (hits) this.sound('punch', strike.power);
   }
@@ -1486,6 +1492,7 @@ export class CharacterViewer {
     if (this.riding || !this.chairSpot) return undefined;
     this.chairDrive = chairAt(x, z, yaw);
     this.poseChair();
+    this.placeChairBlock(false);
     return this.chairSpot.approaches[0];
   }
 
@@ -1647,20 +1654,34 @@ export class CharacterViewer {
       const knock = driveStep(state, { throttle: intent.forward, steer: -intent.right, nitro: this.nitroHeld }, delta, world);
       if (knock > 1) this.sound('crash', knock);
       this.setMovement('interacting', t('prompt.driving'));
-    } else if (Math.hypot(state.vx, state.vz) > 0.01 || state.airborne || Math.abs(state.pitch) > 1e-3) {
-      // Nobody pedalling: it rolls to a stop (quickly once the rider gets up) and the seat settles.
-      const damping = Math.exp(-delta * (riding ? 6 : 2.5));
-      state.vx *= damping;
-      state.vz *= damping;
-      driveStep(state, { throttle: 0, steer: 0 }, delta, world);
+    } else {
+      // Standing free, the character walking into it pushes it away (it rolls, it never tips over).
+      const here = this.model && this.interaction?.phase === 'free' ? { x: this.model.position.x, z: this.model.position.z } : undefined;
+      const from = this.chairPushFrom;
+      // A jump in place (reset, recording placement) is no push.
+      if (!riding && here && from && delta > 0 && Math.hypot(here.x - from.x, here.z - from.z) < 0.5) {
+        const pushed = pushChair(state, { ...here, vx: (here.x - from.x) / delta, vz: (here.z - from.z) / delta, radius: CHARACTER_RADIUS });
+        if (pushed > 1.5) this.sound('crash', pushed * 0.5, state);
+      }
+      this.chairPushFrom = here;
+      if (Math.hypot(state.vx, state.vz) > 0.01 || state.airborne || Math.abs(state.pitch) > 1e-3) {
+        // Nobody pedalling: it rolls to a stop (quickly once the rider gets up) and the seat settles.
+        const damping = Math.exp(-delta * (riding ? 6 : 2.5));
+        state.vx *= damping;
+        state.vz *= damping;
+        driveStep(state, { throttle: 0, steer: 0, free: !riding }, delta, world);
+      }
     }
     if (!driving) {
       this.nitroHeld = false;
       state.boosting = false;
     }
     this.poseChair();
+    this.placeChairBlock(riding);
     this.updateNitro(delta);
-    this.chairPusher = driving ? { x: state.x, y: data.groundY + state.y, z: state.z, yaw: state.yaw } : undefined;
+    // Ridden, or rolling on its own after a push or a kick, it knocks the pieces it runs into.
+    const rolling = !riding && Math.hypot(state.vx, state.vz) > 0.3;
+    this.chairPusher = driving || rolling ? { x: state.x, y: data.groundY + state.y, z: state.z, yaw: state.yaw } : undefined;
     // What goes through a tape or a line: the chair while ridden, otherwise the character.
     const mover = riding ? { x: state.x, z: state.z } : this.model ? { x: this.model.position.x, z: this.model.position.z } : undefined;
     const speed = riding ? Math.hypot(state.vx, state.vz) : this.controller?.speed ?? 0;
@@ -1718,6 +1739,20 @@ export class CharacterViewer {
     if (host.lap !== lap) host.lap = lap;
   }
 
+  /** The free chair's block round its base, turned with it; out of the way while someone sits on it or walks onto its seat. */
+  private placeChairBlock(riding: boolean): void {
+    const state = this.chairDrive;
+    const phase = this.interaction?.phase;
+    const solid = state && !riding && !state.airborne && (phase === 'free' || phase === 'approaching');
+    const block = this.chairBlock;
+    const half = PUSH.block;
+    block.minX = solid ? state.x - half : 1e6;
+    block.maxX = solid ? state.x + half : 1e6;
+    block.minZ = solid ? state.z - half : 1e6;
+    block.maxZ = solid ? state.z + half : 1e6;
+    block.yaw = solid ? state.yaw : 0;
+  }
+
   /** The circuit's tapes whole again and, unless someone rides it, the chair back by the start. */
   private resetCircuit(): void {
     this.circuit?.reset();
@@ -1732,6 +1767,7 @@ export class CharacterViewer {
     if (!this.riding && this.chairRest) {
       this.chairDrive = chairAt(this.chairRest.x, this.chairRest.z, this.chairRest.yaw);
       this.poseChair();
+      this.placeChairBlock(false);
     }
     this.lap = { best: this.lap.best };
   }
