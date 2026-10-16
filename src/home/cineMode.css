@@ -1,0 +1,18 @@
+/* Recording mode (?cine): the key list, and the interface hidden step by step with H. */
+.cine-panel {
+  position: absolute; z-index: 3; left: 16px; bottom: 16px; padding: 10px 12px; border: 1px solid var(--edge); border-radius: 10px;
+  color: #e6dcf1; background: var(--panel); backdrop-filter: blur(6px); font-family: var(--font); font-size: 13px; pointer-events: none;
+}
+.cine-panel h2 { margin: 0 0 6px; font-size: 13px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
+.cine-panel ul { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
+.cine-panel li { display: flex; gap: 8px; align-items: center; color: var(--muted); }
+.cine-panel li.is-active { color: #fff; }
+.cine-panel kbd {
+  display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 4px;
+  background: var(--key-top); box-shadow: 0 2px 0 var(--key-shadow); font: inherit; font-size: 12px; color: #fff;
+}
+.cine-panel li.is-active kbd { background: var(--accent); color: #1b1623; }
+
+:root[data-cine-ui='clean'] :is(.cine-panel, .room-bar, .menu-toggle, .zoom-controls, .room-tools, .touch-controls),
+:root[data-cine-ui='bare'] :is(.cine-panel, .room-bar, .menu-toggle, .zoom-controls, .room-tools, .touch-controls,
+  .seat-bubble, .shout-burst, .charge-meter, .nitro-gauge) { visibility: hidden !important; }

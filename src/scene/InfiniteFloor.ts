@@ -1,21 +1,32 @@
-import { Color, Matrix4, Mesh, PlaneGeometry, ShaderMaterial, Vector2, type Camera } from 'three';
+import { Color, Matrix4, Mesh, PerspectiveCamera, PlaneGeometry, ShaderMaterial, Vector2, type Camera } from 'three';
 
 const vertexShader = /* glsl */ `
 uniform mat4 uInverse;
 uniform mat4 uViewProjection;
 uniform float uGround;
+uniform float uSpread;
+uniform float uHorizon;
 varying vec3 vPoint;
 varying vec2 vUv;
 void main() {
   vUv = uv;
   // Each corner of the screen is unprojected onto the near and far planes and its view ray is cut
   // with the ground plane. With the orthographic camera the ground's depth and position are linear
-  // across the screen, so interpolating these four corners is exact.
-  vec4 near = uInverse * vec4(position.xy, -1.0, 1.0);
-  vec4 far = uInverse * vec4(position.xy, 1.0, 1.0);
+  // across the screen, so interpolating these four corners is exact. A perspective camera (the recording shots)
+  // can see the horizon: a corner whose ray misses the ground before the far plane takes the ground point
+  // uHorizon away in the ray's direction instead, and the quad is spread past the screen edges to cover the sides.
+  vec4 near = uInverse * vec4(position.xy * uSpread, -1.0, 1.0);
+  vec4 far = uInverse * vec4(position.xy * uSpread, 1.0, 1.0);
   near /= near.w;
   far /= far.w;
-  vPoint = mix(near.xyz, far.xyz, (uGround - near.y) / (far.y - near.y));
+  vec3 ray = far.xyz - near.xyz;
+  float t = (uGround - near.y) / min(ray.y, -1e-6);
+  if (ray.y > -1e-6 || t > 0.95) {
+    vec2 flatRay = normalize(ray.xz + vec2(1e-6, 0.0));
+    vPoint = vec3(near.x + flatRay.x * uHorizon, uGround, near.z + flatRay.y * uHorizon);
+  } else {
+    vPoint = near.xyz + ray * t;
+  }
   gl_Position = uViewProjection * vec4(vPoint, 1.0);
 }`;
 
@@ -61,6 +72,8 @@ export class InfiniteFloor {
         uInverse: { value: new Matrix4() },
         uViewProjection: { value: new Matrix4() },
         uGround: { value: groundY },
+        uSpread: { value: 1 },
+        uHorizon: { value: 1e4 },
         uFocus: { value: new Vector2() },
         uBottomLeft: { value: color(0x120f18) },
         uBottomRight: { value: color(0x1b1623) },
@@ -86,6 +99,9 @@ export class InfiniteFloor {
     viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     (uniforms.uInverse.value as Matrix4).copy(this.inverse.copy(viewProjection).invert());
     (uniforms.uFocus.value as Vector2).set(focus.x, focus.z);
+    const perspective = camera instanceof PerspectiveCamera;
+    uniforms.uSpread.value = perspective ? 1.6 : 1;
+    uniforms.uHorizon.value = perspective ? camera.far * 0.85 : 1e4;
   }
 
   setLight(violet: boolean): void {

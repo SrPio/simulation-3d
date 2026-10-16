@@ -2,11 +2,13 @@ import './home.css';
 import './startScreen.css';
 import './touch.css';
 import './nitroGauge.css';
+import './cineMode.css';
 import { LANGUAGES, getLanguage, initialLanguage, isLanguage, setLanguage, t, type MessageKey } from '../core/i18n.ts';
 import { QUALITY, isQualityId, readPreferences, savePreferences } from '../core/quality.ts';
 import { StartScreen } from './StartScreen.ts';
 import { TouchControls } from './TouchControls.ts';
 import { NitroGauge } from './NitroGauge.ts';
+import { setupCineMode } from './cineMode.ts';
 import { GamepadInput, type PadKind } from '../input/GamepadInput.ts';
 import { Sounds } from '../audio/Sounds.ts';
 import { CharacterViewer, type CameraMode, type LightPreset, type MovementState, type ViewerStatus } from '../viewer/CharacterViewer';
@@ -310,6 +312,8 @@ reducedMotion.addEventListener('click', () => {
   applyPreferences();
   viewer?.setReducedMotion(motionReduced());
 }, { signal: listeners.signal });
+// Recording mode for promotional videos: camera shots and a hideable interface, only with ?cine in the address.
+if (new URLSearchParams(window.location.search).has('cine')) setupCineMode(app.querySelector<HTMLDivElement>('.room-page')!, () => viewer, listeners.signal);
 retry.addEventListener('click', mount, { signal: listeners.signal });
 reset.addEventListener('click', () => {
   viewer?.resetPosition();

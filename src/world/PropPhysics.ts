@@ -474,6 +474,11 @@ export class PropPhysics {
   }
 
   /** Every piece (or every piece of one group) back where it stood, still and asleep; a full reset also removes thrown laptops. */
+  /** The character was put somewhere else: its pusher jumps there on the next step instead of sweeping across the way. */
+  jumpPusher(): void {
+    this.idle = true;
+  }
+
   reset(group?: PieceGroup): void {
     for (const [index, body] of this.bodies.entries()) {
       if (!group || this.groups[index] === group) this.place(body, this.rest[index]);

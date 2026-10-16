@@ -1,7 +1,7 @@
 import {
   AnimationMixer, BackSide, Box3, CircleGeometry, Color, DirectionalLight, DoubleSide, FrontSide, Group, HemisphereLight, InstancedMesh, LoopOnce, LoopRepeat, PointLight,
   MeshDepthMaterial, Raycaster, RepeatWrapping, Texture, Vector2, WebGLRenderTarget, type Material, type Side,
-  Matrix4, Mesh, MeshStandardMaterial, OrthographicCamera, Quaternion, Scene, SkinnedMesh, Vector3, type AnimationAction, type Object3D,
+  Matrix4, Mesh, MeshStandardMaterial, OrthographicCamera, Quaternion, Scene, SkinnedMesh, Vector3, type AnimationAction, type Camera, type Object3D,
   type WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -28,6 +28,7 @@ import { groundAt, readOutside, type OutsideData, type Piece, type PunchBag, typ
 import { SignAreas, signText } from '../scene/SignAreas.ts';
 import { FloorTexts } from '../scene/FloorTexts.ts';
 import { Signpost } from '../scene/Signpost.ts';
+import { CineCamera, type CineShot } from '../scene/CineCamera.ts';
 import { SeatBubble } from '../scene/SeatBubble.ts';
 import { ShoutBurst } from '../scene/ShoutBurst.ts';
 import { shoutAt, shoutSpots, type ShoutId, type ShoutSpot } from '../world/shouts.ts';
@@ -302,6 +303,11 @@ export class CharacterViewer {
   private pointerStart?: { x: number; y: number };
   private hover?: { x: number; y: number };
   private cameraMode: CameraMode = 'free';
+  /** The recording camera (`?cine` on the room page), and whether it draws the picture instead of the game camera. */
+  private cine?: CineCamera;
+  private cineOn = false;
+  /** Recording mode: the game camera looks this far from the character (to keep it and what it plays with in the picture). */
+  private focusOffset = { x: 0, z: 0 };
   /** The room camera's zoom chosen with the zoom buttons (the follow camera keeps it), and the zoom it is easing to. */
   private roomZoom?: number;
   private zoomGoal?: number;
@@ -1157,7 +1163,7 @@ export class CharacterViewer {
       this.chargeMeter.update(false);
       return;
     }
-    const point = this.model.position.clone().setY(this.model.position.y + BUBBLE_HEIGHT).project(this.camera);
+    const point = this.model.position.clone().setY(this.model.position.y + BUBBLE_HEIGHT).project(this.view);
     this.chargeMeter.update(true, this.strike.charge / STRIKE_CHARGE, (point.x + 1) / 2 * this.host.clientWidth, (1 - point.y) / 2 * this.host.clientHeight);
   }
 
@@ -1421,12 +1427,16 @@ export class CharacterViewer {
   /** While the room stands between the camera and the character, a window opens in it around the character. */
   private updateReveal(delta: number): void {
     if (!this.reveal || !this.roomBounds || !this.model || !this.renderer) return;
-    const toCamera = this.camera.getWorldDirection(new Vector3()).negate();
+    const view = this.view;
+    // The recording camera is a perspective one: the ray runs from the character to where it stands.
+    const toCamera = view === this.camera
+      ? this.camera.getWorldDirection(new Vector3()).negate()
+      : view.position.clone().sub(this.model.position).normalize();
     const hidden = hiddenBehind(this.model.position, toCamera, this.roomBounds);
     this.revealAmount = revealStep(this.revealAmount, hidden, delta, this.reducedMotion);
     const size = this.renderer.getDrawingBufferSize(new Vector2());
     const chest = this.model.position.clone().setY(this.model.position.y + 1.2);
-    this.reveal.update(this.camera, chest, this.revealAmount, size.x, size.y);
+    this.reveal.update(view, chest, this.revealAmount, size.x, size.y);
     const value = this.revealAmount > 0.5 ? 'open' : 'none';
     if (this.host.dataset.reveal !== value) this.host.dataset.reveal = value;
   }
@@ -1445,6 +1455,38 @@ export class CharacterViewer {
     }
     this.thrown = [];
     this.dropHeldLaptop();
+  }
+
+  /**
+   * Put the character standing at a ground point facing `yaw` (0 faces +Z), leaving the world as it is: for the
+   * recording mode, which films each shot where it happens. A seat or a ride is left first.
+   */
+  placeCharacter(x: number, z: number, yaw: number): void {
+    if (!this.controller || this.disposed) return;
+    this.throwing = false;
+    this.cancelStrike();
+    this.interaction?.reset();
+    this.syncLaptop(0);
+    this.driving = false;
+    this.keyboard?.clear();
+    this.controller.reset();
+    this.controller.position = { x, z };
+    this.controller.yaw = yaw;
+    if (this.actions.has('idle')) this.selectClip('idle');
+    this.placeForClip(this.activeClip);
+    this.host.dataset.locomotion = 'idle';
+    this.physics?.jumpPusher();
+  }
+
+  /**
+   * Recording mode: move the office chair (when nobody rides it) to a ground point facing `yaw`. Returns the point
+   * beside it where the character can stand to sit down.
+   */
+  placeChair(x: number, z: number, yaw: number): { x: number; z: number } | undefined {
+    if (this.riding || !this.chairSpot) return undefined;
+    this.chairDrive = chairAt(x, z, yaw);
+    this.poseChair();
+    return this.chairSpot.approaches[0];
   }
 
   /** Back to the spawn point, standing idle. */
@@ -1916,7 +1958,7 @@ export class CharacterViewer {
     const center = this.sign && this.renderer ? this.areas?.center(this.sign) : undefined;
     let value = 'none';
     if (center && this.renderer) {
-      const point = center.project(this.camera);
+      const point = center.project(this.view);
       const bounds = this.renderer.domElement.getBoundingClientRect();
       value = `${Math.round(bounds.left + (point.x + 1) / 2 * bounds.width)},${Math.round(bounds.top + (1 - point.y) / 2 * bounds.height)}`;
     }
@@ -2043,7 +2085,7 @@ export class CharacterViewer {
       this.bubble.update(false);
       return;
     }
-    const point = this.model.position.clone().setY(this.model.position.y + BUBBLE_HEIGHT).project(this.camera);
+    const point = this.model.position.clone().setY(this.model.position.y + BUBBLE_HEIGHT).project(this.view);
     const width = this.host.clientWidth;
     const height = this.host.clientHeight;
     this.bubble.update(true, (point.x + 1) / 2 * width, (1 - point.y) / 2 * height);
@@ -2063,7 +2105,7 @@ export class CharacterViewer {
       return;
     }
     if (id !== this.shout.current) this.sound('pop');
-    const point = this.model.position.clone().setY(this.model.position.y + BUBBLE_HEIGHT).project(this.camera);
+    const point = this.model.position.clone().setY(this.model.position.y + BUBBLE_HEIGHT).project(this.view);
     const lift = this.host.dataset.bubble === 'shown' ? 44 : 0;
     this.shout.update(id, t(`shout.${id}`), (point.x + 1) / 2 * this.host.clientWidth, (1 - point.y) / 2 * this.host.clientHeight - lift);
   }
@@ -2096,14 +2138,19 @@ export class CharacterViewer {
     if (!this.areas || !this.renderer || !this.ready) return undefined;
     const bounds = this.renderer.domElement.getBoundingClientRect();
     this.pointer.set((clientX - bounds.left) / bounds.width * 2 - 1, -((clientY - bounds.top) / bounds.height) * 2 + 1);
-    this.raycaster.setFromCamera(this.pointer, this.camera);
+    this.raycaster.setFromCamera(this.pointer, this.view);
     return this.areas.hit(this.raycaster)?.id;
   }
 
   /** Where the room camera should look: the character (at the room's mid height), or the model centre in the studio. */
   private focusTarget(): Vector3 {
     if (!this.room || !this.model) return this.center.clone();
-    return new Vector3(this.model.position.x, this.center.y, this.model.position.z);
+    return new Vector3(this.model.position.x + this.focusOffset.x, this.center.y, this.model.position.z + this.focusOffset.z);
+  }
+
+  /** Recording mode: aim the game camera this far (m, on the ground) from the character; 0, 0 centres it again. */
+  setFocusOffset(x: number, z: number): void {
+    this.focusOffset = { x, z };
   }
 
   /** Move camera and orbit target together towards the character, keeping the current angle and zoom. */
@@ -2117,6 +2164,54 @@ export class CharacterViewer {
     if (shift.lengthSq() === 0) return;
     this.camera.position.add(shift);
     this.controls.target.add(shift);
+  }
+
+  /** The camera that draws the picture: the recording camera while a shot is on, the game camera otherwise. */
+  private get view(): Camera {
+    return this.cineOn && this.cine ? this.cine.camera : this.camera;
+  }
+
+  /** The character's facing as a turn about Y (0 faces +Z). */
+  private facing(): number {
+    if (!this.model) return 0;
+    const direction = this.model.getWorldDirection(new Vector3());
+    return Math.atan2(direction.x, direction.z);
+  }
+
+  /**
+   * Recording shots for promotional videos (room page with `?cine`): a shot draws the picture through a perspective
+   * camera round the character while the game camera keeps running underneath, so the keys move the character as
+   * always; 'game' goes back to the game camera. Hook `data-cine` (shot name or game).
+   */
+  setCineShot(shot: CineShot | 'game'): void {
+    if (this.disposed || !this.room) return;
+    if (shot === 'game') {
+      this.cineOn = false;
+    } else {
+      if (!this.cine) {
+        this.cine = new CineCamera();
+        this.cine.resize(Math.max(this.host.clientWidth, 1) / Math.max(this.host.clientHeight, 1));
+      }
+      this.cine.setShot(shot, !this.cineOn, this.facing());
+      this.cineOn = true;
+    }
+    this.host.dataset.cine = this.cineOn ? shot : 'game';
+  }
+
+  /** Cut mode (shots jump at once) or glide mode; returns the new mode. */
+  toggleCineCut(): boolean {
+    if (!this.cine) this.cine = new CineCamera();
+    this.cine.cut = !this.cine.cut;
+    this.host.dataset.cineCut = String(this.cine.cut);
+    return this.cine.cut;
+  }
+
+  /** Keep the recording camera where it is, only turning to the character (or let it follow the shot again). */
+  toggleCineFreeze(): boolean {
+    if (!this.cine || !this.cineOn) return false;
+    this.cine.frozen = !this.cine.frozen;
+    this.host.dataset.cineFrozen = String(this.cine.frozen);
+    return this.cine.frozen;
   }
 
   /** Fixed isometric camera that follows the character, or the free limited orbit. */
@@ -2467,6 +2562,7 @@ export class CharacterViewer {
     this.camera.top = span / 2;
     this.camera.bottom = -span / 2;
     this.camera.updateProjectionMatrix();
+    this.cine?.resize(aspect);
     this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.setSize(width, height, false);
     this.host.dataset.pixelRatio = this.pixelRatio.toFixed(2);
@@ -2511,6 +2607,7 @@ export class CharacterViewer {
     if (this.ready && this.room) {
       this.followCharacter(delta);
       this.easeZoom(delta);
+      if (this.cineOn && this.cine && this.model) this.cine.update(delta, this.model.position, this.facing(), this.reducedMotion);
       this.updateSounds(delta);
     }
     this.controls?.update();
@@ -2521,8 +2618,8 @@ export class CharacterViewer {
     this.updateBubble();
     this.updateShout();
     this.updateChargeMeter();
-    if (this.ground && this.model) this.ground.update(this.camera, this.model.position);
-    this.renderer.render(this.scene, this.camera);
+    if (this.ground && this.model) this.ground.update(this.view, this.model.position);
+    this.renderer.render(this.scene, this.view);
     // The shadow pass holds the programs it found ready now (see compileShadowPass).
     if (this.shadowStandIns.length) for (const material of this.shadowStandIns.splice(0)) material.dispose();
     this.sampleRender(frame);
