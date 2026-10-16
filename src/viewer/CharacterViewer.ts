@@ -51,7 +51,8 @@ import { TargetGame, type Lane } from '../world/targets.ts';
 import { signAt } from '../world/signs.ts';
 import { KEY_SINK, onKey, pressStep, type FloorKey } from '../world/keyPress.ts';
 import { ChickRain } from '../scene/ChickRain.ts';
-import { LAPTOP, MAX_CHICKS, PropPhysics, type ChairPusher, type StaticBox, type TargetDisc, type TargetHit, type ThrownLaptop } from '../world/PropPhysics.ts';
+import { BAG_PUSH, LAPTOP, MAX_CHICKS, PropPhysics, type ChairPusher, type StaticBox, type TargetDisc, type TargetHit, type ThrownLaptop } from '../world/PropPhysics.ts';
+import type { Box2 } from '../world/collisions.ts';
 import { fontsReady } from '../core/fonts.ts';
 
 export type ViewPreset = 'front' | 'left' | 'right' | 'back' | 'three-quarter';
@@ -254,8 +255,11 @@ export class CharacterViewer {
   private chairPusher?: ChairPusher;
   private circuitClock = 0;
   private chairShadow = -1;
-  /** The punching bags: each swings round its hook with its physics body (`rest` its turn hanging still), with a blob shadow from `bagShadow` on. */
-  private bags: { bag: PunchBag; rest: Quaternion }[] = [];
+  /**
+   * The punching bags: each swings round its hook with its physics body (`rest` its turn hanging still), with a blob
+   * shadow from `bagShadow` on, and stops the character at `block`, moved with the bag at chest height.
+   */
+  private bags: { bag: PunchBag; rest: Quaternion; block: Box2 }[] = [];
   private readonly bagRoot = new Group();
   private bagShadow = -1;
   private bagSwing = '';
@@ -778,7 +782,10 @@ export class CharacterViewer {
       });
       mergeStaticMeshes(bag.object);
       this.bagRoot.add(bag.object);
-      return { bag, rest: bag.object.quaternion.clone() };
+      // The character leans into the bag rather than walking through it (BAG_PUSH): a collider that follows the bag.
+      const block: Box2 = { name: `Bag_${bag.id}`, minX: 1e6, maxX: 1e6, minZ: 1e6, maxZ: 1e6 };
+      data.boxes.push(block);
+      return { bag, rest: bag.object.quaternion.clone(), block };
     });
     this.bagRoot.name = 'PunchBags';
     // The targets rock when hit: they leave the static scene too, drawn by their own view.
@@ -1968,11 +1975,23 @@ export class CharacterViewer {
   private syncBags(): void {
     if (!this.bags.length || !this.shadows) return;
     const swing: string[] = [];
-    for (const [index, { bag, rest }] of this.bags.entries()) {
+    for (const [index, { bag, rest, block }] of this.bags.entries()) {
       const turn = this.physics?.bags[index]?.quaternion;
       const swung = turn ? new Quaternion(turn.x, turn.y, turn.z, turn.w) : new Quaternion();
       bag.object.quaternion.copy(swung).multiply(rest);
       const down = new Vector3(0, -bag.centre, 0).applyQuaternion(swung);
+      // Where the bag's axis crosses the character's chest height; swung up past it, the character walks under.
+      const axis = new Vector3(0, -1, 0).applyQuaternion(swung);
+      const chest = (this.outsideData?.groundY ?? 0) + BAG_PUSH.chest;
+      const along = axis.y < -0.05 ? (chest - bag.pivot.y) / axis.y : Infinity;
+      const inside = Math.abs(along - bag.centre) <= bag.length / 2;
+      const x = bag.pivot.x + axis.x * along;
+      const z = bag.pivot.z + axis.z * along;
+      const half = inside ? BAG_PUSH.block : 0;
+      block.minX = inside ? x - half : 1e6;
+      block.maxX = inside ? x + half : 1e6;
+      block.minZ = inside ? z - half : 1e6;
+      block.maxZ = inside ? z + half : 1e6;
       this.shadows.set(this.bagShadow + index, bag.pivot.x + down.x, bag.pivot.z + down.z, 0, 0.75, 0.75, 0.4);
       swing.push(`${bag.id}:${Math.round(Math.acos(Math.min(1, -down.y / bag.centre)) * 180 / Math.PI)}`);
     }

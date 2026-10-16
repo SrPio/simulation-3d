@@ -7,7 +7,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MESSAGES } from '../src/core/i18n.ts';
 import { readOutside, type OutsideData, type PunchBag } from '../src/scene/outsideData.ts';
 import { overlaps } from '../src/world/collisions.ts';
-import { PropPhysics } from '../src/world/PropPhysics.ts';
+import { CHARACTER_RADIUS } from '../src/character/CharacterController.ts';
+import { BAG_PUSH, PropPhysics } from '../src/world/PropPhysics.ts';
 
 async function parse(file: string): Promise<Object3D> {
   const data = await readFile(new URL(`../public/models/${file}.glb`, import.meta.url));
@@ -82,7 +83,8 @@ test('the boxing corner among the brick stacks holds a yellow JS bag and a blue 
     const middle = (bottom + top) / 2;
     assert.ok(middle > 1.8 && middle < 2.24, `${bag.id} middle at ${middle.toFixed(2)} m`);
     assert.ok(bottom < FIST - 0.2 && top > FIST + 0.5, `${bag.id} from ${bottom.toFixed(2)} to ${top.toFixed(2)} m`);
-    assert.ok(overlaps({ x: bag.pivot.x, z: bag.pivot.z }, 0.01, data.boxes), `${bag.id} blocks the character`);
+    // The character walks into the bag and shoves it; only the gantry's posts stop it.
+    assert.ok(!overlaps({ x: bag.pivot.x, z: bag.pivot.z }, 0.3, data.boxes), `${bag.id} lets the character in`);
   }
   assert.ok(data.floors.some((floor) => floor.id === 'boxing'), 'its painted name');
   assert.equal(MESSAGES.es['floor.boxing'], 'SACOS DE BOXEO');
@@ -124,4 +126,47 @@ test('a punched bag only swings like a pendulum from its hook, further the harde
   let tap = 0;
   step(3, () => { tap = Math.max(tap, swing(0)); });
   assert.ok(tap > 3 && tap < widest / 2, `a tap only nudges it (${tap.toFixed(1)}°)`);
+});
+
+test('a bag is heavy: a brush barely stirs it, leaning into it moves it a little, and a swinging bag bounces off the character', async () => {
+  const { data } = await world();
+  const bag = data.bags[0];
+  const { x, z } = bag.pivot;
+  /** Walking (1.6 m/s) towards -Z from in front of the bag, `side` metres to its side, stopped at `stop` from its axis. */
+  const walk = (side: number, stop: number) => {
+    const { physics, swing } = hang(data.bags);
+    let widest = 0;
+    let at = z + 1.5;
+    for (let t = 0; t < 6 * 60; t++) {
+      at = Math.max(at - 1.6 / 60, z + stop);
+      physics.step(1 / 60, { x: x + side, y: GROUND, z: at });
+      widest = Math.max(widest, swing(0));
+    }
+    return widest;
+  };
+  // Passing so close that the shoulders touch it.
+  const brush = walk(0.45, -1);
+  assert.ok(brush > 1 && brush < 8, `a brush stirs it ${brush.toFixed(1)}°`);
+  // Walking into it until the viewer's collider (BAG_PUSH.block round its axis) stops the character.
+  const lean = walk(0, CHARACTER_RADIUS + BAG_PUSH.block);
+  assert.ok(lean > 5 && lean < 18, `leaning into it swings it ${lean.toFixed(1)}°`);
+
+  // Punched away from a character standing in front of it: it swings back into the character and off again.
+  const { physics } = hang(data.bags);
+  const standing = { x, y: GROUND, z: z + 0.7 };
+  physics.step(1 / 60, standing);
+  punch(physics, bag, 1);
+  let towards = 0;
+  let away = 0;
+  let touched = false;
+  for (let t = 0; t < 4 * 60; t++) {
+    physics.step(1 / 60, standing);
+    const speed = physics.bags[0].velocity.z;
+    if (!touched) {
+      towards = Math.max(towards, speed);
+      if (towards > 0.3 && speed < towards * 0.5) touched = true;
+    } else away = Math.min(away, speed);
+  }
+  assert.ok(touched, 'it swings back into the character');
+  assert.ok(-away > towards * 0.25, `it bounces back off (${towards.toFixed(2)} → ${away.toFixed(2)} m/s)`);
 });

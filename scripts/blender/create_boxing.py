@@ -7,7 +7,8 @@ public/models/boxing.glb, which the viewer loads with the outside (outside.glb i
   centre, radius, length] and `mass`; their children (chain, swivel, bag, letters) swing with them. The viewer hangs a
   physics body from each pivot and turns the empty with it.
 - The gantry is a decor `boxing` (blob shadow) with its posts as decor `post` (solid, so pieces and bags bounce off)
-  and `Collider_*` boxes for the character: the posts and each bag's place at rest.
+  and `Collider_*` boxes for the character round the posts. The bags have none: the character walks into them and
+  shoves them (and a swinging bag bounces off the character).
 - `Floor_Boxing` (floor 'boxing'): the painted frame under the bags and the zone's name.
 
 Everything keeps the block perspective: the gantry runs along three.js +X and the letters face +Z.
@@ -171,10 +172,6 @@ def build_bag(key, x, root, steel, cap):
     room.cylinder(f'PunchBag_{key.upper()}_Swivel', (0, 0, -SWIVEL), 0.035, 0.07, steel, pivot, segments=10)
     link_rod(f'PunchBag_{key.upper()}_Hang', (0, 0, -SWIVEL + 0.03), (0, 0, -0.03), 0.009, steel, pivot)
     room.cylinder(f'PunchBag_{key.upper()}_Hook', (0, 0, -0.02), 0.025, 0.04, steel, pivot, segments=8)
-    # The character stops at the bag's place at rest (it still pushes a swinging bag away).
-    cx, cy, _ = at((BOXING[0] + x, BOXING[1]))
-    r = BAG['radius'] + 0.04
-    room.collider(f'PunchBag_{key.upper()}', (cx - r, cy - r, GROUND_Z + BAG['bottom']), (cx + r, cy + r, GROUND_Z + BAG['bottom'] + BAG['length']), root)
 
 
 def build(root):

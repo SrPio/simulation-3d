@@ -58,8 +58,11 @@ export const FLAP = { width: 0.488, thickness: 0.008, length: 0.246, mass: 0.08 
 export const FLAP_LIMIT = 2.6;
 /** One box flap: its body, its hinge and where the hinge sits on the box. */
 export type Flap = { body: BodyType; hinge: HingeType; at: { position: Vec; quaternion: Quat } };
-/** Collision groups: flaps only meet the ground, the static boxes, laptops and the character, not the loose pieces. */
-const GROUP = { world: 1, piece: 2, flap: 4 } as const;
+/**
+ * Collision groups: flaps only meet the ground, the static boxes, laptops and the character, not the loose pieces.
+ * The bags' shapes (`bag`) never touch the character's spheres (`character`): the character leans on them softly instead.
+ */
+const GROUP = { world: 1, piece: 2, flap: 4, bag: 8, character: 16 } as const;
 /**
  * A raining chick (the Konami code): a ball round its body (`centre` above its feet) whose weight sits `low` below
  * that centre, so like a roly-poly toy it rocks back onto its feet wherever it lands.
@@ -75,6 +78,17 @@ const MAX_SUBSTEPS = 3;
 const PUSHER_RADIUS = 0.3;
 // Low enough to shove the flat tagline pieces, high enough to tip the standing letters and pins over.
 const PUSHER_SPHERES = [0.3, 0.75, 1.2];
+/**
+ * The character against a punching bag: an upright capsule from its feet to the top of its head (`top`, the character
+ * is 2.67 m tall) pressing on the bag like a spring (`stiffness` N/m of overlap, `damping` N per m/s of closing speed),
+ * never harder than `maxForce`. The character's body cannot be moved, so a rigid contact would hand the 30 kg bag the
+ * character's whole speed at a touch and it would fly off like an empty one. The viewer also stops the character at a
+ * square of half size `block` round the bag's axis at `chest` height, a little inside where the spring starts, so the
+ * character leans into the bag instead of walking through it: a brush stirs it about 5°, leaning in about 12°, pushing
+ * on and on at most about 24° (a full punch swings it about 33°), and a bag swinging back into the character is pushed
+ * off again.
+ */
+export const BAG_PUSH = { radius: PUSHER_RADIUS, top: 2.4, stiffness: 500, damping: 60, maxForce: 80, block: 0.14, chest: 1.65 };
 /** The world only steps when a piece is awake or the character is this close to one. */
 const WAKE_DISTANCE = 1.6;
 const STRAY_DISTANCE = 30;
@@ -241,7 +255,10 @@ export class PropPhysics {
       const hook = new Body({ type: Body.STATIC });
       hook.position.set(rest.pivot.x, rest.pivot.y, rest.pivot.z);
       this.world.addBody(hook);
-      const body = new Body({ mass: rest.mass, material: this.materials.get(BAG.material), shape: new Cylinder(rest.radius, rest.radius, rest.length, 12) });
+      const shape = new Cylinder(rest.radius, rest.radius, rest.length, 12);
+      shape.collisionFilterGroup = GROUP.bag;
+      shape.collisionFilterMask = ~GROUP.character;
+      const body = new Body({ mass: rest.mass, material: this.materials.get(BAG.material), shape });
       this.configure(body, BAG);
       body.collisionFilterGroup = GROUP.piece;
       body.addEventListener('collide', (event: CollideEvent) => this.report('bag', body, event));
@@ -251,7 +268,11 @@ export class PropPhysics {
       this.bagRest.push(rest);
     }
     this.pusher = new Body({ type: Body.KINEMATIC });
-    for (const y of PUSHER_SPHERES) this.pusher.addShape(new Sphere(PUSHER_RADIUS), new Vec3(0, y, 0));
+    for (const y of PUSHER_SPHERES) {
+      const sphere = new Sphere(PUSHER_RADIUS);
+      sphere.collisionFilterGroup = GROUP.character;
+      this.pusher.addShape(sphere, new Vec3(0, y, 0));
+    }
     this.pusher.allowSleep = false;
     this.world.addBody(this.pusher);
     this.chair = new Body({ type: Body.KINEMATIC, shape: new Box(new Vec3(...CHAIR_HALF)) });
@@ -271,6 +292,7 @@ export class PropPhysics {
     this.world.addEventListener('postStep', this.limitFlaps);
     this.world.addEventListener('postStep', this.breakJoints);
     this.world.addEventListener('postStep', this.swingOnly);
+    this.world.addEventListener('preStep', this.leanOnBags);
     this.reset();
   }
 
@@ -280,6 +302,35 @@ export class PropPhysics {
       const axis = body.quaternion.vmult(new this.cannon.Vec3(0, 1, 0));
       const spin = body.angularVelocity.dot(axis);
       if (spin) body.angularVelocity.vsub(axis.scale(spin), body.angularVelocity);
+    }
+  };
+
+  /** Whether each bag touched the character on the last step (a new touch is heard). */
+  private readonly bagTouching: boolean[] = [];
+
+  /** The character presses on the bags it overlaps (BAG_PUSH), before every step. */
+  private readonly leanOnBags = (): void => {
+    if (this.idle) return;
+    const { Vec3 } = this.cannon;
+    const feet = this.pusher.position;
+    for (const [index, body] of this.bags.entries()) {
+      const rest = this.bagRest[index];
+      const touch = bagContact(feet, body.position, body.quaternion.vmult(new Vec3(0, 1, 0)), rest.length / 2, rest.radius);
+      if (!touch) {
+        this.bagTouching[index] = false;
+        continue;
+      }
+      const { normal, point, depth } = touch;
+      const arm = new Vec3(point.x - body.position.x, point.y - body.position.y, point.z - body.position.z);
+      const bagSpeed = body.velocity.vadd(body.angularVelocity.cross(arm));
+      const v = this.pusher.velocity;
+      const closing = (v.x - bagSpeed.x) * normal.x + (v.y - bagSpeed.y) * normal.y + (v.z - bagSpeed.z) * normal.z;
+      const force = Math.min(BAG_PUSH.maxForce, Math.max(0, BAG_PUSH.stiffness * depth + BAG_PUSH.damping * closing));
+      if (!this.bagTouching[index] && closing >= IMPACT_MIN) this.onImpact?.({ source: 'bag', speed: closing, position: body.position });
+      this.bagTouching[index] = true;
+      if (!force) continue;
+      body.wakeUp();
+      body.applyForce(new Vec3(normal.x * force, normal.y * force, normal.z * force), arm);
     }
   };
 
@@ -773,4 +824,30 @@ export class PropPhysics {
     const upY = 1 - 2 * (q.x * q.x + q.z * q.z);
     return upY < Math.SQRT1_2 || body.position.y < this.rest[index].position.y - this.rest[index].half[1];
   }
+}
+
+/**
+ * Where the character's capsule (upright, BAG_PUSH.radius, from its `feet` up to BAG_PUSH.top) overlaps a bag (a
+ * capsule round its axis `up` through `centre`, `half` its half length, `radius` thick): the direction from the
+ * character into the bag across the overlap, the point on the bag's surface and how deep they overlap; undefined apart.
+ */
+export function bagContact(feet: Vec, centre: Vec, up: Vec, half: number, radius: number): { normal: Vec; point: Vec; depth: number } | undefined {
+  // Closest points between the two axes: the character's (feet.y … feet.y + top, vertical) and the bag's.
+  const bottom = feet.y + BAG_PUSH.radius;
+  const length = BAG_PUSH.top - 2 * BAG_PUSH.radius;
+  const r = { x: centre.x - feet.x, y: centre.y - bottom, z: centre.z - feet.z };
+  const b = up.y;
+  const denominator = 1 - b * b;
+  let s = denominator > 1e-6 ? (r.y - b * (r.x * up.x + r.y * up.y + r.z * up.z)) / denominator : r.y;
+  s = Math.min(Math.max(s, 0), length);
+  let t = Math.min(Math.max(s * b - (r.x * up.x + r.y * up.y + r.z * up.z), -half), half);
+  s = Math.min(Math.max(r.y + t * up.y, 0), length);
+  const own = { x: feet.x, y: bottom + s, z: feet.z };
+  const theirs = { x: centre.x + up.x * t, y: centre.y + up.y * t, z: centre.z + up.z * t };
+  const gap = { x: theirs.x - own.x, y: theirs.y - own.y, z: theirs.z - own.z };
+  const distance = Math.hypot(gap.x, gap.y, gap.z);
+  const depth = BAG_PUSH.radius + radius - distance;
+  if (depth <= 0 || distance < 1e-6) return undefined;
+  const normal = { x: gap.x / distance, y: gap.y / distance, z: gap.z / distance };
+  return { normal, depth, point: { x: theirs.x - normal.x * radius, y: theirs.y - normal.y * radius, z: theirs.z - normal.z * radius } };
 }
