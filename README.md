@@ -2,7 +2,7 @@
 
 An interactive 3D portfolio: walk a stylised version of me out of my bedroom and around a small isometric world with my links, a park, a playground, a tech tower, an office-chair race circuit and a few secrets.
 
-**Live:** https://andres-jaramillo-3d.vercel.app
+**Live:** https://3d-andres-jaramillo.is-a.dev
 
 Built with Vite, vanilla TypeScript and Three.js, with cannon-es physics. Every model (the character, the room, the outside world, the circuit) was made in Blender with Python scripts that live in this repository.
 
