@@ -6,10 +6,15 @@ character is a camera along (-1, -1, 0.95). EEVEE with a transparent film, frame
 down for the icon sizes.
 
 Writes public/favicon.png (64 px), public/favicon-32.png and public/apple-touch-icon.png (180 px, on the page's
-dark violet so iOS does not fill the transparency with black).
+dark violet so iOS does not fill the transparency with black), and the web app manifest's icons: icon-192.png and
+icon-512.png transparent, so Android's install splash shows only the head on the manifest background_color, and
+icon-maskable-512.png with the head inside the maskable safe zone on that same colour (MANIFEST_BACKGROUND, keep it
+equal to background_color in public/manifest.webmanifest) so the masked icon's edge never shows on the splash.
 
 Run: blender --background --factory-startup --python-exit-code 1 --python scripts/blender/render_favicon.py
+     [-- --icons-only]   (rebuilds the icons from the saved head-isometric.png without rendering again)
 """
+import sys
 from pathlib import Path
 
 import bpy
@@ -26,7 +31,11 @@ HEAD_PARTS = {'Head', 'Hair', 'HairTuft', 'Beard', 'Moustache', 'Eyebrows', 'Eye
 VIEW = Vector((-1, -1, 0.95)).normalized()
 SIZE = 512
 MARGIN = 1.02
-ICONS = (('favicon.png', 64, None), ('favicon-32.png', 32, None), ('apple-touch-icon.png', 180, (0.11, 0.09, 0.14)))
+MANIFEST_BACKGROUND = (0x17 / 255, 0x13 / 255, 0x1e / 255)
+# name, size, background, share of the side the head fills (the maskable safe zone is the middle 80 % circle)
+ICONS = (('favicon.png', 64, None, 1), ('favicon-32.png', 32, None, 1), ('apple-touch-icon.png', 180, (0.11, 0.09, 0.14), 1),
+         ('icon-192.png', 192, None, 1), ('icon-512.png', 512, None, 1),
+         ('icon-maskable-512.png', 512, MANIFEST_BACKGROUND, 0.62))
 
 
 def clear():
@@ -93,10 +102,26 @@ def camera(scene, shown):
     scene.camera = cam
 
 
+def padded(image, size, inner):
+    """Scales the head to inner pixels and centres it on a transparent size × size canvas."""
+    image.scale(inner, inner)
+    head = list(image.pixels)
+    pixels = [0.0] * (size * size * 4)
+    offset = (size - inner) // 2
+    for y in range(inner):
+        row = ((y + offset) * size + offset) * 4
+        pixels[row:row + inner * 4] = head[y * inner * 4:(y + 1) * inner * 4]
+    image.scale(size, size)
+    image.pixels = pixels
+
+
 def icons(source):
-    for name, size, background in ICONS:
+    for name, size, background, fill in ICONS:
         image = bpy.data.images.load(str(source))
-        image.scale(size, size)
+        if fill < 1:
+            padded(image, size, round(size * fill))
+        else:
+            image.scale(size, size)
         if background:
             pixels = list(image.pixels)
             for i in range(0, len(pixels), 4):
@@ -112,6 +137,10 @@ def icons(source):
 
 
 def main():
+    source = WORK / 'head-isometric.png'
+    if '--icons-only' in sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []:
+        icons(source)
+        return
     clear()
     scene = setup()
     bpy.ops.import_scene.gltf(filepath=str(V4))
@@ -120,7 +149,6 @@ def main():
     light('Key', (-0.6, -1, 1.2), 3.2)
     light('Rim', (1, 0.6, 0.5), 1.4)
     WORK.mkdir(parents=True, exist_ok=True)
-    source = WORK / 'head-isometric.png'
     scene.render.filepath = str(source)
     bpy.ops.render.render(write_still=True)
     icons(source)
