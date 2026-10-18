@@ -83,7 +83,8 @@ export const GRAFFITI: readonly GraffitiSpot[] = [
   { id: 'ramp-jump', text: { es: '¡SALTA!', en: 'JUMP!' }, style: 'spray', at: [29.45, 1.5, -10.7], face: 'up', width: 2.0, tilt: 6, depth: 1.2, color: C.pink, seed: 13 },
   { id: 'road-go', text: { es: '¡VAMOS!', en: 'GO!' }, style: 'spray', at: [29.7, 'ground', 18.65], face: 'up', width: 2.6, tilt: 4, color: C.yellow, seed: 11 },
   // A planter in the plaza, the park and the work site.
-  { id: 'planter-heart', symbol: 'heartline', style: 'spray', at: [33.9, 0.14, 9.25], face: 'z', width: 0.62, tilt: -8, color: C.pink, seed: 37 },
+  // The planter's front is long and low (2.4 × 0.45 m): one line of words fits it, a tall symbol was cut off.
+  { id: 'planter-hello', text: { es: 'HOLA MUNDO', en: 'HELLO WORLD' }, style: 'spray', at: [33.9, 0.1, 9.25], face: 'z', width: 1.7, tilt: -3, color: C.pink, seed: 37 },
   { id: 'park-code', symbol: 'code', style: 'piece', at: [-6.5, 'ground', 22.5], face: 'up', width: 2.4, tilt: -6, color: C.cyan, fade: C.lime, seed: 97 },
   { id: 'works-friday', text: { es: 'VIERNES:\nNO DEPLOY', en: 'FRIDAY:\nNO DEPLOY' }, style: 'spray', at: [-2.5, 'ground', 33.5], face: 'up', width: 2.6, tilt: 8, color: C.lime, seed: 413 },
   // The brick wall at the end of the circuit: it scatters with the bricks like the playground's.

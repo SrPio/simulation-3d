@@ -30,6 +30,9 @@ ACTION_SIZE = 512
 # Generous frame round the hips; scripts/silhouettes.ts crops each figure to its own bounds.
 ACTION_FRAME = 3.4
 SEAT_TOP = 0.64
+# How far the icon's laptop reaches past the knees, and how far the camera rises for the jump (its hop leaves the frame otherwise).
+LAPTOP_REACH = 0.42
+JUMP_LIFT = 0.6
 FPS = 30
 
 
@@ -195,11 +198,12 @@ def bed_and_laptop(rig):
     knee = world(rig, 'shin_L')
     hip = world(rig, 'thigh_L')
     top = max(knee.z, hip.z) + 0.08
-    front = knee.y - 0.02
-    box('LaptopBase', (-0.17, front, top), (0.17, front + 0.28, top + 0.04))
-    screen = box('LaptopScreen', (-0.17, -0.02, 0), (0.17, 0.02, 0.28))
-    screen.location = (0, front, top + 0.02)
-    screen.rotation_euler = (math.radians(-14), 0, 0)
+    # Larger than the real one and reaching past the knees, so the open lid stands clear of the arms in the icon.
+    front = knee.y - LAPTOP_REACH
+    box('LaptopBase', (-0.2, front, top), (0.2, front + 0.46, top + 0.1))
+    screen = box('LaptopScreen', (-0.2, -0.05, 0), (0.2, 0.05, 0.46))
+    screen.location = (0, front + 0.05, top + 0.05)
+    screen.rotation_euler = (math.radians(-10), 0, 0)
 
 
 def office_chair(rig):
@@ -274,7 +278,7 @@ def actions():
         elif name == 'throw':
             laptop_in_hand(rig)
         pelvis = world(rig, 'pelvis')
-        camera(scene, (0, pelvis.y, 1.25), ACTION_FRAME)
+        camera(scene, (0, pelvis.y, 1.25 + (JUMP_LIFT if name == 'jump' else 0)), ACTION_FRAME)
         render(scene, name)
 
 
