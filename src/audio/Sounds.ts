@@ -1,7 +1,8 @@
 import { SOUND_FILES, type RecordedSound } from './soundFiles.ts';
 
-/** Sounds made in the browser instead of recorded: the swing of a blow, a chick's cheep, a bottle popping. */
-export type SynthSound = 'whoosh' | 'chirp' | 'pop';
+/** Sounds made in the browser instead of recorded: the swing of a blow, a chick's cheep, a bottle popping, a Rubik's cube
+ * layer clicking round, a neon sign lighting. */
+export type SynthSound = 'whoosh' | 'chirp' | 'pop' | 'twist' | 'neon';
 export type SoundName = RecordedSound | SynthSound;
 /** Continuous sounds whose level and pitch follow something: the office chair's casters, the soda fizzing. */
 export type LoopName = 'rolling' | 'fizz';
@@ -58,6 +59,8 @@ export const SOUNDS: Record<SoundName, SoundDef> = {
   konami: fixed(0.85, [1, 1], 500),
   chirp: fixed(0.45, [0.85, 1.25], 70),
   pop: fixed(0.9, [0.9, 1.1], 150),
+  twist: fixed(0.4, [0.85, 1.2], 60),
+  neon: fixed(0.5, [1, 1], 800),
   ui: fixed(0.45, [1, 1], 40),
 };
 
@@ -257,6 +260,36 @@ export class Sounds {
       osc.connect(thump).connect(master);
       osc.start(t);
       osc.stop(t + 0.2);
+    } else if (name === 'twist' && this.noise) {
+      // A plastic layer snapping into place: two short clicks of band-passed noise.
+      const filter = context.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 2600 * rate;
+      filter.Q.value = 2.5;
+      filter.connect(gain);
+      for (const [offset, level] of [[0, 1], [0.045, 0.6]]) {
+        const source = context.createBufferSource();
+        source.buffer = this.noise;
+        const click = context.createGain();
+        click.gain.setValueAtTime(volume * level, t + offset);
+        click.gain.exponentialRampToValueAtTime(0.0001, t + offset + 0.03);
+        source.connect(click).connect(filter);
+        source.start(t + offset, Math.random() * 0.5, 0.035);
+      }
+    } else if (name === 'neon') {
+      // A neon tube striking: a low electric hum that stutters on, then settles.
+      const osc = context.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = 100 * rate;
+      const filter = context.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 900;
+      gain.gain.setValueAtTime(0.0001, t);
+      for (const [at, level] of [[0.02, 1], [0.08, 0.1], [0.14, 0.9], [0.2, 0.15], [0.27, 0.8]]) gain.gain.linearRampToValueAtTime(volume * level * 0.5, t + at);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+      osc.connect(filter).connect(gain);
+      osc.start(t);
+      osc.stop(t + 0.72);
     }
   }
 

@@ -165,6 +165,8 @@ export class AboutPlaza {
       line(t('about.country'), h * 0.78, 30, 500, '#3b2d18');
     } else if (id === 'univalle') {
       line(t('about.univalle').toUpperCase(), h / 2, 46, 700, '#2c2112');
+    } else if (id === 'experience') {
+      line(t('about.experience').toUpperCase(), h / 2, 46, 700, '#2c2112');
     } else {
       line(t('about.country').toUpperCase(), h / 2, 46, 700, '#2c2112');
     }

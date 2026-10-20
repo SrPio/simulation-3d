@@ -99,6 +99,7 @@ export const EXPECTED_BYTES: Record<string, number> = {
   'models/colombia.glb': 153_000,
   'models/boxing.glb': 155_000,
   'models/univalle.glb': 29_000,
+  'models/experience.glb': 25_000,
 };
 
 export async function loadCharacter(modelId: ModelVersionId, signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
@@ -150,6 +151,13 @@ export const univalleFile = 'models/univalle.glb';
 /** The about-me plaza's Universidad del Valle logo on its base, read together with the outside. Failures count as room failures. */
 export function loadUnivalle(signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
   return loadGlb(univalleFile, 'ROOM', signal, progress);
+}
+
+export const experienceFile = 'models/experience.glb';
+
+/** The about-me plaza's years-of-experience pedestal (the cube over it is built by the viewer), read together with the outside. Failures count as room failures. */
+export function loadExperience(signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
+  return loadGlb(experienceFile, 'ROOM', signal, progress);
 }
 
 export const chickFile = 'models/chick.glb';

@@ -164,6 +164,8 @@ export type OutsideData = {
   benches: SeatSpot[];
   /** The playground's punching bags (boxing.glb, read together with the outside). */
   bags: PunchBag[];
+  /** Where the years-of-experience Rubik's cube floats (experience.glb): its middle, edge and the drop to the projector under it. */
+  experience?: { position: Vector3; edge: number; drop: number };
 };
 
 export const LETTER_MASS = 1.5;
@@ -229,7 +231,7 @@ type Extras = {
   height?: number; pole_radius?: number; arrows_top?: number; arrow_step?: number;
   prop?: string; group?: string; mass?: number; radius?: number; cylinders?: number[];
   joint?: string; ramp?: number[]; profile?: string; tape?: number[]; chair?: string;
-  seat?: string; stand?: number; approach?: number; bag?: number[];
+  seat?: string; stand?: number; approach?: number; bag?: number[]; cube?: number[];
 };
 
 /** Read what the outside GLB exports (see scripts/blender/create_outside.py). */
@@ -256,6 +258,7 @@ export function readOutside(root: Object3D): OutsideData {
   let trafficLight: Object3D | undefined;
   const benches: SeatSpot[] = [];
   const bags: PunchBag[] = [];
+  let experience: OutsideData['experience'];
   root.traverse((object) => {
     const data = object.userData as Extras;
     if (data.bounds?.length === 4) {
@@ -299,6 +302,8 @@ export function readOutside(root: Object3D): OutsideData {
       tapes.push({ name: object.name, object, position, yaw, length: data.tape[0] });
     } else if (object.name === 'OfficeChair' && data.chair) {
       chair = { object, position, yaw };
+    } else if (object.name === 'ExperienceCube' && data.cube?.length === 2) {
+      experience = { position, edge: data.cube[0], drop: data.cube[1] };
     } else if (object.name.startsWith('Plaque_') && data.plaque?.length === 2 && data.text) {
       plaques.push({ id: data.text, position, yaw, size: [data.plaque[0], data.plaque[1]] });
     } else if (/^Target_\d+$/.test(object.name) && typeof data.target === 'number' && data.radius && data.centre && data.rings && data.points) {
@@ -370,7 +375,7 @@ export function readOutside(root: Object3D): OutsideData {
   targets.sort((a, b) => a.index - b.index);
   tapes.sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }));
   bags.sort((a, b) => a.id.localeCompare(b.id));
-  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost, decor, plaques, targets, scoreboard, ramps, tapes, chair, lapBoard, trafficLight, benches, bags };
+  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost, decor, plaques, targets, scoreboard, ramps, tapes, chair, lapBoard, trafficLight, benches, bags, experience };
 }
 
 /** Height of a ramp's surface above the ground at a point, 0 off it. */

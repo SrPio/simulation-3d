@@ -16,10 +16,10 @@ async function load(file: string) {
   return (await loader.parseAsync(data.buffer.slice(data.byteOffset, data.byteOffset + data.length), '')).scene;
 }
 
-/** The outside with the Colombian corner, the Univalle logo and the boxing corner, as the viewer reads them. */
+/** The outside with the Colombian corner, the Univalle logo, the experience cube's pedestal and the boxing corner, as the viewer reads them. */
 async function outside(): Promise<OutsideData> {
   const scene = await load('outside.glb');
-  for (const file of ['colombia.glb', 'univalle.glb', 'boxing.glb']) scene.add(await load(file));
+  for (const file of ['colombia.glb', 'univalle.glb', 'experience.glb', 'boxing.glb']) scene.add(await load(file));
   return readOutside(scene);
 }
 
@@ -74,7 +74,7 @@ test('the about-me plaza holds the signs, a bust, the Colombian corner and the U
   assert.ok(Math.abs((bust - colombia) - (univalle - bust)) < 0.01, 'one on each side, as far');
   assert.ok(!kinds.has('vitrine') && !kinds.has('rack'), 'no glass case, no racks');
   assert.ok(!kinds.has('globe'), 'the globe gave way to the Colombian corner');
-  assert.deepEqual(data.plaques.map((plaque) => plaque.id).sort(), ['bust', 'colombia', 'univalle']);
+  assert.deepEqual(data.plaques.map((plaque) => plaque.id).sort(), ['bust', 'colombia', 'experience', 'univalle']);
   for (const key of ['about.name', 'about.role', 'about.country', 'about.univalle', 'floor.about'] as MessageKey[]) {
     for (const language of ['es', 'en'] as const) assert.ok(MESSAGES[language][key], `${language} ${key}`);
   }
@@ -153,7 +153,7 @@ test('the traced U and V keep the logo’s red fillet between them', async () =>
 test('near the bust, the Colombian corner and the Univalle logo the character exclaims what each one says about its author', async () => {
   const data = await outside();
   const spots = shoutSpots(data.decor);
-  assert.deepEqual(spots.map((spot) => spot.id).sort(), ['bust', 'colombia', 'univalle']);
+  assert.deepEqual(spots.map((spot) => spot.id).sort(), ['bust', 'colombia', 'experience', 'univalle']);
   const at = (id: string) => spots.find((spot) => spot.id === id)!;
   // In front of each landmark (+Z, where the character walks up to it).
   for (const spot of spots) assert.equal(shoutAt({ x: spot.x, z: spot.z + spot.halfZ + 1 }, spots), spot.id);

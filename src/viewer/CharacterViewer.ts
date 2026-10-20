@@ -16,7 +16,7 @@ import { getLanguage, onLanguage, t } from '../core/i18n.ts';
 import { KeyboardInput, type HoldAction, type PressAction } from '../input/KeyboardInput';
 import {
   EXPECTED_BYTES, boxingFile, circuitFile, colombiaFile, disposeObjects, loadBoxing, loadColombia, laptopFile, loadCharacter, loadChick, loadCircuit, loadLaptop, loadOutside, loadRoom,
-  loadUnivalle, modelVersions, outsideFile, roomFile, univalleFile,
+  loadUnivalle, modelVersions, outsideFile, roomFile, univalleFile, experienceFile, loadExperience,
   type ModelVersionId, type SceneId,
 } from '../core/loadAssets';
 import { DOWNLOAD_SHARE, ProgressMeter } from '../core/loadProgress.ts';
@@ -37,6 +37,8 @@ import { InfiniteFloor } from '../scene/InfiniteFloor.ts';
 import { BlobShadows } from '../scene/BlobShadows.ts';
 import { PieceMeshes } from '../scene/PieceMeshes.ts';
 import { AboutPlaza } from '../scene/AboutPlaza.ts';
+import { RubikMonument } from '../scene/RubikMonument.ts';
+import { experienceYears } from '../core/experience.ts';
 import { TargetsView } from '../scene/TargetsView.ts';
 import { CircuitView } from '../scene/CircuitView.ts';
 import { DRIVE, NITRO, PUSH, chairAt, driveStep, forwardSpeed, pushChair, strikeChair, type ChairState } from '../world/chairDrive.ts';
@@ -238,11 +240,13 @@ export class CharacterViewer {
   /** Blob shadows of things that never move (the character's, the signs', the lamppost's), before the pieces' ones. */
   private staticShadows = 0;
   private bubble?: SeatBubble;
-  /** What the character exclaims near the bust, the Colombian corner or the Univalle logo, and where those stand. */
+  /** What the character exclaims near the bust, the Colombian corner, the Univalle logo or the experience cube, and where those stand. */
   private shout?: ShoutBurst;
   private shoutSpots: ShoutSpot[] = [];
   /** The about-me plaza's plaques and globe. */
   private about?: AboutPlaza;
+  /** The years-of-experience Rubik's cube that solves itself when the character comes near. */
+  private rubik?: RubikMonument;
   /** Spray-painted words and symbols on the outside's surfaces and ground (graffitiData.ts). */
   private graffiti?: Graffiti;
   /** The standing targets and their scoreboard, and the round being played on their lane. */
@@ -463,7 +467,7 @@ export class CharacterViewer {
       const track = (file: string) => meter.file(file, EXPECTED_BYTES[file] ?? 1_000_000);
       // The graffiti are painted in a worker meanwhile (seconds of canvas work that would freeze the loading screen).
       const paintings = this.inRoom && GRAFFITI.length ? paintGraffiti(this.graffitiSpots) : Promise.resolve([]);
-      const [, gltf, roomGltf, laptopGltf, outsideGltf, circuitGltf, colombiaGltf, boxingGltf, univalleGltf, graffitiPaintings] = await Promise.all([
+      const [, gltf, roomGltf, laptopGltf, outsideGltf, circuitGltf, colombiaGltf, boxingGltf, univalleGltf, experienceGltf, graffitiPaintings] = await Promise.all([
         // The canvas labels below are painted once, so the typeface must be loaded first (fontsReady never rejects).
         fontsReady(),
         loadCharacter(this.options.modelId, this.abort.signal, track(modelVersions[this.options.modelId].file)),
@@ -474,12 +478,13 @@ export class CharacterViewer {
         this.inRoom ? loadColombia(this.abort.signal, track(colombiaFile)) : Promise.resolve(undefined),
         this.inRoom ? loadBoxing(this.abort.signal, track(boxingFile)) : Promise.resolve(undefined),
         this.inRoom ? loadUnivalle(this.abort.signal, track(univalleFile)) : Promise.resolve(undefined),
+        this.inRoom ? loadExperience(this.abort.signal, track(experienceFile)) : Promise.resolve(undefined),
         paintings,
       ]);
       meter.report(DOWNLOAD_SHARE);
       this.preparing = true;
       // Parts of the outside in their own files: read and merged as one outside.
-      const extras = [circuitGltf, colombiaGltf, boxingGltf, univalleGltf];
+      const extras = [circuitGltf, colombiaGltf, boxingGltf, univalleGltf, experienceGltf];
       const scenes = [...gltf.scenes, ...(roomGltf?.scenes ?? []), ...(laptopGltf?.scenes ?? []), ...(outsideGltf?.scenes ?? []), ...extras.flatMap((extra) => extra?.scenes ?? [])];
       if (this.disposed) {
         disposeObjects(scenes);
@@ -558,7 +563,7 @@ export class CharacterViewer {
       this.scene.add(this.model);
       if (this.room) this.scene.add(this.room);
       if (this.outside) this.scene.add(this.outside);
-      for (const object of [this.bags.length ? this.bagRoot : undefined, this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.targetsView?.root, this.circuit?.root, this.graffiti?.root]) if (object) this.scene.add(object);
+      for (const object of [this.bags.length ? this.bagRoot : undefined, this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.rubik?.root, this.targetsView?.root, this.circuit?.root, this.graffiti?.root]) if (object) this.scene.add(object);
       if (!this.ground) this.createFloor(this.mixer ? 0 : box.min.y);
       this.frameLights();
       this.cameraDistance = Math.max(this.bounds.length() * 2.5, 1);
@@ -864,6 +869,10 @@ export class CharacterViewer {
     await breathe();
     this.about = new AboutPlaza(data.plaques);
     if (flag) this.about.waveFlag(flag);
+    if (data.experience) {
+      this.rubik = new RubikMonument(data.experience);
+      this.host.dataset.rubik = this.rubik.phase;
+    }
     if (data.targets.length) {
       this.targetsView = new TargetsView(data.targets, data.scoreboard);
       if (targets) this.targetsView.root.add(targets);
@@ -1773,6 +1782,18 @@ export class CharacterViewer {
   }
 
   /** A sound effect, quieter the further `at` is from the character; `data-sound-last` names the last one heard. */
+  /** The experience cube solves itself while the character is near, with a click per turn. */
+  private updateRubik(delta: number): void {
+    const rubik = this.rubik;
+    if (!rubik) return;
+    const here = this.ready ? this.model?.position : undefined;
+    const { turns, lit } = rubik.update(delta, here, this.reducedMotion);
+    const at = rubik.root.position;
+    if (turns) this.sound('twist', 0, at);
+    if (lit) this.sound('neon', 0, at);
+    if (this.host.dataset.rubik !== rubik.phase) this.host.dataset.rubik = rubik.phase;
+  }
+
   private sound(name: SoundName, velocity = 0, at?: { x: number; z: number }): void {
     const sounds = this.options.sounds;
     if (!sounds) return;
@@ -2143,7 +2164,7 @@ export class CharacterViewer {
     if (id !== this.shout.current) this.sound('pop');
     const point = this.model.position.clone().setY(this.model.position.y + BUBBLE_HEIGHT).project(this.view);
     const lift = this.host.dataset.bubble === 'shown' ? 44 : 0;
-    this.shout.update(id, t(`shout.${id}`), (point.x + 1) / 2 * this.host.clientWidth, (1 - point.y) / 2 * this.host.clientHeight - lift);
+    this.shout.update(id, t(`shout.${id}`, { years: String(experienceYears()) }), (point.x + 1) / 2 * this.host.clientWidth, (1 - point.y) / 2 * this.host.clientHeight - lift);
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
@@ -2649,6 +2670,7 @@ export class CharacterViewer {
     this.controls?.update();
     this.areas?.update(delta);
     this.about?.update(delta, this.reducedMotion);
+    this.updateRubik(delta);
     this.updateHover();
     this.reportSign();
     this.updateBubble();
@@ -2749,6 +2771,7 @@ export class CharacterViewer {
     this.floorTexts?.dispose();
     this.signpost?.dispose();
     this.about?.dispose();
+    this.rubik?.dispose();
     this.graffiti?.dispose();
     this.targetsView?.dispose();
     this.bubble?.dispose();

@@ -547,6 +547,7 @@ ABOUT, ABOUT_SIZE = (30.25, 2.5), (17.5, 16.5)
 BUST = (30.2, 2.25)
 COLOMBIA = (25.2, 2.25)                          # the Colombian corner (create_colombia.py, its own GLB)
 UNIVALLE = (35.2, 2.25)                          # the Universidad del Valle logo, across the bust from it (create_univalle.py)
+EXPERIENCE = (23.5, -1.6)                        # the years-of-experience Rubik's cube, behind the Colombian corner's flag (create_experience.py)
 PATH_RADIUS = 2.6                                # painted ring round the bust
 ABOUT_BENCHES = [(30.2, 5.85), (26.6, 5.25), (33.8, 5.25)]   # along X, facing the bust
 ABOUT_TREES = [(23.0, -3.75, 0), (37.4, -3.75, 1), (23.0, 8.75, 1), (37.4, 8.75, 0)]
