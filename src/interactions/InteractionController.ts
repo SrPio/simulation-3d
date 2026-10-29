@@ -45,6 +45,13 @@ export class InteractionController {
   yaw = 0;
   /** Why the last command was refused (for the HUD, in the current language); empty when it was accepted. */
   message = '';
+  /**
+   * Seats got into and out of in a blink, without walking to them or the sitting and standing clips (the Halloween
+   * cauldron: the clips would show the legs going over its rim).
+   */
+  readonly instant = new Set<Seat>();
+  /** Called when the character pops into an instant seat (true) or out of it (false). */
+  onInstant?: (inside: boolean) => void;
   private entry?: Point2;
   private stalled = 0;
   private moving = false;
@@ -87,6 +94,7 @@ export class InteractionController {
     if (this.phase === 'free') {
       const target = this.reachable(from);
       if (!target) return this.refuse(t('refuse.near'));
+      if (this.instant.has(target.spot.seat)) return this.popIn(target.spot);
       this.seat = target.spot;
       this.entry = target.approach;
       this.position = { ...from };
@@ -99,7 +107,36 @@ export class InteractionController {
     const exit = this.exitPoint();
     if (!exit) return this.refuse(t('refuse.exit'));
     this.entry = exit;
+    if (this.instant.has(this.seat!.seat)) return this.popOut(exit);
     return this.state.command('stand');
+  }
+
+  /** Straight onto an instant seat, already seated. */
+  private popIn(spot: SeatSpot): boolean {
+    this.seat = spot;
+    this.entry = undefined;
+    this.position = { ...spot.stand };
+    this.yaw = spot.yaw;
+    this.moving = false;
+    this.state.setSeat(spot.seat);
+    this.state.seatNow();
+    this.phase = 'seated';
+    this.onInstant?.(true);
+    return true;
+  }
+
+  /** Straight out of an instant seat, standing at `exit` and facing away from it. */
+  private popOut(exit: Point2): boolean {
+    const spot = this.seat!;
+    this.state.reset();
+    this.yaw = Math.atan2(exit.x - spot.stand.x, exit.z - spot.stand.z);
+    this.position = { ...exit };
+    this.phase = 'free';
+    this.seat = undefined;
+    this.entry = undefined;
+    this.moving = false;
+    this.onInstant?.(false);
+    return true;
   }
 
   /** L: open the laptop (it appears on the lap on the bed or a bench) or close it while seated. */

@@ -11,6 +11,7 @@ import { NitroGauge } from './NitroGauge.ts';
 import { setupCineMode } from './cineMode.ts';
 import { GamepadInput, type PadKind } from '../input/GamepadInput.ts';
 import { Sounds } from '../audio/Sounds.ts';
+import { halloweenMode } from '../core/halloween.ts';
 import { CharacterViewer, type CameraMode, type LightPreset, type MovementState, type ViewerStatus } from '../viewer/CharacterViewer';
 
 const app = document.querySelector<HTMLDivElement>('#app');
@@ -110,6 +111,40 @@ let camera: CameraMode = 'follow';
 let viewer: CharacterViewer | undefined;
 let generation = 0;
 let disposed = false;
+/** Halloween dress-up: by the system date (1 October to 5 November) unless ?halloween=1 or ?halloween=0 forces it. */
+const halloween = halloweenMode(window.location.search);
+document.documentElement.dataset.halloween = halloween ? 'on' : 'off';
+if (halloween) pumpkinIcon();
+
+/** Halloween's tab icon: a jack-o'-lantern drawn on a canvas in place of the head (nothing to download). */
+function pumpkinIcon(): void {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.fillStyle = '#ff8a1a';
+  for (const [x, rx] of [[20, 15], [44, 15], [27, 17], [37, 17], [32, 16]]) {
+    ctx.beginPath();
+    ctx.ellipse(x, 37, rx, 22, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = '#4a6b1a';
+  ctx.fillRect(29, 8, 7, 10);
+  ctx.fillStyle = '#2a1206';
+  ctx.beginPath();
+  for (const side of [-1, 1]) {
+    ctx.moveTo(32 + side * 18, 34);
+    ctx.lineTo(32 + side * 5, 34);
+    ctx.lineTo(32 + side * 11, 24);
+    ctx.closePath();
+  }
+  ctx.moveTo(14, 42);
+  for (const [x, y] of [[20, 46], [24, 42], [28, 47], [32, 43], [36, 47], [40, 42], [44, 46], [50, 42], [44, 54], [38, 51], [32, 55], [26, 51], [20, 54]]) ctx.lineTo(x, y);
+  ctx.closePath();
+  ctx.fill();
+  const href = canvas.toDataURL('image/png');
+  for (const link of document.querySelectorAll<HTMLLinkElement>('link[rel="icon"]')) link.href = href;
+}
 
 // Off until switched on here or in the studio (the room page does not follow the system setting).
 const motionReduced = () => preferences.reducedMotion ?? false;
@@ -118,7 +153,8 @@ const motionReduced = () => preferences.reducedMotion ?? false;
 const sounds = new Sounds({ muted: !preferences.sound, base: import.meta.env.BASE_URL });
 
 const touchControls = new TouchControls(app.querySelector<HTMLDivElement>('.room-page')!, host, () => viewer?.input);
-const nitroGauge = new NitroGauge(app.querySelector<HTMLDivElement>('.room-page')!, host);
+// Halloween: the gauge is the cauldron's test tube instead of the soda bottle.
+const nitroGauge = new NitroGauge(app.querySelector<HTMLDivElement>('.room-page')!, host, halloween ? 'tube' : 'bottle');
 const gamepad = new GamepadInput(() => viewer?.input);
 gamepad.inZone = () => (host.dataset.sign ?? 'none') !== 'none';
 gamepad.onMenu = () => setMenu(tools.hidden !== false);
@@ -149,6 +185,8 @@ function setInputMode(mode: 'keyboard' | 'touch' | 'gamepad', kind?: PadKind): v
 
 const start = new StartScreen(app.querySelector<HTMLDivElement>('.room-page')!, {
   label: t('start.label'),
+  // Halloween: BOO! instead of START (the same in both languages).
+  word: halloween ? 'BOO!' : 'START',
   reducedMotion: motionReduced,
   onStart: () => {
     started = true;
@@ -241,7 +279,7 @@ function mount(): void {
     run: (on) => { if (live()) touchControls.setRunning(on); },
   }, {
     modelId: 'v4rig', view: 'three-quarter', light: LIGHT, wireframe: false, scene: 'room',
-    quality: preferences.quality, reducedMotion: motionReduced(), cameraMode: camera, spawn: SPAWN, sounds, touch,
+    quality: preferences.quality, reducedMotion: motionReduced(), cameraMode: camera, spawn: SPAWN, sounds, touch, halloween,
   });
   viewer.setInputEnabled(started);
   const mode = inputMode;

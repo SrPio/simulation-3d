@@ -42,6 +42,13 @@ export class InteractionState {
     return true;
   }
 
+  /** Seated at once, without the sitting-down clip (a seat that is climbed into in a blink: the Halloween cauldron). */
+  seatNow(): boolean {
+    if (this.stage !== 'idle') return false;
+    this.stage = 'seated';
+    return true;
+  }
+
   /** A one-shot clip (sitting down, standing up) ended. */
   finish(): boolean {
     if (this.stage === 'sitting') this.stage = 'seated';

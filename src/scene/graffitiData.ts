@@ -18,14 +18,14 @@ import { SPRAY_SYMBOLS, type SpraySymbolName } from './sprayFont.ts';
 /** Face the paint lies on: the +Z side, the +X side, or facing up (the ground, a ramp, a top). */
 export type GraffitiFace = 'z' | 'x' | 'up';
 /** Symbols drawn filled ('piece' or 'tag'); the chick also gets its sunglasses, beak, cheeks and feet in their own colours. */
-export type FilledSymbol = 'heart' | 'star' | 'crown' | 'arrow' | 'smiley' | 'bolt' | 'code' | 'chick';
+export type FilledSymbol = 'heart' | 'star' | 'crown' | 'arrow' | 'smiley' | 'bolt' | 'code' | 'chick' | 'pumpkin' | 'ghost' | 'bat';
 /**
  * Symbols the painter knows; words are any text instead. The filled ones, and the quick one-colour can strokes
  * ('spray', SPRAY_SYMBOLS: the reference set and technology logos such as react, js or git).
  */
 export type GraffitiSymbol = FilledSymbol | SpraySymbolName;
 export const GRAFFITI_SYMBOLS: readonly GraffitiSymbol[] = [
-  'heart', 'star', 'crown', 'arrow', 'smiley', 'bolt', 'code', 'chick',
+  'heart', 'star', 'crown', 'arrow', 'smiley', 'bolt', 'code', 'chick', 'pumpkin', 'ghost', 'bat',
   ...(Object.keys(SPRAY_SYMBOLS) as SpraySymbolName[]),
 ];
 /**
@@ -94,6 +94,37 @@ export const GRAFFITI: readonly GraffitiSpot[] = [
   { id: 'barrier-chick', symbol: 'chick', style: 'piece', at: [-0.14, 0.28, -8.74], face: 'z', width: 1.35, tilt: 4, color: '#ffe14a', fade: '#e8a012', outline: '#2e2108', seed: 509 },
   { id: 'ground-konami', symbol: 'konami', style: 'spray', at: [-14.15, 'ground', 26.25], face: 'up', width: 4, tilt: -13, color: C.yellow, seed: 517 },
 ];
+
+/**
+ * Halloween's graffiti: some spots get a Halloween painting in their place (the same point, face and width, so they
+ * still find their surface); the rest stay as they are.
+ */
+export const HALLOWEEN_GRAFFITI: Readonly<Record<string, Partial<GraffitiSpot>>> = {
+  // A filled ghost and a filled bat, as big and as high on their barriers as the chick in sunglasses on its own (thin
+  // can strokes ran together into a blob on a barrier, and a can-stroke symbol's mist and runs were clipped).
+  'barrier-react': { symbol: 'ghost', text: undefined, style: 'piece', at: [1.76, 0.28, -12.22], width: 1.35, color: C.white, fade: '#c9c6ff', outline: '#121014', seed: 611 },
+  'barrier-force': { symbol: 'bat', text: undefined, style: 'tag', at: [-3.2, 0.28, -11.23], width: 1.35, color: C.black, seed: 613 },
+  'ramp-jump': { text: { es: '¡BUU!', en: 'BOO!' }, style: 'spray', color: C.orange, seed: 617 },
+  'road-go': { text: { es: '¡TRUCO\nO TRATO!', en: 'TRICK\nOR TREAT!' }, style: 'spray', color: C.orange, seed: 619 },
+  'planter-hello': { text: 'RIP BUGS', style: 'spray', color: C.violet, seed: 631 },
+  'park-code': { symbol: 'pumpkin', style: 'piece', color: '#ff8a1a', fade: '#ffd23f', outline: '#2a1206', seed: 641 },
+  'works-friday': { text: { es: 'VIERNES 13:\nNO DEPLOY', en: 'FRIDAY 13TH:\nNO DEPLOY' }, style: 'spray', color: C.lime, seed: 643 },
+};
+
+/** Spots only painted for Halloween: the greeting on the ground in front of the room's open corner. */
+export const HALLOWEEN_EXTRA: readonly GraffitiSpot[] = [
+  { id: 'ground-halloween', text: { es: '¡FELIZ\nHALLOWEEN!', en: 'HAPPY\nHALLOWEEN!' }, style: 'spray', at: [8.4, 'ground', 4.6], face: 'up', width: 4.2, tilt: 5, color: C.orange, seed: 653 },
+];
+
+/** The spots dressed for Halloween (see HALLOWEEN_GRAFFITI), and the ones only painted then (HALLOWEEN_EXTRA). */
+export function graffitiForHalloween(spots: readonly GraffitiSpot[]): GraffitiSpot[] {
+  return [...spots, ...HALLOWEEN_EXTRA].map((spot) => {
+    const dressed = HALLOWEEN_GRAFFITI[spot.id];
+    if (!dressed) return spot;
+    const { symbol: _symbol, text: _text, ...rest } = spot;
+    return { ...rest, ...dressed, id: `${spot.id}-halloween` } as GraffitiSpot;
+  });
+}
 
 /** The spots as a touch screen shows them: the Konami code names the on-screen buttons instead of B and A. */
 export function graffitiForTouch(spots: readonly GraffitiSpot[]): GraffitiSpot[] {

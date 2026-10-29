@@ -1,4 +1,4 @@
-import { BOTTLE_UNITS, bottlePath, liquidLevel } from '../ui/bottle.ts';
+import { BOTTLE_UNITS, bottlePath, liquidLevel, type Vessel } from '../ui/bottle.ts';
 import { NITRO } from '../world/chairDrive.ts';
 
 /** What the gauge shows: spraying, too little left to light, filling back up, or full. */
@@ -15,10 +15,20 @@ export function gaugeState(nitro: string | undefined, fuel: number): GaugeState 
 const BUBBLES = [[-6, 1.6, 0], [3, 1.2, 0.35], [-1, 1.9, 0.7], [7, 1.1, 1.05], [-8.5, 1.3, 1.4], [1.5, 1.5, 1.75]] as const;
 
 /**
+ * Each vessel's own drawing: how far across its bubbles rise (the tube is narrower), its shine, where the restart mark
+ * sits beside it, and the liquid's gradient (cola, or the cauldron's glowing green brew).
+ */
+const LOOKS: Record<Vessel, { spread: number; shine: string; mark: [number, number]; fill: string[] }> = {
+  bottle: { spread: 1, shine: 'M-8.6 86 C-10.6 70 -10.4 58 -9.2 48', mark: [10, 16], fill: ['#2a1208', '#6e3a1a', '#532810', '#220e06'] },
+  tube: { spread: 0.62, shine: 'M-5.6 88 L-5.6 14', mark: [7, 13], fill: ['#1d6b12', '#7dff4a', '#3fd122', '#164f0e'] },
+};
+
+/**
  * The nitro's gauge, bottom right while riding the office chair: the silhouette of the chair's soda bottle (the same
  * outline as the 3D one, see src/ui/bottle.ts) filled with cola up to the fuel left. It drains while the nitro sprays
  * (the bottle shakes and foams), bubbles up as it refills, dims and pulses below the level the nitro lights again at
- * and glows once when full. Reads `data-drive`, `data-nitro` and `data-fuel` from the viewer's host.
+ * and glows once when full. Reads `data-drive`, `data-nitro` and `data-fuel` from the viewer's host. For Halloween the
+ * same as the cauldron's test tube full of glowing green brew (`vessel` 'tube', `data-vessel` on the gauge).
  */
 export class NitroGauge {
   readonly root: HTMLDivElement;
@@ -26,11 +36,13 @@ export class NitroGauge {
   private readonly clip: SVGRectElement;
   private readonly observer: MutationObserver;
 
-  constructor(parent: HTMLElement, host: HTMLElement) {
-    const path = bottlePath();
+  constructor(parent: HTMLElement, host: HTMLElement, vessel: Vessel = 'bottle') {
+    const path = bottlePath(vessel);
+    const look = LOOKS[vessel];
     const restart = liquidLevel(NITRO.restart);
     this.root = document.createElement('div');
     this.root.className = 'nitro-gauge';
+    this.root.dataset.vessel = vessel;
     this.root.setAttribute('role', 'meter');
     this.root.setAttribute('aria-valuemin', '0');
     this.root.setAttribute('aria-valuemax', '100');
@@ -41,8 +53,8 @@ export class NitroGauge {
           <clipPath id="nitro-bottle"><path d="${path}"/></clipPath>
           <clipPath id="nitro-cola"><rect x="-17" width="34" height="${BOTTLE_UNITS + 6}"/></clipPath>
           <linearGradient id="nitro-cola-fill" x1="0" x2="1">
-            <stop offset="0" stop-color="#2a1208"/><stop offset="0.3" stop-color="#6e3a1a"/>
-            <stop offset="0.55" stop-color="#532810"/><stop offset="1" stop-color="#220e06"/>
+            <stop offset="0" stop-color="${look.fill[0]}"/><stop offset="0.3" stop-color="${look.fill[1]}"/>
+            <stop offset="0.55" stop-color="${look.fill[2]}"/><stop offset="1" stop-color="${look.fill[3]}"/>
           </linearGradient>
         </defs>
         <path class="nitro-glass" d="${path}"/>
@@ -52,11 +64,11 @@ export class NitroGauge {
             <path class="nitro-cola" d="${wave(0)}"/>
           </g>
           <g clip-path="url(#nitro-cola)">
-            ${BUBBLES.map(([x, r, delay]) => `<circle class="nitro-bubble" cx="${x}" cy="${BOTTLE_UNITS - 3}" r="${r}" style="animation-delay:${delay}s"/>`).join('')}
+            ${BUBBLES.map(([x, r, delay]) => `<circle class="nitro-bubble" cx="${x * look.spread}" cy="${BOTTLE_UNITS - 3}" r="${r}" style="animation-delay:${delay}s"/>`).join('')}
           </g>
-          <path class="nitro-shine" d="M-8.6 86 C-10.6 70 -10.4 58 -9.2 48"/>
+          <path class="nitro-shine" d="${look.shine}"/>
         </g>
-        <line class="nitro-mark" x1="10" x2="16" y1="${restart}" y2="${restart}"/>
+        <line class="nitro-mark" x1="${look.mark[0]}" x2="${look.mark[1]}" y1="${restart}" y2="${restart}"/>
         <path class="nitro-outline" d="${path}"/>
       </svg>`;
     this.liquid = this.root.querySelector('.nitro-liquid')!;

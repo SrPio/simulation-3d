@@ -18,10 +18,13 @@ export type PieceBody = {
 export type StaticBox = { center: Vec; half: [number, number, number]; yaw: number; /** Tilt about its own X after the yaw (a ramp's slope). */ pitch?: number };
 /** A standing target's disc: its centre, radius and the yaw of its face (local +Z). Thrown laptops that hit it are reported. */
 export type TargetDisc = { center: Vec; radius: number; yaw: number };
-/** A thrown laptop hitting a target disc: which target, how far from its centre (in the disc's plane) and the laptop. */
-export type TargetHit = { target: number; distance: number; laptop: ThrownLaptop };
-/** Something hit a loose piece (its index), a thrown laptop, a chick or a punching bag this hard (m/s along the contact normal), for its sound. */
-export type Impact = { source: number | 'laptop' | 'chick' | 'bag'; speed: number; position: Vec };
+/** A thrown laptop or pumpkin hitting a target disc: which target, how far from its centre (in the disc's plane) and what hit it. */
+export type TargetHit = { target: number; distance: number; laptop: Thrown };
+/**
+ * Something hit a loose piece (its index), a thrown laptop or pumpkin, a candy, a chick or a punching bag this hard (m/s
+ * along the contact normal), for its sound.
+ */
+export type Impact = { source: number | 'laptop' | 'pumpkin' | 'candy' | 'chick' | 'bag'; speed: number; position: Vec };
 /**
  * A punching bag: a cylinder (`radius`, `length`) hanging from a fixed hook at `pivot`, its middle `centre` below it.
  * It only swings like a pendulum round the hook: a ball joint holds it there and its spin about its own axis is taken away.
@@ -53,6 +56,17 @@ export const LID_LIMIT = Math.PI * 0.75;
 /** The closed stop: a hair below 0 so a lid resting on the keys can settle; its front edge stays above them. */
 export const LID_CLOSED = -0.02;
 export type ThrownLaptop = { base: BodyType; lid: BodyType; hinge: HingeType; born: number };
+/** Halloween: a pumpkin thrown instead of the laptop. It bursts on the first thing it hits, scattering candies. */
+export type ThrownPumpkin = { body: BodyType; born: number };
+export type Thrown = ThrownLaptop | ThrownPumpkin;
+/** The thrown pumpkin: a ball (`radius`, about the hand's reach like the laptop) of this mass. */
+export const PUMPKIN = { radius: 0.17, mass: 1.2 } as const;
+/** A burst pumpkin: candies flung out of it, a little up and on with its own speed (m/s). */
+export const CANDY = { radius: 0.045, mass: 0.05, count: 10, spread: 2.6, lift: 2.2, carry: 0.25 } as const;
+/** At most this many candies at once: a new burst retires the oldest. */
+export const MAX_CANDIES = 60;
+/** Where a pumpkin burst and how it was moving: the viewer scatters its shards from there. */
+export type Smash = { position: Vec; velocity: Vec };
 /** A box flap: a thin board hinged on the rim, light, opening from shut (0) up to FLAP_LIMIT. */
 export const FLAP = { width: 0.488, thickness: 0.008, length: 0.246, mass: 0.08 } as const;
 export const FLAP_LIMIT = 2.6;
@@ -98,7 +112,7 @@ export const STRIKE_SPEED = { min: 1.5, max: 9 };
 const STRIKE_LIFT = 0.35;
 
 type Settings = { material: string; sleepSpeed: number; angularDamping: number; linearDamping: number };
-const SETTINGS: Record<PieceGroup | 'laptop' | 'chick', Settings> = {
+const SETTINGS: Record<PieceGroup | 'laptop' | 'chick' | 'candy', Settings> = {
   // Generous sleep limits: a letter resting against another keeps a faint rocking that must still count as asleep.
   name: { material: 'letter', sleepSpeed: 0.2, angularDamping: 0.5, linearDamping: 0.1 },
   tag: { material: 'letter', sleepSpeed: 0.2, angularDamping: 0.5, linearDamping: 0.1 },
@@ -109,8 +123,11 @@ const SETTINGS: Record<PieceGroup | 'laptop' | 'chick', Settings> = {
   tech: { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.4, linearDamping: 0.1 },
   circuit: { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.3, linearDamping: 0.08 },
   wall: { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.4, linearDamping: 0.1 },
+  // Pumpkins, spiders and gravestones: heavy, they rock a little and settle.
+  halloween: { material: 'pumpkin', sleepSpeed: 0.15, angularDamping: 0.5, linearDamping: 0.1 },
   laptop: { material: 'laptop', sleepSpeed: 0.15, angularDamping: 0.3, linearDamping: 0.05 },
   chick: { material: 'chick', sleepSpeed: 0.12, angularDamping: 0.9, linearDamping: 0.2 },
+  candy: { material: 'candy', sleepSpeed: 0.1, angularDamping: 0.6, linearDamping: 0.15 },
 };
 /** A heavy bag swings a few times and settles: damped enough to stop within seconds, asleep once nearly still. */
 const BAG: Settings = { material: 'bag', sleepSpeed: 0.05, angularDamping: 0.45, linearDamping: 0.5 };
@@ -125,6 +142,8 @@ const CONTACTS: [string, string, number, number][] = [
   ['chick', 'ground', 0.6, 0.35], ['chick', 'chick', 0.4, 0.3],
   // A bag is soft: what hits it hardly bounces.
   ['bag', 'bag', 0.5, 0.05], ['bag', 'laptop', 0.5, 0.05], ['bag', 'chick', 0.5, 0.1],
+  // Halloween: pumpkins grip the ground; candies skitter and bounce a little.
+  ['pumpkin', 'ground', 0.7, 0.05], ['pumpkin', 'pumpkin', 0.5, 0.05], ['candy', 'ground', 0.35, 0.35], ['candy', 'candy', 0.3, 0.3],
 ];
 
 /**
@@ -143,6 +162,13 @@ export class PropPhysics {
   /** Chicks in the world, oldest first, and the ones taken out (past MAX_CHICKS) for the viewer to shrink away; it empties the list. */
   readonly chicks: BodyType[] = [];
   readonly retiredChicks: BodyType[] = [];
+  /** Halloween: pumpkins in the air, where the burst ones broke (the viewer empties the list), and their candies. */
+  readonly pumpkins: ThrownPumpkin[] = [];
+  readonly smashed: Smash[] = [];
+  readonly candies: BodyType[] = [];
+  readonly retiredCandies: BodyType[] = [];
+  /** Pumpkins that hit something during the step: they burst after it (bodies are not added or removed mid-step). */
+  private readonly toSmash = new Set<ThrownPumpkin>();
   /** The punching bags, in the order given, and where each one hangs at rest. */
   readonly bags: BodyType[] = [];
   private readonly bagRest: BagBody[] = [];
@@ -165,7 +191,7 @@ export class PropPhysics {
   private readonly targetBodies: BodyType[] = [];
   /** Each piece's flaps (none for most). */
   readonly flaps: Flap[][] = [];
-  private readonly scored = new WeakMap<ThrownLaptop, Set<number>>();
+  private readonly scored = new WeakMap<Thrown, Set<number>>();
   /** Fence planks locked to their legs; a broken one has no constraint until the next reset. */
   readonly joints: Joint[] = [];
   /** The ridden office chair: a kinematic box that only meets the pieces while someone drives it. */
@@ -191,7 +217,7 @@ export class PropPhysics {
     this.world.broadphase = new SAPBroadphase(this.world);
     // More solver passes: thin pieces resting on an edge and stacked bricks settle and sleep instead of rocking forever.
     (this.world.solver as unknown as { iterations: number }).iterations = 20;
-    for (const name of ['ground', 'letter', 'brick', 'pin', 'ball', 'laptop', 'chick', 'bag']) this.materials.set(name, new Material(name));
+    for (const name of ['ground', 'letter', 'brick', 'pin', 'ball', 'laptop', 'chick', 'bag', 'pumpkin', 'candy']) this.materials.set(name, new Material(name));
     this.world.defaultContactMaterial.friction = 0.4;
     this.world.defaultContactMaterial.restitution = 0.1;
     for (const [a, b, friction, restitution] of CONTACTS) {
@@ -215,7 +241,8 @@ export class PropPhysics {
       body.position.set(disc.center.x, disc.center.y, disc.center.z);
       body.quaternion.setFromEuler(0, disc.yaw, 0);
       body.addEventListener('collide', (event: { body: BodyType }) => {
-        const laptop = this.laptops.find((entry) => entry.base === event.body || entry.lid === event.body);
+        const laptop: Thrown | undefined = this.laptops.find((entry) => entry.base === event.body || entry.lid === event.body)
+          ?? this.pumpkins.find((entry) => entry.body === event.body);
         if (!laptop) return;
         const seen = this.scored.get(laptop) ?? new Set<number>();
         if (seen.has(index)) return;
@@ -223,9 +250,10 @@ export class PropPhysics {
         this.scored.set(laptop, seen);
         // Where the laptop's middle crosses the disc's plane along its flight, in the disc's own axes: its distance from
         // the centre across the face (the first contact is often a corner of the wide laptop, ahead of its middle).
+        const middle = 'base' in laptop ? laptop.base : laptop.body;
         const inverse = body.quaternion.conjugate();
-        const local = inverse.vmult(laptop.base.position.vsub(body.position));
-        const speed = inverse.vmult(laptop.base.velocity);
+        const local = inverse.vmult(middle.position.vsub(body.position));
+        const speed = inverse.vmult(middle.velocity);
         const along = Math.abs(speed.z) > 0.5 ? Math.max(0, -local.z / speed.z) : 0;
         this.onTargetHit?.({ target: index, distance: Math.hypot(local.x + speed.x * along, local.y + speed.y * along), laptop });
       });
@@ -489,6 +517,13 @@ export class PropPhysics {
       this.retired.length = 0;
       for (const chick of this.chicks) this.world.removeBody(chick);
       this.chicks.length = 0;
+      for (const pumpkin of this.pumpkins) this.world.removeBody(pumpkin.body);
+      this.pumpkins.length = 0;
+      this.toSmash.clear();
+      this.smashed.length = 0;
+      for (const candy of this.candies) this.world.removeBody(candy);
+      this.candies.length = 0;
+      this.retiredCandies.length = 0;
       for (const [index, body] of this.bags.entries()) this.hang(body, this.bagRest[index]);
       this.retiredChicks.length = 0;
       // The character is put back too: its pusher jumps there on the next step instead of sweeping across the pieces
@@ -567,7 +602,7 @@ export class PropPhysics {
     const speed = STRIKE_SPEED.min + (STRIKE_SPEED.max - STRIKE_SPEED.min) * Math.min(Math.max(power, 0), 1);
     const bagSpeed = BAG_STRIKE.min + (BAG_STRIKE.max - BAG_STRIKE.min) * Math.min(Math.max(power, 0), 1);
     let hits = 0;
-    for (const body of [...this.bodies, ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid]), ...this.chicks, ...this.bags]) {
+    for (const body of [...this.bodies, ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid]), ...this.chicks, ...this.candies, ...this.bags]) {
       // Only what is in front of the character: a fist or foot can reach past a piece it is pressed against.
       if ((body.position.x - from.x) * along.x + (body.position.z - from.z) * along.z <= 0) continue;
       // Distance to the body's bounds, not its centre: a kick at hip height reaches the top of a short letter.
@@ -621,6 +656,69 @@ export class PropPhysics {
     this.chicks.push(body);
     this.idle = false;
     return body;
+  }
+
+  /**
+   * Halloween: a pumpkin leaving the hand, its middle at `position`, with a velocity and a spin. It bursts on the first
+   * thing it hits (ground, piece, target, wall), leaving `smashed` and a handful of candies.
+   */
+  throwPumpkin(position: Vec, velocity: Vec, spin: Vec): ThrownPumpkin {
+    const { Body, Sphere } = this.cannon;
+    const body = new Body({ mass: PUMPKIN.mass, material: this.materials.get('pumpkin'), shape: new Sphere(PUMPKIN.radius) });
+    this.configure(body, SETTINGS.halloween);
+    body.position.set(position.x, position.y, position.z);
+    body.velocity.set(velocity.x, velocity.y, velocity.z);
+    body.angularVelocity.set(spin.x, spin.y, spin.z);
+    const pumpkin = { body, born: this.clock };
+    body.addEventListener('collide', (event: CollideEvent) => {
+      this.knock(event.body, body.velocity.vsub(event.body.velocity).length());
+      this.report('pumpkin', body, event);
+      this.toSmash.add(pumpkin);
+    });
+    this.world.addBody(body);
+    this.pumpkins.push(pumpkin);
+    this.idle = false;
+    return pumpkin;
+  }
+
+  /** The pumpkins that hit something last step burst: each leaves where it broke and scatters its candies. */
+  private smashPumpkins(): void {
+    for (const pumpkin of this.toSmash) {
+      const index = this.pumpkins.indexOf(pumpkin);
+      if (index < 0) continue;
+      this.pumpkins.splice(index, 1);
+      this.world.removeBody(pumpkin.body);
+      const { position: p, velocity: v } = pumpkin.body;
+      this.smashed.push({ position: { x: p.x, y: p.y, z: p.z }, velocity: { x: v.x, y: v.y, z: v.z } });
+      this.spawnCandies(p, v);
+    }
+    this.toSmash.clear();
+  }
+
+  /** CANDY.count candies flung out from `at`, a little up and on with `velocity`; past MAX_CANDIES the oldest are retired. */
+  spawnCandies(at: Vec, velocity: Vec, random: () => number = Math.random): BodyType[] {
+    const { Body, Sphere } = this.cannon;
+    const made: BodyType[] = [];
+    for (let k = 0; k < CANDY.count; k++) {
+      while (this.candies.length >= MAX_CANDIES) {
+        const old = this.candies.shift()!;
+        this.world.removeBody(old);
+        this.retiredCandies.push(old);
+      }
+      const angle = (k / CANDY.count) * Math.PI * 2 + random() * 0.6;
+      const out = CANDY.spread * (0.5 + random() * 0.5);
+      const body = new Body({ mass: CANDY.mass, material: this.materials.get('candy'), shape: new Sphere(CANDY.radius) });
+      this.configure(body, SETTINGS.candy);
+      body.position.set(at.x + Math.cos(angle) * 0.08, Math.max(at.y, this.groundY + CANDY.radius) + 0.05, at.z + Math.sin(angle) * 0.08);
+      body.velocity.set(Math.cos(angle) * out + velocity.x * CANDY.carry, CANDY.lift * (0.6 + random() * 0.6), Math.sin(angle) * out + velocity.z * CANDY.carry);
+      body.angularVelocity.set((random() - 0.5) * 20, (random() - 0.5) * 20, (random() - 0.5) * 20);
+      body.addEventListener('collide', (event: CollideEvent) => this.report('candy', body, event));
+      this.world.addBody(body);
+      this.candies.push(body);
+      made.push(body);
+    }
+    this.idle = false;
+    return made;
   }
 
   /** Take every thrown laptop away (they shrink out in the viewer like retired ones); the pieces stay as they are. */
@@ -692,13 +790,15 @@ export class PropPhysics {
       || this.flaps.some((flaps) => flaps.some((flap) => flap.body.sleepState !== asleep))
       || this.laptops.some((laptop) => laptop.base.sleepState !== asleep || laptop.lid.sleepState !== asleep)
       || this.chicks.some((chick) => chick.sleepState !== asleep)
+      || this.pumpkins.length > 0
+      || this.candies.some((candy) => candy.sleepState !== asleep)
       || this.bags.some((bag) => bag.sleepState !== asleep);
   }
 
   private near(pusher: Pusher): boolean {
     const close = (body: BodyType) => Math.abs(body.position.x - pusher.x) < WAKE_DISTANCE && Math.abs(body.position.z - pusher.z) < WAKE_DISTANCE
       && Math.hypot(body.position.x - pusher.x, body.position.z - pusher.z) < WAKE_DISTANCE;
-    return this.bodies.some(close) || this.laptops.some((laptop) => close(laptop.base)) || this.chicks.some(close) || this.bags.some(close);
+    return this.bodies.some(close) || this.laptops.some((laptop) => close(laptop.base)) || this.chicks.some(close) || this.candies.some(close) || this.bags.some(close);
   }
 
   /**
@@ -711,7 +811,7 @@ export class PropPhysics {
     const movers: { x: number; z: number; reach: number }[] = [];
     // The character only wakes what it walks into: standing still next to a piece lets it sleep.
     if (pusher && !this.idle && Math.hypot(pusher.x - this.pusher.position.x, pusher.z - this.pusher.position.z) > 0.002) movers.push({ x: pusher.x, z: pusher.z, reach: 0.8 });
-    const moving = [...this.bodies, ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid]), ...this.chicks, ...this.bags];
+    const moving = [...this.bodies, ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid]), ...this.pumpkins.map((pumpkin) => pumpkin.body), ...this.chicks, ...this.candies, ...this.bags];
     for (const body of moving) {
       if (body.sleepState === asleep) continue;
       const speed = body.velocity.length();
@@ -733,7 +833,7 @@ export class PropPhysics {
         leg.wakeUp();
       }
     }
-    for (const body of [...this.bodies, ...this.chicks, ...this.bags]) {
+    for (const body of [...this.bodies, ...this.chicks, ...this.candies, ...this.bags]) {
       if (body.sleepState !== asleep) continue;
       for (const mover of movers) {
         if (Math.abs(body.position.x - mover.x) < mover.reach && Math.abs(body.position.z - mover.z) < mover.reach) {
@@ -796,6 +896,7 @@ export class PropPhysics {
     this.clock += delta;
     this.wakeAround(pusher);
     this.world.step(STEP, Math.min(delta, STEP * MAX_SUBSTEPS), MAX_SUBSTEPS);
+    this.smashPumpkins();
     for (const [index, body] of this.bodies.entries()) {
       // A piece knocked far away or through the ground comes back to its place.
       const rest = this.rest[index];
@@ -807,6 +908,18 @@ export class PropPhysics {
       this.chicks.splice(this.chicks.indexOf(chick), 1);
       this.world.removeBody(chick);
       this.retiredChicks.push(chick);
+    }
+    for (const candy of [...this.candies]) {
+      if (candy.position.y > this.groundY - 2) continue;
+      this.candies.splice(this.candies.indexOf(candy), 1);
+      this.world.removeBody(candy);
+      this.retiredCandies.push(candy);
+    }
+    // A pumpkin that fell off the world never hit anything: it just goes.
+    for (const pumpkin of [...this.pumpkins]) {
+      if (pumpkin.body.position.y > this.groundY - 2) continue;
+      this.pumpkins.splice(this.pumpkins.indexOf(pumpkin), 1);
+      this.world.removeBody(pumpkin.body);
     }
     return true;
   }

@@ -4,6 +4,8 @@ import type { RecordedSound } from './soundFiles.ts';
 const BY_PROP: Record<string, RecordedSound> = {
   brick: 'brick', pin: 'pin', ball: 'ball', box: 'cardboard', cone: 'plastic', chevron: 'plastic', works: 'plastic', tech: 'plastic',
   pallet: 'wood', plank: 'wood', leg: 'wood', drum: 'metal', pipe: 'metal', metal: 'metal', barrow: 'metal', tyre: 'rubber', key: 'brick',
+  // Halloween: a thick-skinned pumpkin thuds like rubber, a spider rattles like plastic, a gravestone knocks like brick.
+  pumpkin: 'rubber', spider: 'plastic', grave: 'brick',
 };
 
 /** What a loose piece sounds like when it hits something: the name letters clatter like bricks, the rest goes by its prop. */

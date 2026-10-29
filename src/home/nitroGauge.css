@@ -54,3 +54,13 @@
   :root[data-touch='true'] .nitro-gauge { --gauge: 42px; }
 }
 :root[data-touch='true'] .zoom-controls[hidden] ~ .nitro-gauge { display: none; }
+
+/* Halloween: the cauldron's test tube, its brew glowing green, the foam and bubbles pale green, the full glow green. */
+.nitro-gauge[data-vessel='tube'] .nitro-glass { fill: #d8ffe01c; }
+.nitro-gauge[data-vessel='tube'] .nitro-foam { fill: #c8ff9a; }
+.nitro-gauge[data-vessel='tube'] .nitro-bubble { fill: #e6ffc8cc; }
+.nitro-gauge[data-vessel='tube'] .nitro-cola { filter: drop-shadow(0 0 3px #6dff3a99); }
+.nitro-gauge[data-vessel='tube'][data-state='full'] svg { animation-name: nitro-full-brew; }
+@keyframes nitro-full-brew {
+  40% { filter: drop-shadow(0 6px 10px #00000080) drop-shadow(0 0 14px #7dff4acc); transform: scale(1.06); }
+}

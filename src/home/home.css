@@ -20,6 +20,25 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 /* Phones flash a grey/blue square over whatever is tapped; the buttons have their own pressed look. */
 html { -webkit-tap-highlight-color: transparent; }
 body { background: radial-gradient(ellipse at 50% 38%, #2c2337 0, #1b1623 55%, #120f18 100%); }
+/* Halloween: a darker, colder night behind the scene. */
+:root[data-halloween='on'] body { background: radial-gradient(ellipse at 50% 38%, #1a1430 0, #0e0b16 55%, #08070d 100%); }
+/* Halloween: the page's buttons (menu, zoom, language, the menu's options) in pumpkin orange on dark brown. */
+:root[data-halloween='on'] {
+  --panel: #22140ce8; --edge: #ff8a2a5c; --muted: #d9a878; --accent: #ffa040;
+  --key: #2e1a0e; --key-top: #45270f; --key-shadow: #0f0804;
+}
+:root[data-halloween='on'] :is(.menu-toggle, .zoom-button) { color: #ffcf95; }
+:root[data-halloween='on'] :is(.menu-toggle, .zoom-button):hover { background-color: #3a210ff0; }
+:root[data-halloween='on'] :is(.tool-segmented button, .tool-toggle, .room-retry) { color: #f3d3ae; }
+:root[data-halloween='on'] :is(.tool-segmented button, .tool-toggle, .room-retry):hover { color: #fff1e0; }
+:root[data-halloween='on'] .tool-segmented { background: #160c06; }
+:root[data-halloween='on'] :is(.tool-segmented button, .tool-toggle)[aria-pressed='true'] {
+  color: #fff4e6; border-color: #ffa04088; background: linear-gradient(#ffffff18, #00000000), #b85a12;
+  box-shadow: 0 2px 0 #4a2306, 0 0 12px #ff8a1a55, 0 1px 0 #ffffff26 inset;
+}
+:root[data-halloween='on'] .toggle-track { background: #160c06; }
+:root[data-halloween='on'] .tool-toggle[aria-pressed='true'] .toggle-track::after { background: #ffb15c; }
+:root[data-halloween='on'] :is(button, a):focus-visible { outline-color: #ffb15c; }
 button { font: inherit; cursor: pointer; }
 button:focus-visible, a:focus-visible { outline: 2px solid #d7b9ff; outline-offset: 3px; }
 button:disabled { cursor: not-allowed; opacity: 0.45; }

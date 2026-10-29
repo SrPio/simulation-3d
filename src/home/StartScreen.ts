@@ -104,7 +104,8 @@ export class StartScreen {
   private readonly onStart: () => void;
   private readonly reducedMotion: () => boolean;
 
-  constructor(parent: HTMLElement, options: { onStart: () => void; reducedMotion: () => boolean; label: string }) {
+  /** `word` is what the button says (START; BOO! for Halloween). */
+  constructor(parent: HTMLElement, options: { onStart: () => void; reducedMotion: () => boolean; label: string; word?: string }) {
     this.onStart = options.onStart;
     this.reducedMotion = options.reducedMotion;
     this.root = document.createElement('div');
@@ -152,7 +153,7 @@ export class StartScreen {
     this.button = document.createElement('button');
     this.button.type = 'button';
     this.button.className = 'start-button';
-    this.button.textContent = 'START';
+    this.button.textContent = options.word ?? 'START';
     this.button.setAttribute('aria-label', options.label);
     this.button.disabled = true;
     this.percent = document.createElement('span');

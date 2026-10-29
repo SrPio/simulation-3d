@@ -499,6 +499,80 @@ function symbolMask(symbol: GraffitiSymbol, spot: GraffitiSpot, random: () => nu
       ctx.lineTo(-s * 0.22 + shake(), s * 0.75);
       ctx.stroke();
       break;
+    case 'pumpkin': {
+      // A lumpy pumpkin of five lobes with its stalk, the jack-o'-lantern face cut out of the paint.
+      for (const [x, rx] of [[-0.48, 0.42], [0.48, 0.42], [-0.22, 0.5], [0.22, 0.5], [0, 0.48]] as const) {
+        ctx.moveTo(x * s + rx * s, s * 0.18);
+        ctx.ellipse(x * s + shake() * 0.3, s * 0.18, rx * s, s * 0.66, 0, 0, Math.PI * 2);
+      }
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(-s * 0.1, -s * 0.42);
+      ctx.lineTo(-s * 0.06 + shake() * 0.3, -s * 0.85);
+      ctx.lineTo(s * 0.12, -s * 0.9);
+      ctx.lineTo(s * 0.1, -s * 0.42);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath();
+      for (const side of [-1, 1]) {
+        ctx.moveTo(side * s * 0.62, s * 0.02);
+        ctx.lineTo(side * s * 0.16, s * 0.0);
+        ctx.lineTo(side * s * 0.4 + shake() * 0.3, -s * 0.34);
+        ctx.closePath();
+      }
+      ctx.moveTo(-s * 0.68, s * 0.3);
+      for (const [x, y] of [[-0.45, 0.42], [-0.32, 0.32], [-0.16, 0.46], [0, 0.34], [0.16, 0.46], [0.32, 0.32], [0.45, 0.42], [0.68, 0.3],
+        [0.46, 0.66], [0.3, 0.56], [0.14, 0.7], [0, 0.6], [-0.14, 0.7], [-0.3, 0.56], [-0.46, 0.66]] as const) ctx.lineTo(x * s, y * s);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      break;
+    }
+    case 'ghost': {
+      // A sheet ghost with a wavy hem, its eyes and open mouth cut out.
+      ctx.moveTo(-s * 0.62, s * 0.85);
+      ctx.lineTo(-s * 0.62, -s * 0.15);
+      ctx.arc(0, -s * 0.15, s * 0.62, Math.PI, 0);
+      ctx.lineTo(s * 0.62, s * 0.85);
+      for (let k = 0; k < 4; k++) {
+        const x0 = s * (0.62 - k * 0.31);
+        ctx.quadraticCurveTo(x0 - s * 0.08, s * (k % 2 ? 0.98 : 0.6) + shake(), x0 - s * 0.31, s * 0.85);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath();
+      ctx.ellipse(-s * 0.24, -s * 0.18, s * 0.11, s * 0.17, 0, 0, Math.PI * 2);
+      ctx.ellipse(s * 0.24, -s * 0.18, s * 0.11, s * 0.17, 0, 0, Math.PI * 2);
+      ctx.moveTo(s * 0.1, s * 0.22);
+      ctx.ellipse(0, s * 0.22, s * 0.1, s * 0.14, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      break;
+    }
+    case 'bat': {
+      // A bat with its wings spread: pointed ears, the wings' top edges rising to their tips, scalloped below.
+      const half = [[0, -0.26], [-0.08, -0.42], [-0.13, -0.2], [-0.24, -0.2], [-0.5, -0.42], [-0.76, -0.4], [-0.98, -0.08]];
+      ctx.moveTo(0, -0.26 * s);
+      for (const [x, y] of half.slice(1)) ctx.lineTo(x * s + shake() * 0.2, y * s);
+      // The scallops under the left wing, from its tip back to the body, each bowing up between the wing's fingers.
+      const fingers = [[-0.98, -0.08], [-0.72, 0.06], [-0.46, 0.08], [-0.2, 0.24], [0, 0.34]];
+      for (let k = 1; k < fingers.length; k++) {
+        const [x0, y0] = fingers[k - 1];
+        const [x1, y1] = fingers[k];
+        ctx.quadraticCurveTo(((x0 + x1) / 2) * s, ((y0 + y1) / 2 - 0.12) * s, x1 * s, y1 * s);
+      }
+      for (let k = fingers.length - 2; k >= 0; k--) {
+        const [x0, y0] = fingers[k + 1];
+        const [x1, y1] = fingers[k];
+        ctx.quadraticCurveTo((-(x0 + x1) / 2) * s, ((y0 + y1) / 2 - 0.12) * s, -x1 * s, y1 * s);
+      }
+      for (const [x, y] of [...half].reverse().slice(1, -1)) ctx.lineTo(-x * s + shake() * 0.2, y * s);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
     case 'chick':
       // The feathers only: body, tuft and the wings sticking out; chickDetails adds the rest over the paint.
       chickBox(ctx, s);

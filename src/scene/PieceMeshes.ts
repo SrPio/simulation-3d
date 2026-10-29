@@ -28,14 +28,15 @@ type Batch = { mesh: BatchedMesh; geometries: Map<BufferGeometry, BufferGeometry
 /**
  * Every loose piece outside (name letters, tagline, arrow keys, pins, ball, bricks, crates and cones) drawn as one
  * BatchedMesh: a single draw call. A piece of several materials is several instances sharing its matrix, each with its
- * colour. Textured parts (the tech cubes' logos, one shared atlas) go in a second batch: one more draw call.
- * Matrices follow the physics bodies while they move; each piece also owns a blob shadow.
+ * colour. Textured parts go in one more batch per texture (the tech cubes' logos; the Halloween atlas, with what of it
+ * glows): one more draw call each. Matrices follow the physics bodies while they move; each piece also owns a blob shadow.
  */
 export class PieceMeshes {
-  /** Both batches. */
+  /** Every batch. */
   readonly root = new Group();
   readonly mesh: BatchedMesh;
-  readonly textured?: BatchedMesh;
+  /** The textured batches, one per texture. */
+  readonly textured: BatchedMesh[] = [];
   private readonly pieces: readonly Piece[];
   private readonly instances: { mesh: BatchedMesh; id: number }[][] = [];
   /** Each box's flaps: their instance and place on the rim. */
@@ -62,14 +63,26 @@ export class PieceMeshes {
     this.groundY = groundY;
     // Pieces of one kind share their geometry: it is stored once per batch.
     const plainParts: Batch = { mesh: undefined!, geometries: new Map(), ids: new Map(), instances: 0 };
-    const texturedParts: Batch = { mesh: undefined!, geometries: new Map(), ids: new Map(), instances: 0 };
-    let map: Texture | undefined;
+    const texturedParts = new Map<Texture, Batch & { glow?: Texture }>();
+    const batchOf = (part: Piece['parts'][number]): Batch => {
+      if (!part.map || !part.geometry.getAttribute('uv')) return plainParts;
+      let batch = texturedParts.get(part.map);
+      if (!batch) {
+        batch = { mesh: undefined!, geometries: new Map(), ids: new Map(), instances: 0 };
+        texturedParts.set(part.map, batch);
+      }
+      batch.glow ??= part.emissiveMap;
+      return batch;
+    };
     for (const piece of pieces) {
-      for (const part of [...piece.parts, ...(piece.flaps ?? [])]) {
-        const batch = part.map && part.geometry.getAttribute('uv') ? texturedParts : plainParts;
-        if (batch === texturedParts) map ??= part.map;
-        if (!batch.geometries.has(part.geometry)) batch.geometries.set(part.geometry, plain(part.geometry, batch === texturedParts));
+      for (const part of piece.parts) {
+        const batch = batchOf(part);
+        if (!batch.geometries.has(part.geometry)) batch.geometries.set(part.geometry, plain(part.geometry, batch !== plainParts));
         batch.instances++;
+      }
+      for (const flap of piece.flaps ?? []) {
+        if (!plainParts.geometries.has(flap.geometry)) plainParts.geometries.set(flap.geometry, plain(flap.geometry));
+        plainParts.instances++;
       }
     }
     const build = (batch: Batch, name: string, material: MeshStandardMaterial) => {
@@ -88,10 +101,17 @@ export class PieceMeshes {
       return batch.mesh;
     };
     this.mesh = build(plainParts, 'Pieces', new MeshStandardMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0 }));
-    if (texturedParts.instances) this.textured = build(texturedParts, 'TexturedPieces', new MeshStandardMaterial({ map, roughness: 0.55, metalness: 0 }));
+    for (const [map, batch] of texturedParts) {
+      const material = new MeshStandardMaterial({ map, roughness: 0.55, metalness: 0 });
+      if (batch.glow) {
+        material.emissiveMap = batch.glow;
+        material.emissive.setRGB(1, 1, 1);
+      }
+      this.textured.push(build(batch, this.textured.length ? `TexturedPieces${this.textured.length}` : 'TexturedPieces', material));
+    }
     for (const [index, piece] of pieces.entries()) {
       this.instances.push(piece.parts.map((part) => {
-        const batch = part.map && texturedParts.geometries.has(part.geometry) ? texturedParts : plainParts;
+        const batch = batchOf(part);
         const id = batch.mesh.addInstance(batch.ids.get(part.geometry)!);
         batch.mesh.setColorAt(id, part.color);
         return { mesh: batch.mesh, id };
@@ -104,7 +124,7 @@ export class PieceMeshes {
       this.poses.push(new Matrix4());
       this.set(index, piece);
     }
-    for (const batch of [plainParts, texturedParts]) for (const geometry of batch.geometries.values()) geometry.dispose();
+    for (const batch of [plainParts, ...texturedParts.values()]) for (const geometry of batch.geometries.values()) geometry.dispose();
   }
 
   /** Move piece `index` (and its shadow) to a pose. */
@@ -172,11 +192,11 @@ export class PieceMeshes {
   }
 
   dispose(): void {
-    for (const mesh of [this.mesh, this.textured]) {
-      if (!mesh) continue;
+    for (const mesh of [this.mesh, ...this.textured]) {
       mesh.dispose();
       const material = mesh.material as MeshStandardMaterial;
       material.map?.dispose();
+      material.emissiveMap?.dispose();
       material.dispose();
     }
     this.root.removeFromParent();

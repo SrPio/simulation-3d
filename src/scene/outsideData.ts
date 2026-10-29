@@ -5,7 +5,7 @@ import type { Bounds, Box2, Point2 } from '../world/collisions.ts';
 /** Floor zone in front of a sign: an oriented rectangle on the ground. */
 export type SignArea = { center: Point2; axisX: Point2; axisZ: Point2; halfX: number; halfZ: number };
 
-export type PieceGroup = 'name' | 'tag' | 'keys' | 'bowling' | 'bricks' | 'decor' | 'tech' | 'circuit' | 'wall';
+export type PieceGroup = 'name' | 'tag' | 'keys' | 'bowling' | 'bricks' | 'decor' | 'tech' | 'circuit' | 'wall' | 'halloween';
 /** What a reset zone puts back: a group of pieces, or the targets lane (its thrown laptops and score). */
 export type ResetTarget = PieceGroup | 'targets';
 
@@ -36,8 +36,11 @@ export type PieceShape =
   | { kind: 'box' }
   | { kind: 'sphere'; radius: number }
   | { kind: 'cylinders'; cylinders: { radius: number; height: number; y: number }[] };
-/** One material of a piece's mesh: its geometry and colour, and its texture when it has one (the tech cubes' logos). */
-export type PiecePart = { geometry: BufferGeometry; color: Color; map?: Texture };
+/**
+ * One material of a piece's mesh: its geometry and colour, its texture when it has one (the tech cubes' logos, the
+ * Halloween atlas) and what of it glows (the carved pumpkins' faces).
+ */
+export type PiecePart = { geometry: BufferGeometry; color: Color; map?: Texture; emissiveMap?: Texture };
 
 /** A loose piece moved by the physics: the name letters, the tagline, the arrow keys, the pins and ball, the bricks. */
 export type Piece = {
@@ -192,7 +195,7 @@ function areaOf(position: Vector3, quaternion: Quaternion, size: number[], offse
   };
 }
 
-const PROP_GROUPS = new Set<string>(['keys', 'bowling', 'bricks', 'decor', 'tech', 'circuit', 'wall']);
+const PROP_GROUPS = new Set<string>(['keys', 'bowling', 'bricks', 'decor', 'tech', 'circuit', 'wall', 'halloween']);
 const RESET_TARGETS = new Set<string>([...PROP_GROUPS, 'targets']);
 
 function shapeOf(data: { radius?: number; cylinders?: number[] }): PieceShape {
@@ -208,11 +211,14 @@ function shapeOf(data: { radius?: number; cylinders?: number[] }): PieceShape {
 const FLAP = /_Flap_\d+$/;
 
 /** The meshes of a node: itself, or the one-material children the loader makes of a multi-material mesh (not its flaps). */
-function partsOf(object: Object3D): PiecePart[] {
+export function partsOf(object: Object3D): PiecePart[] {
   const meshes = object instanceof Mesh ? [object] : object.children.filter((child): child is Mesh => child instanceof Mesh && !FLAP.test(child.name));
   return meshes.map((mesh) => {
     const material = mesh.material as MeshStandardMaterial;
-    return { geometry: mesh.geometry, color: (material.color ?? new Color(1, 1, 1)).clone(), ...(material.map ? { map: material.map } : {}) };
+    return {
+      geometry: mesh.geometry, color: (material.color ?? new Color(1, 1, 1)).clone(), ...(material.map ? { map: material.map } : {}),
+      ...(material.emissiveMap ? { emissiveMap: material.emissiveMap } : {}),
+    };
   });
 }
 

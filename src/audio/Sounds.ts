@@ -1,8 +1,9 @@
 import { SOUND_FILES, type RecordedSound } from './soundFiles.ts';
 
 /** Sounds made in the browser instead of recorded: the swing of a blow, a chick's cheep, a bottle popping, a Rubik's cube
- * layer clicking round, a neon sign lighting. */
-export type SynthSound = 'whoosh' | 'chirp' | 'pop' | 'twist' | 'neon';
+ * layer clicking round, a neon sign lighting; for Halloween a pumpkin bursting, a candy ticking on the ground and the
+ * cauldron's brew bubbling as the rider pops in or out. */
+export type SynthSound = 'whoosh' | 'chirp' | 'pop' | 'twist' | 'neon' | 'splat' | 'candy' | 'bubble';
 export type SoundName = RecordedSound | SynthSound;
 /** Continuous sounds whose level and pitch follow something: the office chair's casters, the soda fizzing. */
 export type LoopName = 'rolling' | 'fizz';
@@ -61,6 +62,9 @@ export const SOUNDS: Record<SoundName, SoundDef> = {
   pop: fixed(0.9, [0.9, 1.1], 150),
   twist: fixed(0.4, [0.85, 1.2], 60),
   neon: fixed(0.5, [1, 1], 800),
+  splat: impact(0, 0.15, [0.55, 1], [0.85, 1.1], 80),
+  candy: impact(0.6, 0.3, [0.1, 0.45], [0.9, 1.4], 35),
+  bubble: fixed(0.7, [0.9, 1.1], 200),
   ui: fixed(0.45, [1, 1], 40),
 };
 
@@ -275,6 +279,53 @@ export class Sounds {
         click.gain.exponentialRampToValueAtTime(0.0001, t + offset + 0.03);
         source.connect(click).connect(filter);
         source.start(t + offset, Math.random() * 0.5, 0.035);
+      }
+    } else if (name === 'splat' && this.noise) {
+      // A pumpkin bursting: a wet, low-passed crunch of noise over a dull thud.
+      const source = context.createBufferSource();
+      source.buffer = this.noise;
+      const filter = context.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(2400 * rate, t);
+      filter.frequency.exponentialRampToValueAtTime(300, t + 0.25);
+      gain.gain.setValueAtTime(volume, t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+      source.connect(filter).connect(gain);
+      source.start(t, Math.random() * 0.5, 0.32);
+      const osc = context.createOscillator();
+      const thud = context.createGain();
+      osc.frequency.setValueAtTime(140 * rate, t);
+      osc.frequency.exponentialRampToValueAtTime(45, t + 0.2);
+      thud.gain.setValueAtTime(volume, t);
+      thud.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+      osc.connect(thud).connect(master);
+      osc.start(t);
+      osc.stop(t + 0.24);
+    } else if (name === 'candy') {
+      // A hard candy ticking on the ground: a short high blip.
+      const osc = context.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(3200 * rate, t);
+      osc.frequency.exponentialRampToValueAtTime(1800 * rate, t + 0.04);
+      gain.gain.setValueAtTime(volume, t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+      osc.connect(gain);
+      osc.start(t);
+      osc.stop(t + 0.06);
+    } else if (name === 'bubble') {
+      // A thick brew blurping: a few rising sine blips, one after another.
+      for (const [offset, pitch] of [[0, 1], [0.07, 1.3], [0.15, 0.85], [0.22, 1.5]]) {
+        const osc = context.createOscillator();
+        const blip = context.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(220 * pitch * rate, t + offset);
+        osc.frequency.exponentialRampToValueAtTime(640 * pitch * rate, t + offset + 0.06);
+        blip.gain.setValueAtTime(0.0001, t + offset);
+        blip.gain.exponentialRampToValueAtTime(volume * 0.7, t + offset + 0.01);
+        blip.gain.exponentialRampToValueAtTime(0.0001, t + offset + 0.07);
+        osc.connect(blip).connect(master);
+        osc.start(t + offset);
+        osc.stop(t + offset + 0.08);
       }
     } else if (name === 'neon') {
       // A neon tube striking: a low electric hum that stutters on, then settles.

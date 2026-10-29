@@ -221,7 +221,8 @@ export type SpraySymbol = { width: number; strokes: Stroke[]; blobs?: [number, n
 export type SprayFill = { d: string; x: number; y: number; size: number };
 export type SpraySymbolName =
   | 'crownline' | 'swoosh' | 'stitched' | 'cross' | 'zigzag' | 'arrowdown' | 'heartline' | 'splat' | 'dot'
-  | 'react' | 'js' | 'ts' | 'node' | 'git' | 'three' | 'vite' | 'html' | 'css' | 'terminal' | 'konami' | 'konamiTouch';
+  | 'react' | 'js' | 'ts' | 'node' | 'git' | 'three' | 'vite' | 'html' | 'css' | 'terminal' | 'konami' | 'konamiTouch'
+  | 'web' | 'batline' | 'skull';
 export const SPRAY_SYMBOLS: Record<SpraySymbolName, SpraySymbol> = {
   crownline: {
     width: 1,
@@ -294,7 +295,50 @@ export const SPRAY_SYMBOLS: Record<SpraySymbolName, SpraySymbol> = {
   konami: { width: 4.2, strokes: konami() },
   // The same on a touch screen, with the throw and jump buttons' silhouettes for B and A.
   konamiTouch: konamiTouch(),
+  // Halloween: a cobweb with its spider hanging off it, a bat, a skull.
+  web: { width: 1.1, strokes: cobweb(0.5, 0.42, 0.5, 0.42), blobs: [[0.86, 0.9, 0.065], [0.86, 0.82, 0.04]] },
+  batline: {
+    width: 1.6,
+    strokes: [
+      [[0.8, 0.5], [0.62, 0.22], [0.36, 0.2], [0.04, 0.42], [0.22, 0.46], [0.3, 0.64], [0.44, 0.54], [0.56, 0.72], [0.68, 0.56], [0.8, 0.62]],
+      [[0.8, 0.5], [0.98, 0.22], [1.24, 0.2], [1.56, 0.42], [1.38, 0.46], [1.3, 0.64], [1.16, 0.54], [1.04, 0.72], [0.92, 0.56], [0.8, 0.62]],
+      [[0.74, 0.44], [0.72, 0.3], [0.79, 0.4], [0.81, 0.4], [0.88, 0.3], [0.86, 0.44]],
+    ],
+    blobs: [[0.8, 0.52, 0.09]],
+  },
+  skull: {
+    width: 0.9,
+    strokes: [
+      [[0.18, 0.66], ...arc(0.45, 0.42, 0.42, 0.4, 0.82 * PI, 2.18 * PI, 14), [0.72, 0.66]],
+      [[0.18, 0.66], [0.24, 0.94], [0.66, 0.94], [0.72, 0.66]],
+      [[0.36, 0.8], [0.36, 0.94]], [[0.45, 0.8], [0.45, 0.94]], [[0.54, 0.8], [0.54, 0.94]],
+      [[0.41, 0.66], [0.45, 0.58], [0.49, 0.66]],
+    ],
+    blobs: [[0.3, 0.46, 0.1], [0.6, 0.46, 0.1]],
+  },
 };
+
+/** A cobweb round (cx, cy): eight threads out from the middle and four rings sagging between them; its spider below. */
+function cobweb(cx: number, cy: number, rx: number, ry: number): Stroke[] {
+  const spokes = Array.from({ length: 8 }, (_, k) => (k / 8) * 2 * PI + 0.2);
+  const strokes: Stroke[] = spokes.map((angle) => [[cx, cy], [cx + Math.cos(angle) * rx, cy + Math.sin(angle) * ry]] as Stroke);
+  for (const ring of [0.25, 0.45, 0.68, 0.9]) {
+    const points: Point[] = [];
+    for (let k = 0; k <= spokes.length; k++) {
+      const a = spokes[k % spokes.length];
+      const b = spokes[(k + 1) % spokes.length];
+      points.push([cx + Math.cos(a) * rx * ring, cy + Math.sin(a) * ry * ring]);
+      if (k === spokes.length) break;
+      // Each strand sags towards the middle between two threads.
+      const mid = (a + (b < a ? b + 2 * PI : b)) / 2;
+      points.push([cx + Math.cos(mid) * rx * ring * 0.86, cy + Math.sin(mid) * ry * ring * 0.86]);
+    }
+    strokes.push(points);
+  }
+  // The thread the spider hangs from.
+  strokes.push([[0.86, cy + ry * 0.45], [0.86, 0.84]]);
+  return strokes;
+}
 
 /** The closed outlines of a silhouette path (M/L/Z, numbers only), in its own 100 × 100 box. */
 export function fillOutlines(d: string): Point[][] {

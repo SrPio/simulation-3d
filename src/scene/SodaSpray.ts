@@ -3,8 +3,11 @@ import { Color, DynamicDrawUsage, IcosahedronGeometry, InstancedMesh, Matrix4, M
 /** Most drops alive at once (both bottles), and how many a burst and a second of spraying make per bottle. */
 const MAX_DROPS = 360;
 export const SPRAY = { burst: 70, rate: 220, speed: [3.2, 6.2], spread: 0.32, life: [0.35, 0.8], size: [0.025, 0.06], gravity: 9.8, drag: 1.6 } as const;
-const FOAM = new Color(0xf3e6cf);
-const COLA = new Color(0x5a2a12);
+/** What the nitro sprays: foam and liquid colours, and how much they glow (the Halloween brew shines in the dark). */
+export type SprayPalette = { foam: Color; liquid: Color; glow: number };
+export const SODA: SprayPalette = { foam: new Color(0xf3e6cf), liquid: new Color(0x5a2a12), glow: 0 };
+/** Halloween: the cauldron's test tubes spray a glowing green brew. */
+export const BREW: SprayPalette = { foam: new Color(0xb8ff6a), liquid: new Color(0x2fd12a), glow: 0.9 };
 
 type Drop = { position: Vector3; velocity: Vector3; age: number; life: number; size: number; foam: boolean };
 type Cap = { object: Object3D; velocity: Vector3; spin: Vector3; resting: boolean };
@@ -12,7 +15,8 @@ type Cap = { object: Object3D; velocity: Vector3; spin: Vector3; resting: boolea
 /**
  * The nitro's soda: foam and cola bursting backwards out of the bottles' mouths while it pushes (a big burst when it
  * lights, a steady jet after), as one instanced mesh of small drops that fly, fall and fade out; and the bottle caps
- * that pop off the first time, fly and settle on the ground until the reset.
+ * that pop off the first time, fly and settle on the ground until the reset. For Halloween the same out of the
+ * cauldron's test tubes, in glowing green (BREW), and their corks pop off.
  */
 export class SodaSpray {
   readonly mesh: InstancedMesh;
@@ -23,15 +27,24 @@ export class SodaSpray {
   private carry = 0;
   /** Fewer drops in low quality or with reduced motion. */
   density = 1;
+  private readonly palette: SprayPalette;
 
-  constructor() {
-    const material = new MeshStandardMaterial({ roughness: 0.35, metalness: 0, transparent: true, opacity: 0.92 });
+  constructor(palette: SprayPalette = SODA) {
+    this.palette = palette;
+    // A glowing palette lights its drops from inside (emissive white, tinted by each drop's colour).
+    const material = new MeshStandardMaterial({ roughness: 0.35, metalness: 0, transparent: true, opacity: 0.92, emissive: new Color(palette.glow, palette.glow, palette.glow) });
+    if (palette.glow) {
+      material.onBeforeCompile = (shader) => {
+        // The emission takes each drop's own colour.
+        shader.fragmentShader = shader.fragmentShader.replace('vec3 totalEmissiveRadiance = emissive;', 'vec3 totalEmissiveRadiance = emissive * vColor.rgb;');
+      };
+    }
     this.mesh = new InstancedMesh(new IcosahedronGeometry(1, 1), material, MAX_DROPS);
     this.mesh.name = 'SodaSpray';
     this.mesh.instanceMatrix.setUsage(DynamicDrawUsage);
     this.mesh.frustumCulled = false;
     this.mesh.count = 0;
-    for (let i = 0; i < MAX_DROPS; i++) this.mesh.setColorAt(i, FOAM);
+    for (let i = 0; i < MAX_DROPS; i++) this.mesh.setColorAt(i, palette.foam);
   }
 
   get alive(): number {
@@ -95,7 +108,7 @@ export class SodaSpray {
       const scale = drop.size * (drop.foam ? 0.6 + t * 1.4 : 1) * Math.min(1, (1 - t) * 4);
       this.matrix.makeScale(scale, scale, scale).setPosition(drop.position);
       this.mesh.setMatrixAt(n, this.matrix);
-      this.mesh.setColorAt(n, drop.foam ? FOAM : COLA);
+      this.mesh.setColorAt(n, drop.foam ? this.palette.foam : this.palette.liquid);
       n++;
     }
     for (let i = n; i < this.mesh.count; i++) this.mesh.setMatrixAt(i, this.hidden);

@@ -56,3 +56,12 @@
 @keyframes start-appear { from { opacity: 0; } to { opacity: 1; } }
 @keyframes start-rise { from { opacity: 0; translate: 0 8px; } to { opacity: 1; translate: 0 0; } }
 html[data-reduced-motion] .start-outline, html[data-reduced-motion] .start-percent { animation-duration: 1ms; }
+
+/* Halloween: the outline glows pumpkin orange, START with it, and the frosted glass takes a dusky orange. */
+:root[data-halloween='on'] .start-backdrop { fill: #0f0b14; }
+:root[data-halloween='on'] .start-ghost { stroke: #ff9a3c2e; }
+:root[data-halloween='on'] .start-line { stroke: #ffa040; filter: drop-shadow(0 0 5px #ff7a1acc); }
+:root[data-halloween='on'] .start-glass { background: #2a1408b8; }
+:root[data-halloween='on'] .start-screen .start-button { color: #ffd9a8; text-shadow: 0 0 10px #ff7a1a88; }
+:root[data-halloween='on'] .start-screen .start-button:is(:hover, :focus-visible) { color: #fff; text-shadow: 0 0 6px #ffffffcc, 0 0 18px #ffa040, 0 0 34px #ff6a00; }
+:root[data-halloween='on'] .start-percent { color: #c9a58a; }

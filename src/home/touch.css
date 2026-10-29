@@ -89,3 +89,14 @@
   .touch-zone svg { width: 26px; height: 26px; }
   .touch-steer .touch-button { width: 62px; height: 62px; padding: 10px; }
 }
+
+/* Halloween: the on-screen controls in pumpkin orange too. */
+:root[data-halloween='on'] .touch-stick { background: radial-gradient(circle, #3a210f55 0, #22140c99 70%); border-color: #ff8a2a55; }
+:root[data-halloween='on'] .touch-stick.is-active { border-color: #ff8a2aaa; }
+:root[data-halloween='on'] .touch-knob { background: linear-gradient(#ffffff26, #00000000), #d0661a; border-color: #ffd7a8; box-shadow: 0 4px 0 #4a2306, 0 0 18px #ff8a1a66; }
+:root[data-halloween='on'] :is(.touch-button, .touch-zone) {
+  color: #fff1e0; border-color: #ffa04077; background: radial-gradient(circle at 50% 35%, #8a4512e6, #2e1a0ee6); box-shadow: 0 3px 0 #160c06, 0 8px 18px #00000066;
+}
+:root[data-halloween='on'] :is(.touch-button, .touch-zone).is-down,
+:root[data-halloween='on'] .touch-button[aria-pressed='true'] { color: #2e1a0e; background: radial-gradient(circle at 50% 35%, #fff1e0, #ffa040); }
+:root[data-halloween='on'] .touch-button[data-action='nitro'] { background: radial-gradient(circle at 50% 35%, #3fbf2ae6, #14500ee6); }

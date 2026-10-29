@@ -1,6 +1,6 @@
 import {
   AnimationMixer, BackSide, Box3, CircleGeometry, Color, DirectionalLight, DoubleSide, FrontSide, Group, HemisphereLight, InstancedMesh, LoopOnce, LoopRepeat, PointLight,
-  MeshDepthMaterial, Raycaster, RepeatWrapping, Texture, Vector2, WebGLRenderTarget, type Material, type Side,
+  MeshDepthMaterial, Plane, Raycaster, RepeatWrapping, Texture, Vector2, WebGLRenderTarget, type Material, type Side,
   Matrix4, Mesh, MeshStandardMaterial, OrthographicCamera, Quaternion, Scene, SkinnedMesh, Vector3, type AnimationAction, type Camera, type Object3D,
   type WebGLRenderer,
 } from 'three';
@@ -16,7 +16,7 @@ import { getLanguage, onLanguage, t } from '../core/i18n.ts';
 import { KeyboardInput, type HoldAction, type PressAction } from '../input/KeyboardInput';
 import {
   EXPECTED_BYTES, boxingFile, circuitFile, colombiaFile, disposeObjects, loadBoxing, loadColombia, laptopFile, loadCharacter, loadChick, loadCircuit, loadLaptop, loadOutside, loadRoom,
-  loadUnivalle, modelVersions, outsideFile, roomFile, univalleFile, experienceFile, loadExperience,
+  loadUnivalle, modelVersions, outsideFile, roomFile, univalleFile, experienceFile, loadExperience, halloweenFile, loadHalloween,
   type ModelVersionId, type SceneId,
 } from '../core/loadAssets';
 import { DOWNLOAD_SHARE, ProgressMeter } from '../core/loadProgress.ts';
@@ -43,18 +43,22 @@ import { TargetsView } from '../scene/TargetsView.ts';
 import { CircuitView } from '../scene/CircuitView.ts';
 import { DRIVE, NITRO, PUSH, chairAt, driveStep, forwardSpeed, pushChair, strikeChair, type ChairState } from '../world/chairDrive.ts';
 import { applyLean, leanStep, leanTarget, restHand, restLean, solveArm, type Lean } from '../character/riderPose.ts';
-import { SodaSpray } from '../scene/SodaSpray.ts';
+import { BREW, SODA, SodaSpray } from '../scene/SodaSpray.ts';
+import type { ChairRig } from '../scene/CircuitView.ts';
 import type { SeatSpot } from '../interactions/InteractionController.ts';
 import type { FloorBlock } from '../scene/outsideData.ts';
 import { RoomReveal } from '../scene/RoomReveal.ts';
+import { dressPieces, ghostBag, takeHalloween, wearMask, type HalloweenDress } from '../scene/halloweenDress.ts';
 import { Graffiti, paintGraffiti, type Paintings } from '../scene/Graffiti.ts';
-import { GRAFFITI, graffitiForTouch, type GraffitiSpot } from '../scene/graffitiData.ts';
+import { GRAFFITI, graffitiForHalloween, graffitiForTouch, type GraffitiSpot } from '../scene/graffitiData.ts';
 import { hiddenBehind, revealStep, type Bounds3 } from '../world/reveal.ts';
 import { TargetGame, type Lane } from '../world/targets.ts';
 import { signAt } from '../world/signs.ts';
 import { KEY_SINK, onKey, pressStep, type FloorKey } from '../world/keyPress.ts';
 import { ChickRain } from '../scene/ChickRain.ts';
-import { BAG_PUSH, LAPTOP, MAX_CHICKS, PropPhysics, type ChairPusher, type StaticBox, type TargetDisc, type TargetHit, type ThrownLaptop } from '../world/PropPhysics.ts';
+import { BAG_PUSH, LAPTOP, MAX_CHICKS, PropPhysics, type ChairPusher, type StaticBox, type TargetDisc, type TargetHit, type Thrown, type ThrownLaptop } from '../world/PropPhysics.ts';
+import { CandyBurst } from '../scene/CandyBurst.ts';
+import { HalloweenSky } from '../scene/HalloweenSky.ts';
 import type { Box2 } from '../world/collisions.ts';
 import { fontsReady } from '../core/fonts.ts';
 
@@ -94,6 +98,12 @@ type ViewerOptions = {
   sounds?: Sounds;
   /** Room only: a touch screen. The intro's keyboard keys and the controls panel are left off the floor (the controls are on screen). */
   touch?: boolean;
+  /**
+   * Room only: the Halloween dress-up (src/core/halloween.ts): halloween.glb's pumpkins, spiders, webs and graves, a
+   * pumpkin thrown instead of the laptop, the cauldron instead of the office chair, the hockey mask, ghost bags, pumpkin
+   * pins, the eye ball, dark bricks, Halloween graffiti, a moonlit night with bats and ghosts.
+   */
+  halloween?: boolean;
 };
 
 // Isometric diorama: the camera stays on the open side of the two room walls.
@@ -148,6 +158,8 @@ function openLink(href: string): void {
 const RIDER_WRIST = { ahead: 0.02, up: 0.045 };
 /** How far ahead of the office chair's seat centre the rider sits (m). */
 const RIDER_FORWARD = 0.15;
+/** Halloween: how far behind the cauldron's middle the rider's hips are (m), leaving room for the legs in front. */
+const RIDER_BACK = 0.16;
 /** Blob shadow slots: the character first, then the signs, then the loose pieces, then the thrown laptops. */
 const CHARACTER_SHADOW = 0;
 /** cannon-es sleepState of a sleeping body. */
@@ -283,7 +295,7 @@ export class CharacterViewer {
   private readonly targetGame = new TargetGame();
   private targetLane?: Lane;
   /** Thrown laptops whose throw counts for the targets round (thrown from behind the line). */
-  private countedThrows = new WeakSet<ThrownLaptop>();
+  private countedThrows = new WeakSet<Thrown>();
   /** Labels over the tech tower's cubes as they fall; the cubes (piece indices) already labelled since the last reset. */
   /** The see-through window in the room while it hides the character, and the room's bounds it is tested against. */
   private reveal?: RoomReveal;
@@ -294,6 +306,21 @@ export class CharacterViewer {
   /** Link signs and playground reset zones: the floor zones the character can step into. */
   private zones: Sign[] = [];
   private physics?: PropPhysics;
+  /** halloween.glb split up while the Halloween dress-up is on (its world joins the outside). */
+  private dress?: HalloweenDress;
+  /** Halloween: the thrown pumpkins, their shards and candies; the bats, ghosts and mist. */
+  private candyBurst?: CandyBurst;
+  private sky?: HalloweenSky;
+  /**
+   * Halloween: the cauldron ridden instead of the office chair, and the plane at its brew's surface below which the
+   * rider is not drawn (only the trunk and head show out of the brew); far below everything while nobody rides.
+   */
+  private cauldron?: Object3D;
+  private readonly brewPlane = new Plane(new Vector3(0, 1, 0), 1e4);
+  /** Half size of the square round the free chair (or cauldron) that stops the character (PUSH.block for the chair). */
+  private chairBlockHalf: number = PUSH.block;
+  /** How far the character reaches to push the free chair: its own radius, more round the wide cauldron. */
+  private chairPushReach = CHARACTER_RADIUS;
   /** A throw is under way and its laptop has not appeared yet: it shows up only at THROW_RELEASE, already leaving the hand. */
   private pendingThrow = false;
   /** A seat is in reach of the character moving freely: the speech bubble shows over its head. */
@@ -379,6 +406,7 @@ export class CharacterViewer {
     this.quality = options.quality ?? defaultQuality;
     this.reducedMotion = options.reducedMotion ?? false;
     this.cameraMode = options.cameraMode ?? 'free';
+    this.host.dataset.halloween = this.halloween ? 'on' : 'off';
     this.pixelRatio = ratioRange(this.quality, window.devicePixelRatio).max;
     const version = modelVersions[options.modelId];
     this.events.status({ kind: 'loading', title: t('viewer.loading', { label: version.label }), detail: t('viewer.preparing', { file: version.file, copy: version.copy }) });
@@ -452,13 +480,22 @@ export class CharacterViewer {
     this.scene.add(this.key.target, this.fill.target, this.rim.target);
   }
 
-  /** The graffiti as this screen shows them (on a touch screen the Konami code names the on-screen buttons). */
+  /**
+   * The graffiti as this screen shows them (on a touch screen the Konami code names the on-screen buttons; for Halloween
+   * some spots get a Halloween painting).
+   */
   private get graffitiSpots(): readonly GraffitiSpot[] {
-    return this.options.touch ? graffitiForTouch(GRAFFITI) : GRAFFITI;
+    const spots = this.halloween ? graffitiForHalloween(GRAFFITI) : GRAFFITI;
+    return this.options.touch ? graffitiForTouch(spots) : spots;
   }
 
   private get inRoom(): boolean {
     return this.options.scene === 'room';
+  }
+
+  /** The Halloween dress-up is on (room only). */
+  private get halloween(): boolean {
+    return this.inRoom && (this.options.halloween ?? false);
   }
 
   private async load(): Promise<void> {
@@ -467,7 +504,7 @@ export class CharacterViewer {
       const track = (file: string) => meter.file(file, EXPECTED_BYTES[file] ?? 1_000_000);
       // The graffiti are painted in a worker meanwhile (seconds of canvas work that would freeze the loading screen).
       const paintings = this.inRoom && GRAFFITI.length ? paintGraffiti(this.graffitiSpots) : Promise.resolve([]);
-      const [, gltf, roomGltf, laptopGltf, outsideGltf, circuitGltf, colombiaGltf, boxingGltf, univalleGltf, experienceGltf, graffitiPaintings] = await Promise.all([
+      const [, gltf, roomGltf, laptopGltf, outsideGltf, circuitGltf, colombiaGltf, boxingGltf, univalleGltf, experienceGltf, halloweenGltf, graffitiPaintings] = await Promise.all([
         // The canvas labels below are painted once, so the typeface must be loaded first (fontsReady never rejects).
         fontsReady(),
         loadCharacter(this.options.modelId, this.abort.signal, track(modelVersions[this.options.modelId].file)),
@@ -479,13 +516,17 @@ export class CharacterViewer {
         this.inRoom ? loadBoxing(this.abort.signal, track(boxingFile)) : Promise.resolve(undefined),
         this.inRoom ? loadUnivalle(this.abort.signal, track(univalleFile)) : Promise.resolve(undefined),
         this.inRoom ? loadExperience(this.abort.signal, track(experienceFile)) : Promise.resolve(undefined),
+        this.halloween ? loadHalloween(this.abort.signal, track(halloweenFile)) : Promise.resolve(undefined),
         paintings,
       ]);
       meter.report(DOWNLOAD_SHARE);
       this.preparing = true;
       // Parts of the outside in their own files: read and merged as one outside.
-      const extras = [circuitGltf, colombiaGltf, boxingGltf, univalleGltf, experienceGltf];
-      const scenes = [...gltf.scenes, ...(roomGltf?.scenes ?? []), ...(laptopGltf?.scenes ?? []), ...(outsideGltf?.scenes ?? []), ...extras.flatMap((extra) => extra?.scenes ?? [])];
+      // Halloween: its world (pumpkins, spiders, graves, cobwebs) is read with the outside; the rest is kept aside.
+      if (halloweenGltf) this.dress = takeHalloween(halloweenGltf.scene);
+      const extras = [circuitGltf, colombiaGltf, boxingGltf, univalleGltf, experienceGltf, this.dress ? { scene: this.dress.world, scenes: [] } : undefined];
+      const scenes = [...gltf.scenes, ...(roomGltf?.scenes ?? []), ...(laptopGltf?.scenes ?? []), ...(outsideGltf?.scenes ?? []), ...extras.flatMap((extra) => extra?.scenes ?? []),
+        ...(halloweenGltf?.scenes ?? [])];
       if (this.disposed) {
         disposeObjects(scenes);
         return;
@@ -494,7 +535,7 @@ export class CharacterViewer {
       this.model = gltf.scene;
       if (roomGltf) {
         // The circuit is read as part of the outside: its pieces, decor, floors and zones join the outside's.
-        for (const extra of extras) if (outsideGltf && extra) outsideGltf.scene.add(extra.scene);
+        for (const extra of extras) if (outsideGltf && extra) outsideGltf.scene.add(extra.scene as Object3D);
         if (outsideGltf) await this.addOutside(outsideGltf.scene, graffitiPaintings);
         this.placeInRoom(roomGltf.scene);
         // Everything receives shadows; only furniture casts them. Floor, walls, posters and the
@@ -514,6 +555,9 @@ export class CharacterViewer {
       // Fewer draw calls: static and skinned parts are merged by material (they render identically).
       mergeStaticMeshes(this.model);
       mergeSkinnedMeshes(this.model);
+      // Halloween: Jason's hockey mask on the head bone, and the rider cut at the cauldron's brew (before the shaders are warmed up).
+      if (this.dress?.mask) this.host.dataset.mask = wearMask(this.model, this.dress.mask) ? 'on' : 'none';
+      this.clipRider();
       await breathe();
       if (gltf.animations.length) {
         this.mixer = new AnimationMixer(this.model);
@@ -563,7 +607,7 @@ export class CharacterViewer {
       this.scene.add(this.model);
       if (this.room) this.scene.add(this.room);
       if (this.outside) this.scene.add(this.outside);
-      for (const object of [this.bags.length ? this.bagRoot : undefined, this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.rubik?.root, this.targetsView?.root, this.circuit?.root, this.graffiti?.root]) if (object) this.scene.add(object);
+      for (const object of [this.bags.length ? this.bagRoot : undefined, this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.rubik?.root, this.targetsView?.root, this.circuit?.root, this.graffiti?.root, this.candyBurst?.root, this.sky?.root]) if (object) this.scene.add(object);
       if (!this.ground) this.createFloor(this.mixer ? 0 : box.min.y);
       this.frameLights();
       this.cameraDistance = Math.max(this.bounds.length() * 2.5, 1);
@@ -777,7 +821,7 @@ export class CharacterViewer {
     const data = readOutside(outside);
     this.outsideData = data;
     // The loose pieces move on their own: they leave the static GLB before it is merged.
-    for (const group of ['Letters', 'Tagline', 'Keys', 'Bowling', 'Bricks', 'Clutter', 'Tech', 'CircuitPieces']) outside.getObjectByName(group)?.removeFromParent();
+    for (const group of ['Letters', 'Tagline', 'Keys', 'Bowling', 'Bricks', 'Clutter', 'Tech', 'CircuitPieces', 'HalloweenPieces']) outside.getObjectByName(group)?.removeFromParent();
     // The chair, the tapes and the traffic light's lenses move or change: the circuit view keeps them out of the merge.
     this.circuit = new CircuitView(data);
     // The flag waves: its cloth stays out of the merge, keeping where it hangs.
@@ -795,6 +839,8 @@ export class CharacterViewer {
       bag.object.traverse((object) => {
         if (object instanceof Mesh) object.castShadow = object.receiveShadow = false;
       });
+      // Halloween: white ghosts with black eyes instead of the JS and TS bags.
+      if (this.dress) ghostBag(bag);
       mergeStaticMeshes(bag.object);
       this.bagRoot.add(bag.object);
       // The character leans into the bag rather than walking through it (BAG_PUSH): a collider that follows the bag.
@@ -818,6 +864,8 @@ export class CharacterViewer {
     // On a touch screen there are no keys on the floor: being last, leaving them out keeps the physics indices.
     const fixed = this.options.touch ? [] : data.props.filter((piece) => piece.group === 'keys');
     this.pieceList = [...data.letters, ...data.props.filter((piece) => piece.group !== 'keys'), ...fixed];
+    // Halloween: pumpkin pins, an eye for a ball and dark stone bricks (the same sizes: the bodies do not change).
+    if (this.dress) dressPieces(this.pieceList, this.dress);
     this.floorKeys = fixed.map((piece, i) => ({
       index: this.pieceList.length - fixed.length + i,
       name: piece.name.replace(/^Key_/, '').toLowerCase(),
@@ -861,6 +909,10 @@ export class CharacterViewer {
       this.boxes = this.pieceList.flatMap((piece, index) => (piece.flaps?.length ? [index] : []));
     }
     this.shadows.flush();
+    if (this.dress) {
+      this.candyBurst = new CandyBurst(this.dress.library, data.groundY);
+      this.sky = new HalloweenSky(this.dress.library, data.groundY);
+    }
     this.zones = [...data.signs, ...data.zones];
     this.areas = new SignAreas(this.zones, data.groundY);
     this.areas.setOpenKey(this.openKeyLabel);
@@ -958,7 +1010,8 @@ export class CharacterViewer {
       physics.onTargetHit = this.onTargetHit;
       physics.onImpact = (impact) => {
         const source = impact.source;
-        const name = source === 'laptop' ? 'laptop' : source === 'chick' ? 'chirp' : source === 'bag' ? 'rubber' : pieceSound(this.pieceList[source]);
+        const name: SoundName = source === 'laptop' ? 'laptop' : source === 'pumpkin' ? 'splat' : source === 'candy' ? 'candy' : source === 'chick' ? 'chirp'
+          : source === 'bag' ? 'rubber' : pieceSound(this.pieceList[source]);
         this.sound(name, impact.speed, impact.position);
       };
       physics.onBreak = () => this.sound('woodHeavy', 6);
@@ -1303,6 +1356,16 @@ export class CharacterViewer {
     const forward = throwDirection(this.controller.position, yaw, pose.position);
     const speed = throwSpeed(power);
     const jitter = () => (Math.random() - 0.5) * 2;
+    if (this.candyBurst) {
+      // Halloween: a pumpkin leaves the hand instead, from the same place and as fast; it bursts where it lands.
+      const pumpkin = this.physics.throwPumpkin(pose.position, { x: forward.x * speed.forward, y: speed.up, z: forward.z * speed.forward },
+        { x: jitter() * 3, y: jitter() * 2, z: jitter() * 3 });
+      if (this.targetLane && this.targetGame.throwFrom(this.controller.position, this.targetLane)) {
+        this.countedThrows.add(pumpkin);
+        this.reportTargets();
+      }
+      return;
+    }
     const laptop = this.physics.throwLaptop(
       { position: pose.position, quaternion: pose.quaternion },
       { x: forward.x * speed.forward, y: speed.up, z: forward.z * speed.forward },
@@ -1522,6 +1585,7 @@ export class CharacterViewer {
     this.host.dataset.locomotion = 'idle';
     this.physics?.reset();
     this.chickRain?.clear();
+    this.candyBurst?.clear();
     this.pieces?.reset();
     this.syncFlaps(true);
     this.targetGame.reset();
@@ -1593,7 +1657,8 @@ export class CharacterViewer {
     this.chairSpot = { seat: 'office', approaches: [], stand: { x: 0, z: 0 }, yaw };
     this.lap = { best: readBestLap() };
     this.interaction.setSeat(this.chairSpot);
-    this.spray = new SodaSpray();
+    if (this.dress?.cauldron) this.dressChair(rig, rider, offset, this.dress.cauldron);
+    this.spray = new SodaSpray(this.cauldron ? BREW : SODA);
     this.spray.density = this.nitroDensity();
     this.scene.add(this.spray.mesh);
     for (const bottle of rig.bottles) {
@@ -1606,6 +1671,83 @@ export class CharacterViewer {
       this.lines = { start, finish };
     }
     this.poseChair();
+  }
+
+  /**
+   * Halloween: the office chair becomes a black cauldron with a glowing green brew. The chair's parts stay as the pivots
+   * (the cauldron hangs from its upper part, so it sways the same) but are not drawn; the test tubes on its sides take
+   * the soda bottles' place for the nitro and its rim the arm pads' for the hands. It is got into and out of in a blink
+   * (the sitting clips would show the legs going over the rim), and the rider shows only above the brew.
+   */
+  private dressChair(rig: ChairRig, rider: Group, offset: number, cauldron: Object3D): void {
+    rig.root.traverse((object) => {
+      if (object instanceof Mesh) object.visible = false;
+    });
+    cauldron.removeFromParent();
+    // Its middle RIDER_BACK ahead of the rider's hips (the seated clip puts them stand_offset behind its origin), on the
+    // ground, facing ahead.
+    cauldron.position.set(rider.position.x, rider.position.y, rider.position.z - offset + RIDER_BACK);
+    cauldron.quaternion.copy(rider.quaternion);
+    rig.upper.add(cauldron);
+    cauldron.traverse((object) => {
+      if (!(object instanceof Mesh)) return;
+      object.castShadow = !/Tube|Brew/.test(object.name);
+      object.receiveShadow = true;
+    });
+    rig.bottles.length = 0;
+    for (const side of ['right', 'left'] as const) {
+      const nozzle = cauldron.getObjectByName(`CauldronNozzle_${side}`);
+      if (nozzle) rig.bottles.push({ side, nozzle, liquid: cauldron.getObjectByName(`CauldronTubeLiquid_${side}`), cap: cauldron.getObjectByName(`CauldronTubeCork_${side}`) });
+      const grip = cauldron.getObjectByName(`CauldronGrip_${side}`);
+      if (grip) rig.armrests[side] = grip;
+    }
+    this.cauldron = cauldron;
+    this.chairBlockHalf = 0.5;
+    this.chairPushReach = CHARACTER_RADIUS + 0.22;
+    if (this.renderer) this.renderer.localClippingEnabled = true;
+    this.interaction!.instant.add('office');
+    this.interaction!.onInstant = this.onCauldron;
+    this.host.dataset.cauldron = 'ready';
+  }
+
+  /** The character popped into the cauldron or out of it: a splash of brew and its blurp, no clips. */
+  private readonly onCauldron = (inside: boolean): void => {
+    const interaction = this.interaction;
+    if (!interaction || !this.controller) return;
+    this.driving = false;
+    this.controller.speed = 0;
+    if (!this.playing) this.setPlaying(true);
+    if (inside) {
+      if (this.actions.has(interaction.state.clip)) this.selectClip(interaction.state.clip, true);
+    } else {
+      // Standing next to it at once: the keys move the character from there.
+      this.controller.position = { ...interaction.position };
+      this.controller.yaw = interaction.yaw;
+      if (this.actions.has('idle')) this.selectClip('idle');
+      this.elevation = groundAt(interaction.position, this.outsideData!);
+      this.applyController();
+      this.host.dataset.locomotion = 'idle';
+    }
+    this.sound('bubble');
+    const rig = this.circuit?.chair;
+    if (rig && this.spray && !this.reducedMotion) {
+      // A splash of brew out of the cauldron: a short burst from the rim, upwards.
+      const top = this.cauldron!.localToWorld(new Vector3(0, this.dress!.brew.height + 0.05, 0));
+      this.spray.emit([top], new Vector3(0, 1, 0), new Vector3(), 0.05, true);
+    }
+    this.host.dataset.cauldron = inside ? 'inside' : 'ready';
+  };
+
+  /** The rider's materials are cut at the brew's plane (renderer clipping, set once before the shaders compile). */
+  private clipRider(): void {
+    if (!this.cauldron || !this.model) return;
+    this.model.traverse((object) => {
+      if (!(object instanceof Mesh)) return;
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+        material.clippingPlanes = [this.brewPlane];
+        material.clipShadows = true;
+      }
+    });
   }
 
   /** Put the chair's parts where its state says, and keep its seat spot and the rider's stand point up to date. */
@@ -1622,6 +1764,14 @@ export class CharacterViewer {
     if (this.shadows && this.chairShadow >= 0) {
       const lift = Math.min(state.y, 1.5);
       this.shadows.set(this.chairShadow, state.x, state.z, state.yaw, 1.2 - lift * 0.3, 1.2 - lift * 0.3, 0.5 * (1 - lift * 0.4));
+    }
+    if (this.cauldron) {
+      // Only the trunk and head show out of the brew; nothing is cut while nobody rides.
+      if (this.riding) {
+        const surface = this.cauldron.localToWorld(new Vector3(0, this.dress!.brew.height, 0));
+        const up = new Vector3(0, 1, 0).applyQuaternion(this.cauldron.getWorldQuaternion(new Quaternion()));
+        this.brewPlane.setFromNormalAndCoplanarPoint(up, surface);
+      } else this.brewPlane.set(new Vector3(0, 1, 0), 1e4);
     }
     const rider = this.chairRider;
     const spot = this.chairSpot;
@@ -1669,7 +1819,7 @@ export class CharacterViewer {
       const from = this.chairPushFrom;
       // A jump in place (reset, recording placement) is no push.
       if (!riding && here && from && delta > 0 && Math.hypot(here.x - from.x, here.z - from.z) < 0.5) {
-        const pushed = pushChair(state, { ...here, vx: (here.x - from.x) / delta, vz: (here.z - from.z) / delta, radius: CHARACTER_RADIUS });
+        const pushed = pushChair(state, { ...here, vx: (here.x - from.x) / delta, vz: (here.z - from.z) / delta, radius: this.chairPushReach });
         if (pushed > 1.5) this.sound('crash', pushed * 0.5, state);
       }
       this.chairPushFrom = here;
@@ -1754,7 +1904,7 @@ export class CharacterViewer {
     const phase = this.interaction?.phase;
     const solid = state && !riding && !state.airborne && (phase === 'free' || phase === 'approaching');
     const block = this.chairBlock;
-    const half = PUSH.block;
+    const half = this.chairBlockHalf;
     block.minX = solid ? state.x - half : 1e6;
     block.maxX = solid ? state.x + half : 1e6;
     block.minZ = solid ? state.z - half : 1e6;
@@ -2005,7 +2155,7 @@ export class CharacterViewer {
     this.targetsView?.paint();
     this.bubble?.setLanguage();
     const shouting = this.shout?.current as ShoutId | undefined;
-    if (shouting) this.shout?.setWords(t(`shout.${shouting}`));
+    if (shouting) this.shout?.setWords(this.shoutWords(shouting));
     this.notice = { text: '', until: 0 };
     if (this.sign) this.emitSign();
   };
@@ -2057,6 +2207,14 @@ export class CharacterViewer {
       this.chickRain.update(delta, this.physics);
       const chicks = String(this.chickRain.count);
       if (this.host.dataset.chicks !== chicks) this.host.dataset.chicks = chicks;
+    }
+    if (this.sky && this.model) this.sky.update(delta, { x: this.model.position.x, z: this.model.position.z }, this.reducedMotion);
+    if (this.candyBurst && this.physics) {
+      this.candyBurst.update(delta, this.physics, this.reducedMotion);
+      const candies = String(this.candyBurst.candies);
+      if (this.host.dataset.candies !== candies) this.host.dataset.candies = candies;
+      const smashed = String(this.candyBurst.smashes);
+      if (this.host.dataset.smashed !== smashed) this.host.dataset.smashed = smashed;
     }
     if (this.elevation < -1e-3 || groundAt({ x, z }, this.outsideData) < 0) {
       const fade = 1 - lift / 0.8;
@@ -2164,7 +2322,12 @@ export class CharacterViewer {
     if (id !== this.shout.current) this.sound('pop');
     const point = this.model.position.clone().setY(this.model.position.y + BUBBLE_HEIGHT).project(this.view);
     const lift = this.host.dataset.bubble === 'shown' ? 44 : 0;
-    this.shout.update(id, t(`shout.${id}`, { years: String(experienceYears()) }), (point.x + 1) / 2 * this.host.clientWidth, (1 - point.y) / 2 * this.host.clientHeight - lift);
+    this.shout.update(id, this.shoutWords(id), (point.x + 1) / 2 * this.host.clientWidth, (1 - point.y) / 2 * this.host.clientHeight - lift);
+  }
+
+  /** What the character shouts at a landmark, in the current language (the bust greets differently on Halloween). */
+  private shoutWords(id: ShoutId): string {
+    return t(id === 'bust' && this.halloween ? 'shout.bustHalloween' : `shout.${id}`, { years: String(experienceYears()) });
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
@@ -2395,6 +2558,16 @@ export class CharacterViewer {
       this.ambient.color.set(violet ? 0x7a5cc4 : 0xf2edff);
       this.ambient.intensity = violet ? 0.45 : 1.2;
       this.ground?.setLight(violet);
+      if (this.halloween) {
+        // Halloween's moonlit night: a cold blue moon, violet fill and a dim sky; the carved faces and the brew glow.
+        this.key.color.set(0xaab8ff);
+        this.key.intensity = 1.25;
+        this.fill.color.set(0x7a55d8);
+        this.fill.intensity = 0.65;
+        this.ambient.color.set(0x7262b0);
+        this.ambient.intensity = 0.75;
+        this.ground?.setNight();
+      }
       this.host.dataset.light = preset;
       return;
     }
@@ -2779,6 +2952,8 @@ export class CharacterViewer {
     this.chargeMeter?.dispose();
     this.clearThrown();
     this.chickRain?.dispose();
+    this.candyBurst?.dispose();
+    this.sky?.dispose();
     this.ground?.dispose();
     this.shadows?.dispose();
     this.pieces?.dispose();

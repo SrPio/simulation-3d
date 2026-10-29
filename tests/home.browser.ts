@@ -30,7 +30,8 @@ async function start(page: Page) {
 }
 
 async function ready(page: Page) {
-  await page.goto(baseURL);
+  // The page dresses up for Halloween by the date: these tests check the everyday world (halloween=0).
+  await page.goto(new URL('?halloween=0', baseURL).href);
   await start(page);
   await expect(page.locator('#viewer-overlay')).toBeHidden();
   await expect(host(page)).toHaveAttribute('data-movement', 'ready');
@@ -500,4 +501,34 @@ test('the root works on a phone-sized viewport without horizontal scrolling', as
     assert.ok(box.x >= 0 && box.x + box.width <= 390, `${name} inside the screen`);
   }
   await page.screenshot({ path: shot('home-mobile.png') });
+});
+
+test('?halloween=1 dresses the room page up: its own model, the mask, the cauldron, the pumpkin throw and the tube gauge', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, ...spanish });
+  t.after(() => page.close());
+  const errors: string[] = [];
+  const models: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.endsWith('.glb')) models.push(url.pathname.split('/').at(-1)!);
+  });
+  await page.goto(new URL('?halloween=1', baseURL).href);
+  await start(page);
+  assert.ok(models.includes('halloween.glb'), 'halloween.glb is fetched');
+  await expect(page.locator('html')).toHaveAttribute('data-halloween', 'on');
+  await expect(host(page)).toHaveAttribute('data-halloween', 'on');
+  await expect(host(page)).toHaveAttribute('data-mask', 'on');
+  await expect(host(page)).toHaveAttribute('data-cauldron', 'ready');
+  await expect(page.locator('.nitro-gauge')).toHaveAttribute('data-vessel', 'tube');
+  await expect.poll(async () => (await host(page).getAttribute('data-graffiti')) ?? '').toContain('ground-halloween');
+  await expect(host(page)).toHaveAttribute('data-physics', 'ready', { timeout: 10000 });
+  // F throws a pumpkin that bursts into candies.
+  await page.keyboard.down('KeyF');
+  await page.waitForTimeout(300);
+  await page.keyboard.up('KeyF');
+  await expect.poll(async () => Number(await host(page).getAttribute('data-smashed') ?? 0), { timeout: 6000 }).toBeGreaterThan(0);
+  await expect.poll(async () => Number(await host(page).getAttribute('data-candies') ?? 0)).toBeGreaterThan(0);
+  await page.screenshot({ path: shot('home-halloween.png') });
+  assert.deepEqual(errors, []);
 });

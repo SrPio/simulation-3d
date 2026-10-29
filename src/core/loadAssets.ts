@@ -100,6 +100,7 @@ export const EXPECTED_BYTES: Record<string, number> = {
   'models/boxing.glb': 155_000,
   'models/univalle.glb': 29_000,
   'models/experience.glb': 25_000,
+  'models/halloween.glb': 750_000,
 };
 
 export async function loadCharacter(modelId: ModelVersionId, signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
@@ -158,6 +159,16 @@ export const experienceFile = 'models/experience.glb';
 /** The about-me plaza's years-of-experience pedestal (the cube over it is built by the viewer), read together with the outside. Failures count as room failures. */
 export function loadExperience(signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
   return loadGlb(experienceFile, 'ROOM', signal, progress);
+}
+
+export const halloweenFile = 'models/halloween.glb';
+
+/**
+ * The Halloween dress-up (src/core/halloween.ts): its pumpkins, spiders, graves and cobwebs are read with the outside;
+ * the hockey mask, the cauldron and the dressed pieces are taken out by the viewer. Only fetched while it is on.
+ */
+export function loadHalloween(signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
+  return loadGlb(halloweenFile, 'ROOM', signal, progress);
 }
 
 export const chickFile = 'models/chick.glb';

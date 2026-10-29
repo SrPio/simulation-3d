@@ -108,6 +108,15 @@ export class InfiniteFloor {
     (this.mesh.material.uniforms.uTopLeft.value as Color).set(violet ? 0x2f2340 : 0x2c2337);
   }
 
+  /** Halloween's moonlit night: the ground's gradient darker and colder, its dots fainter. */
+  setNight(): void {
+    const uniforms = this.mesh.material.uniforms;
+    (uniforms.uBottomLeft.value as Color).set(0x08070d);
+    (uniforms.uBottomRight.value as Color).set(0x0e0b16);
+    (uniforms.uTopLeft.value as Color).set(0x1a1430);
+    (uniforms.uTopRight.value as Color).set(0x120e1f);
+  }
+
   dispose(): void {
     this.mesh.geometry.dispose();
     this.mesh.material.dispose();

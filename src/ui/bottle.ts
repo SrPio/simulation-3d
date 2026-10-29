@@ -8,15 +8,26 @@ export const BOTTLE_PROFILE: readonly (readonly [number, number])[] = [
   [0.62, 0.129], [0.7, 0.111], [0.78, 0.08], [0.86, 0.063], [0.92, 0.06], [0.935, 0.07], [1.0, 0.046], [1.0, 0.0],
 ];
 
+/**
+ * Halloween: the cauldron's test tube (TUBE in scripts/blender/create_halloween.py) as the same kind of half outline: a
+ * rounded bottom, straight sides and a flared lip at the mouth.
+ */
+export const TUBE_PROFILE: readonly (readonly [number, number])[] = [
+  [0.0, 0.0], [0.012, 0.045], [0.035, 0.075], [0.07, 0.09], [0.93, 0.09], [0.955, 0.106], [1.0, 0.106], [1.0, 0.0],
+];
+
+/** What the gauge is drawn as: the chair's soda bottle, or the cauldron's test tube for Halloween. */
+export type Vessel = 'bottle' | 'tube';
+
 /** Silhouette units per bottle length: the base sits at y = BOTTLE_UNITS and the mouth at y = 0 (SVG y points down). */
 export const BOTTLE_UNITS = 100;
 
 /** How high a full tank fills the bottle (a fraction of its length): into the neck, as a new soda. */
 export const BOTTLE_FULL = 0.9;
 
-/** The closed SVG path of the bottle standing up: up the right side from the base, across the mouth, down the left. */
-export function bottlePath(): string {
-  const side = BOTTLE_PROFILE.filter(([, r]) => r > 0).map(([h, r]) => [r * BOTTLE_UNITS, (1 - h) * BOTTLE_UNITS] as const);
+/** The closed SVG path of the bottle (or tube) standing up: up the right side from the base, across the mouth, down the left. */
+export function bottlePath(vessel: Vessel = 'bottle'): string {
+  const side = (vessel === 'tube' ? TUBE_PROFILE : BOTTLE_PROFILE).filter(([, r]) => r > 0).map(([h, r]) => [r * BOTTLE_UNITS, (1 - h) * BOTTLE_UNITS] as const);
   const right = side.map(([x, y]) => `${fixed(x)} ${fixed(y)}`);
   const left = [...side].reverse().map(([x, y]) => `${fixed(-x)} ${fixed(y)}`);
   return `M0 ${BOTTLE_UNITS} L${right.join(' L')} L${left.join(' L')} Z`;
