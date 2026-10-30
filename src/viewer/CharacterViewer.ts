@@ -61,6 +61,8 @@ import { CandyBurst } from '../scene/CandyBurst.ts';
 import { HalloweenSky } from '../scene/HalloweenSky.ts';
 import type { Box2 } from '../world/collisions.ts';
 import { fontsReady } from '../core/fonts.ts';
+import { LIKE_KEY, LikeKey } from '../scene/LikeKey.ts';
+import type { LikeCounter } from '../core/likes.ts';
 
 export type ViewPreset = 'front' | 'left' | 'right' | 'back' | 'three-quarter';
 export type LightPreset = 'neutral' | 'violet';
@@ -104,7 +106,12 @@ type ViewerOptions = {
    * pins, the eye ball, dark bricks, Halloween graffiti, a moonlit night with bats and ghosts.
    */
   halloween?: boolean;
+  /** Room only: the shared like counter, shown on the like key on the ground (stepping on it likes the project). */
+  likes?: LikeCounter;
 };
+
+/** Where the like key stands on the outside ground (three.js x, z), past the end of the intro sentence. */
+export const LIKE_SPOT = { x: 17.4, z: -1.3 };
 
 // Isometric diorama: the camera stays on the open side of the two room walls.
 const ROOM_AZIMUTH = [0.14, Math.PI / 2 - 0.14] as const;
@@ -247,6 +254,9 @@ export class CharacterViewer {
   /** The arrow keys of the intro: fixed on the floor, they sink while the character stands on them. */
   private floorKeys: { index: number; name: string; piece: Piece; area: FloorKey; depth: number }[] = [];
   private pressedKeys = '';
+  /** The like key: how far it is pressed, and whether this press already liked. */
+  private likeKey?: { view: LikeKey; depth: number; counted: boolean };
+  private likeShadow = -1;
   private floorTexts?: FloorTexts;
   private signpost?: Signpost;
   /** Blob shadows of things that never move (the character's, the signs', the lamppost's), before the pieces' ones. */
@@ -607,7 +617,7 @@ export class CharacterViewer {
       this.scene.add(this.model);
       if (this.room) this.scene.add(this.room);
       if (this.outside) this.scene.add(this.outside);
-      for (const object of [this.bags.length ? this.bagRoot : undefined, this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.rubik?.root, this.targetsView?.root, this.circuit?.root, this.graffiti?.root, this.candyBurst?.root, this.sky?.root]) if (object) this.scene.add(object);
+      for (const object of [this.bags.length ? this.bagRoot : undefined, this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.rubik?.root, this.targetsView?.root, this.circuit?.root, this.graffiti?.root, this.candyBurst?.root, this.sky?.root, this.likeKey?.view.root]) if (object) this.scene.add(object);
       if (!this.ground) this.createFloor(this.mixer ? 0 : box.min.y);
       this.frameLights();
       this.cameraDistance = Math.max(this.bounds.length() * 2.5, 1);
@@ -879,7 +889,9 @@ export class CharacterViewer {
     this.chairShadow = pieceShadows + this.pieceList.length + THROWN_SHADOWS;
     // Then one slot per raining chick, then one per punching bag.
     this.bagShadow = this.chairShadow + 1 + MAX_CHICKS;
-    this.shadows = new BlobShadows(this.bagShadow + this.bags.length, data.groundY);
+    // And the like key's last.
+    this.likeShadow = this.options.likes ? this.bagShadow + this.bags.length : -1;
+    this.shadows = new BlobShadows(this.bagShadow + this.bags.length + (this.options.likes ? 1 : 0), data.groundY);
     for (const [index, sign] of data.signs.entries()) {
       this.shadows.set(1 + index, sign.position.x, sign.position.z, sign.yaw, (sign.board?.width ?? 2) + 0.5, 0.55, 0.45);
     }
@@ -917,6 +929,19 @@ export class CharacterViewer {
     this.areas = new SignAreas(this.zones, data.groundY);
     this.areas.setOpenKey(this.openKeyLabel);
     this.areas.setReducedMotion(this.reducedMotion);
+    if (this.options.likes) {
+      const counter = this.options.likes;
+      const view = new LikeKey(LIKE_SPOT, data.groundY);
+      this.likeKey = { view, depth: 0, counted: false };
+      this.shadows.set(this.likeShadow, LIKE_SPOT.x, LIKE_SPOT.z, 0, LIKE_KEY.size + 0.35, LIKE_KEY.size + 0.35, 0.45);
+      const show = () => {
+        view.setCount(counter.likes, counter.liked);
+        this.host.dataset.likes = counter.likes === undefined ? 'none' : String(counter.likes);
+        this.host.dataset.liked = String(counter.liked);
+      };
+      counter.onChange = show;
+      show();
+    }
     this.floorTexts = new FloorTexts(this.options.touch ? data.floors.filter((floor) => floor.id !== 'controls') : data.floors, data.groundY, !!this.options.touch);
     await breathe();
     this.about = new AboutPlaza(data.plaques);
@@ -964,6 +989,10 @@ export class CharacterViewer {
     for (const key of this.floorKeys) {
       const { position, half } = key.piece;
       statics.push({ center: { x: position.x, y: position.y, z: position.z }, half, yaw: key.area.yaw });
+    }
+    if (this.likeKey) {
+      const { x, z } = LIKE_SPOT;
+      statics.push({ center: { x, y: groundY + LIKE_KEY.height / 2, z }, half: [LIKE_KEY.size / 2, LIKE_KEY.height / 2, LIKE_KEY.size / 2], yaw: 0 });
     }
     for (const sign of data.signs) {
       if (!sign.board) continue;
@@ -2153,6 +2182,7 @@ export class CharacterViewer {
     this.about?.paint();
     this.graffiti?.setLanguage(getLanguage());
     this.targetsView?.paint();
+    this.likeKey?.view.paint();
     this.bubble?.setLanguage();
     const shouting = this.shout?.current as ShoutId | undefined;
     if (shouting) this.shout?.setWords(this.shoutWords(shouting));
@@ -2280,6 +2310,38 @@ export class CharacterViewer {
       this.pressedKeys = value;
       this.host.dataset.keys = value;
     }
+  }
+
+  /**
+   * The like key sinks under the character's feet like the floor keys; pressed all the way, it likes the project
+   * once per press (the counter itself allows one like a day). Not before START.
+   */
+  private updateLikeKey(delta: number): void {
+    const key = this.likeKey;
+    const counter = this.options.likes;
+    if (!key || !counter || !this.model) return;
+    key.view.update(delta);
+    const feet = { x: this.model.position.x, z: this.model.position.z };
+    const down = !this.controller?.airborne && onKey(feet, key.view.area, FOOT_RADIUS);
+    const depth = pressStep(key.depth, down, delta, this.reducedMotion);
+    if (depth !== key.depth) {
+      if (key.depth === 0 && depth > 0) this.sound('floorKey');
+      key.depth = depth;
+      key.view.setSink(KEY_SINK * depth);
+    }
+    if (!down) key.counted = false;
+    else if (!key.counted && depth > 0.9 && this.keyboard?.enabled) {
+      key.counted = true;
+      if (!counter.liked) {
+        void counter.like().then((counted) => {
+          if (!counted || this.disposed) return;
+          key.view.burst(this.reducedMotion);
+          this.sound('pop');
+        });
+      }
+    }
+    const pressed = down ? 'down' : 'up';
+    if (this.host.dataset.likeKey !== pressed) this.host.dataset.likeKey = pressed;
   }
 
   /** Toppled name letters and bowling pins (data-letters, data-pins). */
@@ -2821,6 +2883,7 @@ export class CharacterViewer {
       this.updateElevation(delta);
       this.updateOutside(delta);
       this.updateKeys(delta);
+      this.updateLikeKey(delta);
       this.checkSign();
     }
     if (this.ready && this.mixer && this.playing) {
@@ -2945,6 +3008,8 @@ export class CharacterViewer {
     this.signpost?.dispose();
     this.about?.dispose();
     this.rubik?.dispose();
+    this.likeKey?.view.dispose();
+    if (this.options.likes) this.options.likes.onChange = undefined;
     this.graffiti?.dispose();
     this.targetsView?.dispose();
     this.bubble?.dispose();

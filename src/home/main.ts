@@ -12,6 +12,7 @@ import { setupCineMode } from './cineMode.ts';
 import { GamepadInput, type PadKind } from '../input/GamepadInput.ts';
 import { Sounds } from '../audio/Sounds.ts';
 import { halloweenMode } from '../core/halloween.ts';
+import { LikeCounter } from '../core/likes.ts';
 import { CharacterViewer, type CameraMode, type LightPreset, type MovementState, type ViewerStatus } from '../viewer/CharacterViewer';
 
 const app = document.querySelector<HTMLDivElement>('#app');
@@ -151,6 +152,9 @@ const motionReduced = () => preferences.reducedMotion ?? false;
 
 /** Sound effects start with START (browsers only allow audio after a gesture); M or the menu switch mutes them. */
 const sounds = new Sounds({ muted: !preferences.sound, base: import.meta.env.BASE_URL });
+// The shared like counter (api/likes.ts on Vercel, an in-memory stand-in on the local servers).
+const likes = new LikeCounter({ url: `${import.meta.env.BASE_URL}api/likes`, storage });
+likes.start();
 
 const touchControls = new TouchControls(app.querySelector<HTMLDivElement>('.room-page')!, host, () => viewer?.input);
 // Halloween: the gauge is the cauldron's test tube instead of the soda bottle.
@@ -279,7 +283,7 @@ function mount(): void {
     run: (on) => { if (live()) touchControls.setRunning(on); },
   }, {
     modelId: 'v4rig', view: 'three-quarter', light: LIGHT, wireframe: false, scene: 'room',
-    quality: preferences.quality, reducedMotion: motionReduced(), cameraMode: camera, spawn: SPAWN, sounds, touch, halloween,
+    quality: preferences.quality, reducedMotion: motionReduced(), cameraMode: camera, spawn: SPAWN, sounds, touch, halloween, likes,
   });
   viewer.setInputEnabled(started);
   const mode = inputMode;
