@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { Texture, Vector3 } from 'three';
+import { Texture, Vector3, type Mesh, type MeshStandardMaterial, type Object3D } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as cannon from 'cannon-es';
-import { BREAK_SPEED, PropPhysics } from '../src/world/PropPhysics.ts';
+import { BREAK_SPEED, PropPhysics, type StaticBox } from '../src/world/PropPhysics.ts';
 import { groundAt, rampHeight, readOutside, type OutsideData } from '../src/scene/outsideData.ts';
 import { chairAt, driveStep, forwardSpeed, NITRO, PUSH, pushChair, strikeChair, SWAY, type DriveInput, type DriveWorld } from '../src/world/chairDrive.ts';
 import { sweep, type Box2 } from '../src/world/collisions.ts';
@@ -41,7 +41,7 @@ function distanceToRoad(point: { x: number; z: number }, road: { x: number; z: n
 
 test('circuit.glb holds the circuit things, light enough, all by the road and turned in quarter turns', async () => {
   const { bytes } = await parse('circuit');
-  assert.ok(bytes < 300_000, `circuit.glb ${bytes} bytes`);
+  assert.ok(bytes < 340_000, `circuit.glb ${bytes} bytes`);
   const data = await world();
   const road = data.floors.find((floor) => floor.id === 'circuit')!;
   assert.equal(road.gap, 5);
@@ -52,7 +52,7 @@ test('circuit.glb holds the circuit things, light enough, all by the road and tu
     [10, 12, 13, 6, 2, 1, 12, 18, 4, 12, 6, 1],
   );
   const decor = (kind: string) => data.decor.filter((item) => item.kind === kind).length;
-  assert.deepEqual(['ramp', 'jersey', 'sandbags', 'tyres', 'arch', 'light', 'lapboard'].map(decor), [8, 6, 2, 4, 2, 1, 1]);
+  assert.deepEqual(['ramp', 'jersey', 'sandbags', 'sack', 'tyres', 'arch', 'light', 'lapboard'].map(decor), [8, 6, 2, 2, 16, 2, 1, 1]);
   assert.equal(data.ramps.length, 8);
   assert.equal(data.tapes.length, 4);
   assert.ok(data.chair && data.lapBoard && data.trafficLight, 'chair, lap board and traffic light');
@@ -221,6 +221,77 @@ test('the chair standing free is pushed out of the way by the character, rolling
   assert.ok(kicked.vx > 4 && Math.abs(kicked.vz) < 1e-9);
   assert.ok(!strikeChair(chairAt(0, 0, 0), { x: -2, y: 0.3, z: 0 }, { x: 1, z: 0 }, 1));
   assert.ok(!strikeChair(chairAt(0, 0, 0), { x: -0.6, y: 2, z: 0 }, { x: 1, z: 0 }, 1));
+});
+
+test('tyre walls follow the road, no two tyres start inside each other, the loose ones lie still and settle apart when knocked', async () => {
+  const data = await world();
+  const tyres = data.props.filter((piece) => piece.prop === 'tyre');
+  const walls = data.decor.filter((item) => item.kind === 'tyres');
+  assert.equal(tyres.length, 12);
+  // Each tyre on the ground is a decor holding the shared tyre mesh (textured with the tread), four to a wall.
+  const circuit = (await parse('circuit')).gltf.scene;
+  circuit.updateMatrixWorld(true);
+  // A tyre is two primitives (textured rubber, lettering): the loader makes a group of meshes sharing their geometry.
+  const meshes = (object: Object3D) => {
+    const found: Mesh[] = [];
+    object.traverse((child) => { if ((child as Mesh).isMesh) found.push(child as Mesh); });
+    return found;
+  };
+  const loose = meshes(circuit.getObjectByName(tyres[0].name)!);
+  const shape = loose.map((part) => part.geometry);
+  assert.ok(loose.some((part) => part.geometry.getAttribute('uv') && (part.material as MeshStandardMaterial).map), 'the tread is a texture');
+  assert.equal(walls.length, 16);
+  const grounded = walls.map((wall) => {
+    const children = circuit.getObjectByName(wall.name)!.children;
+    assert.equal(children.length, 1, wall.name);
+    assert.deepEqual(meshes(children[0]).map((part) => part.geometry), shape, `${wall.name} shares the tyre`);
+    return { name: wall.name, position: children[0].getWorldPosition(new Vector3()) };
+  });
+  const radius = tyres[0].half[0];
+  const all = [...grounded, ...tyres.map((tyre) => ({ name: tyre.name, position: tyre.position }))];
+  for (const [a, b] of all.flatMap((tyre, i) => all.slice(i + 1).map((other) => [tyre, other]))) {
+    if (Math.abs(a.position.y - b.position.y) > 0.1) continue;
+    assert.ok(Math.hypot(a.position.x - b.position.x, a.position.z - b.position.z) > 2 * radius - 0.02, `${a.name} and ${b.name} apart`);
+  }
+  // Each wall keeps its distance from the road's middle line along its length: it bends with the road.
+  const road = data.floors.find((floor) => floor.id === 'circuit')!;
+  for (let w = 0; w < 4; w++) {
+    const distances = walls.slice(w * 4, w * 4 + 4).map((wall) => distanceToRoad(wall.position, road.targets));
+    assert.ok(Math.max(...distances) - Math.min(...distances) < 0.1, `wall ${w} follows the road: ${distances.map((d) => d.toFixed(2)).join(' ')}`);
+  }
+  // The walls as the viewer makes them (decor `solid` boxes). Waking every tyre must not move it: they used to start
+  // inside each other, and some fell through walls whose bounds the physics had worked out at the origin.
+  const statics: StaticBox[] = walls.map((item) => {
+    const [w, h, d] = item.solid!;
+    return { center: { x: item.position.x, y: item.position.y + h / 2, z: item.position.z }, half: [w / 2, h / 2, d / 2], yaw: item.yaw };
+  });
+  const physics = new PropPhysics(cannon, tyres, statics, data.groundY);
+  for (const body of physics.bodies) body.wakeUp();
+  for (let i = 0; i < 120; i++) physics.step(1 / 60, { x: tyres[1].position.x + 1.5, y: data.groundY, z: tyres[1].position.z + 1.5 });
+  for (const [index, body] of physics.bodies.entries()) {
+    const rest = tyres[index].position;
+    assert.ok(Math.hypot(body.position.x - rest.x, body.position.y - rest.y, body.position.z - rest.z) < 0.01, `${tyres[index].name} stays on its wall`);
+  }
+  // A hard knock along the wall: they bump and come to rest touching, not inside each other.
+  const [a, b, c] = physics.bodies;
+  const along = b.position.vsub(a.position);
+  along.normalize();
+  a.velocity.copy(along.scale(4));
+  for (let i = 0; i < 300; i++) physics.step(1 / 60, { x: b.position.x + 1.5, y: data.groundY, z: b.position.z + 1.5 });
+  for (const [p, q] of [[a, b], [b, c]]) assert.ok(Math.hypot(p.position.x - q.position.x, p.position.z - q.position.z) > 2 * radius - 0.03, 'apart at rest');
+  assert.equal(physics.fallen(), 0);
+});
+
+test('sandbag walls are coffee sacks sharing one mesh and its printed jute texture', async () => {
+  const data = await world();
+  const walls = data.decor.filter((item) => item.kind === 'sandbags');
+  const circuit = (await parse('circuit')).gltf.scene;
+  const sacks = walls.flatMap((wall) => circuit.getObjectByName(wall.name)!.children as Mesh[]);
+  assert.equal(sacks.length, 14);
+  assert.equal(new Set(sacks.map((sack) => sack.geometry)).size, 1);
+  const material = sacks[0].material as MeshStandardMaterial;
+  assert.ok(material.map, 'the print');
+  assert.ok(sacks[0].geometry.getAttribute('uv'), 'UVs for the print');
 });
 
 test('a wooden fence holds together when the character runs into it and breaks into planks when the chair hits it fast', async () => {

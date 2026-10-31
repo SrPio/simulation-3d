@@ -25,3 +25,9 @@ typescript.svg flattened into outlines (used unaltered, only simplified to about
 `scripts/blender/create_boxing.py`, and the Universidad del Valle logo for `scripts/blender/create_univalle.py`. The
 Univalle logo has no file here: its shapes (red disc, white U and V with the red fillet between them) were measured on
 the image the user supplied on 2026-10-10 and are written as numbers in `UNIVALLE` in that script.
+
+## Coffee sacks
+
+`java.png` is the Java cup logo (black on transparent, 800 px) supplied by the user on 2026-10-31. `scripts/coffee_sack.ts`
+sprays it unaltered as a stencil on the coffee sacks of the circuit (`assets/textures/circuit/coffee-sack.png`). The mark
+belongs to its owner.

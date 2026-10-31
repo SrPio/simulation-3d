@@ -9,6 +9,8 @@ type Quat = Vec & { w: number };
 /** A piece at rest: where it stands, the half sizes of its box (width, height, depth) and, optionally, another shape, its mass and group. */
 export type PieceBody = {
   position: Vec; quaternion: Quat; half: [number, number, number]; shape?: PieceShape; mass?: number; group?: PieceGroup;
+  /** What the piece is ('tyre', 'brick', …): tyres are rubber, whatever their group. */
+  prop?: string;
   /** Pieces sharing a joint are locked together until a hard knock breaks them apart (a wooden fence's legs and planks). */
   joint?: string;
   /** A cardboard box's flaps: each hinge on its rim, in the box's own axes (the hinge runs along its local X). */
@@ -131,6 +133,8 @@ const SETTINGS: Record<PieceGroup | 'laptop' | 'chick' | 'candy', Settings> = {
 };
 /** A heavy bag swings a few times and settles: damped enough to stop within seconds, asleep once nearly still. */
 const BAG: Settings = { material: 'bag', sleepSpeed: 0.05, angularDamping: 0.45, linearDamping: 0.5 };
+/** Tyres grip and hardly bounce: a knocked one slides a little and stops instead of skating off the one beside it. */
+const RUBBER: Settings = { material: 'rubber', sleepSpeed: 0.15, angularDamping: 0.5, linearDamping: 0.15 };
 /** The ball rolls: it keeps less damping than the pins but still comes to rest on the flat ground. */
 const BALL: Settings = { material: 'ball', sleepSpeed: 0.12, angularDamping: 0.12, linearDamping: 0.05 };
 const CONTACTS: [string, string, number, number][] = [
@@ -138,6 +142,7 @@ const CONTACTS: [string, string, number, number][] = [
   ['brick', 'ground', 0.7, 0.02], ['brick', 'brick', 0.65, 0.02],
   ['pin', 'ground', 0.3, 0.1], ['pin', 'pin', 0.2, 0.4], ['pin', 'ball', 0.1, 0.55],
   ['ball', 'ground', 0.4, 0.15], ['laptop', 'ground', 0.5, 0.15],
+  ['rubber', 'ground', 0.9, 0.05], ['rubber', 'rubber', 0.9, 0.05], ['rubber', 'brick', 0.8, 0.05],
   // Chicks bounce a little off the ground and off each other.
   ['chick', 'ground', 0.6, 0.35], ['chick', 'chick', 0.4, 0.3],
   // A bag is soft: what hits it hardly bounces.
@@ -206,8 +211,8 @@ export class PropPhysics {
     const { Body, Box, ContactMaterial, Cylinder, Material, Plane, PointToPointConstraint, SAPBroadphase, Sphere, Vec3, World } = cannon;
     this.cannon = cannon;
     // Copied field by field: three.js vectors and quaternions keep their values in accessors.
-    this.rest = pieces.map(({ position: p, quaternion: q, half, shape, mass, group, flaps, joint }) => ({
-      position: { x: p.x, y: p.y, z: p.z }, quaternion: { x: q.x, y: q.y, z: q.z, w: q.w }, half, shape, mass, group, joint,
+    this.rest = pieces.map(({ position: p, quaternion: q, half, shape, mass, group, flaps, joint, prop }) => ({
+      position: { x: p.x, y: p.y, z: p.z }, quaternion: { x: q.x, y: q.y, z: q.z, w: q.w }, half, shape, mass, group, joint, prop,
       flaps: flaps?.map(({ position: h, quaternion: r }) => ({ position: { x: h.x, y: h.y, z: h.z }, quaternion: { x: r.x, y: r.y, z: r.z, w: r.w } })),
     }));
     this.groups = this.rest.map((piece) => piece.group ?? 'name');
@@ -217,7 +222,7 @@ export class PropPhysics {
     this.world.broadphase = new SAPBroadphase(this.world);
     // More solver passes: thin pieces resting on an edge and stacked bricks settle and sleep instead of rocking forever.
     (this.world.solver as unknown as { iterations: number }).iterations = 20;
-    for (const name of ['ground', 'letter', 'brick', 'pin', 'ball', 'laptop', 'chick', 'bag', 'pumpkin', 'candy']) this.materials.set(name, new Material(name));
+    for (const name of ['ground', 'letter', 'brick', 'pin', 'ball', 'laptop', 'chick', 'bag', 'pumpkin', 'candy', 'rubber']) this.materials.set(name, new Material(name));
     this.world.defaultContactMaterial.friction = 0.4;
     this.world.defaultContactMaterial.restitution = 0.1;
     for (const [a, b, friction, restitution] of CONTACTS) {
@@ -262,12 +267,13 @@ export class PropPhysics {
     }
     for (const piece of this.rest) {
       const shape = piece.shape ?? { kind: 'box' };
-      const settings = shape.kind === 'sphere' ? BALL : SETTINGS[piece.group ?? 'name'];
+      const settings = shape.kind === 'sphere' ? BALL : piece.prop === 'tyre' ? RUBBER : SETTINGS[piece.group ?? 'name'];
       const body = new Body({ mass: piece.mass ?? LETTER_MASS, material: this.materials.get(settings.material) });
       if (shape.kind === 'sphere') body.addShape(new Sphere(shape.radius));
       else if (shape.kind === 'cylinders') {
-        // cannon-es cylinders stand along +Y like the pins.
-        for (const part of shape.cylinders) body.addShape(new Cylinder(part.radius, part.radius, part.height, 10), new Vec3(0, part.y, 0));
+        // cannon-es cylinders stand along +Y like the pins; wide ones (tyres, pipes) get more sides, so the polygon is
+        // not much smaller than the round mesh and two side by side do not look as if they sank into each other.
+        for (const part of shape.cylinders) body.addShape(new Cylinder(part.radius, part.radius, part.height, part.radius > 0.3 ? 16 : 10), new Vec3(0, part.y, 0));
       } else body.addShape(new Box(new Vec3(...piece.half)));
       this.configure(body, settings);
       body.collisionFilterGroup = GROUP.piece;
@@ -321,6 +327,10 @@ export class PropPhysics {
     this.world.addEventListener('postStep', this.breakJoints);
     this.world.addEventListener('postStep', this.swingOnly);
     this.world.addEventListener('preStep', this.leanOnBags);
+    // A body works out its bounds when its shape is added, at the origin, and a static or sleeping one never again: the
+    // sweep-and-prune list would sort it there and stop looking before the pieces that touch it (a tyre woken on its
+    // wall fell straight through it). Bounds are worked out again wherever something is put in place.
+    for (const body of this.world.bodies) body.aabbNeedsUpdate = true;
     this.reset();
   }
 
@@ -453,6 +463,7 @@ export class PropPhysics {
     flap.body.quaternion.copy(orientation);
     flap.body.velocity.setZero();
     flap.body.angularVelocity.setZero();
+    flap.body.aabbNeedsUpdate = true;
     flap.body.sleep();
   }
 
@@ -537,6 +548,7 @@ export class PropPhysics {
     body.quaternion.set(rest.quaternion.x, rest.quaternion.y, rest.quaternion.z, rest.quaternion.w);
     body.velocity.setZero();
     body.angularVelocity.setZero();
+    body.aabbNeedsUpdate = true;
     body.sleep();
     for (const flap of this.flaps[this.bodies.indexOf(body)] ?? []) this.placeFlap(body, flap);
   }

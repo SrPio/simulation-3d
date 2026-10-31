@@ -198,9 +198,10 @@ def palette():
         'black': m('SiteBlack', (0.03, 0.03, 0.035), 0.6),
         'steel': m('Steel', (0.6, 0.6, 0.66), 0.35, 0.8),
         'sand': m('Sand', (0.78, 0.66, 0.43), 0.95),
-        'burlap': m('Burlap', (0.42, 0.3, 0.16), 0.95),
-        'tie': m('BurlapTie', (0.25, 0.16, 0.08), 0.9),
+        'coffee': m('CoffeeSack', (1, 1, 1), 0.95, image=SACK_TEXTURE),
         'rubber': m('Rubber', (0.04, 0.04, 0.045), 0.9),
+        'rubber_text': m('RubberText', (0.085, 0.085, 0.09), 0.8),
+        'tyre': m('TyreRubber', (1, 1, 1), 0.9, image=TYRE_TEXTURE),
         'green': m('BarrowGreen', (0.1, 0.45, 0.25), 0.55),
         'brick': m('CircuitBrick', (0.72, 0.3, 0.2), 0.85),
         'fabric': m('ChairFabric', (0.16, 0.13, 0.24), 0.9),
@@ -330,61 +331,206 @@ def build_bottles(m, upper):
 
 # ------------------------------------------------------------------ sandbags
 
-# One sack (half length along X, half width, half height) and how much a sack of the top row sags into the gap
-# between the two it rests on. Two shared meshes, placed as children of each sandbag wall (the GLB keeps one copy).
-SACK = (0.25, 0.16, 0.12)
-SACK_SAG = 0.03
+# One coffee sack (half length along X, half width, half height) and how far a sack of the top row settles into the
+# two it rests on. One shared mesh, placed as children of each sandbag wall (the GLB keeps one copy).
+SACK = (0.5, 0.32, 0.24)
+SACK_SETTLE = 0.04
+# The jute print (scripts/coffee_sack.ts): u runs along the sack, v round it from the bottom seam, the top's middle at
+# v 0.5. SACK_PRINT is the length and the girth round its middle in metres, which the texture is painted for.
+SACK_TEXTURE = ROOT / 'assets' / 'textures' / 'circuit' / 'coffee-sack.png'
+SACK_ROWS, SACK_COLUMNS = 16, 20
+SACK_PRINT = (1.05, 1.886)
 
 
-def sack_mesh(name, mats, sag):
-    """A filled burlap sack: a plump pillow body (squarish in plan, lens-shaped across, pinched to a seam round its
-    middle), thinner towards its ends, the +X end gathered and tied into a little tuft (material 1), a flattened
-    underside where it rests and, for the top row, a sag in the middle. Smooth shaded, about 200 triangles."""
-    bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=18, v_segments=10, radius=1.0)
+def sack_section(theta, s):
+    """Point of the sack's surface (unit sizes) at angle theta round its length (-pi/2 underneath, pi/2 on top) and s
+    along it (-1 … 1): a pillow-shaped section, full in the middle, flattening to a sewn seam at each end whose
+    corners poke out as ears, with a few lumps of the beans inside."""
     signed = lambda value, exponent: math.copysign(abs(value) ** exponent, value)
+    y0, z0 = signed(math.cos(theta), 0.55), signed(math.sin(theta), 0.85)
+    full = max(0.0, 1 - abs(s) ** 3.2) ** 0.45
+    lumps = 1 + 0.05 * math.sin(7.3 * s + 1.1) * math.sin(5.0 * theta + 0.4) + 0.03 * math.sin(13.0 * s + 2.0) * math.cos(9.0 * theta)
+    z = z0 * max(full, 0.05) * lumps
+    y = y0 * (0.9 + 0.1 * full)
+    x = s * (1 + abs(s) ** 8 * (0.1 * abs(y0) ** 6 - 0.05))
+    return x, y, z
+
+
+def sack_mesh(name, mats):
+    """A filled jute coffee sack lying flat: rings of sack_section along its length, both ends sewn shut, a flattened
+    underside where it rests. UVs for the print (SACK_PRINT): u along the
+    sack, v by the length round its middle section, so the stencil is not stretched. Smooth shaded."""
     a, b, h = SACK
-    for v in bm.verts:
-        lat = math.atan2(v.co.z, math.hypot(v.co.x, v.co.y))
-        lon = math.atan2(v.co.y, v.co.x)
-        x = signed(math.cos(lat), 0.9) * signed(math.cos(lon), 0.4)
-        y = signed(math.cos(lat), 0.9) * signed(math.sin(lon), 0.55)
-        z = signed(math.sin(lat), 1.1)
-        z *= 1 - 0.4 * abs(x) ** 4          # the filling slumps towards the ends
-        y *= 1 - 0.12 * abs(x) ** 6
-        if x > 0.72:                         # gathered and tied at +X
-            t = (x - 0.72) / 0.28
-            y *= 1 - 0.75 * t
-            z *= 1 - 0.7 * t
-            x += 0.22 * t * t
-        co = Vector((x * a, y * b, z * h))
-        if co.z < -0.6 * h:                  # flattened where it rests
-            co.z = -0.6 * h + (co.z + 0.6 * h) * 0.25
-        co.z -= sag * (1 - min(1.0, abs(x)) ** 2)
-        v.co = co
+    rows, columns = SACK_ROWS, SACK_COLUMNS
+    thetas = [-math.pi / 2 + math.tau * j / columns for j in range(columns + 1)]
+    middle = [sack_section(t, 0.0) for t in thetas]
+    lengths = [0.0]
+    for p, q in zip(middle, middle[1:]):
+        lengths.append(lengths[-1] + math.hypot((q[1] - p[1]) * b, (q[2] - p[2]) * h))
+    girth = lengths[-1]
+    v_of = [1 - d / girth for d in lengths]   # flipped: the image's rows run down from v 1
+    bm = bmesh.new()
+    uv = bm.loops.layers.uv.new('UVMap')
+    rings = []
+    for i in range(rows + 1):
+        s = -1 + 2 * i / rows
+        ring = []
+        for j in range(columns):
+            x, y, z = sack_section(thetas[j], s)
+            co = Vector((x * a, y * b, z * h))
+            if co.z < -0.6 * h:              # flattened where it rests
+                co.z = -0.6 * h + (co.z + 0.6 * h) * 0.25
+            ring.append(bm.verts.new(co))
+        rings.append(ring)
+    us = [i / rows for i in range(rows + 1)]
+    for i in range(rows):
+        for j in range(columns):
+            n = (j + 1) % columns
+            face = bm.faces.new((rings[i][j], rings[i + 1][j], rings[i + 1][n], rings[i][n]))
+            for loop, (u, v) in zip(face.loops, ((us[i], v_of[j]), (us[i + 1], v_of[j]), (us[i + 1], v_of[j + 1]), (us[i], v_of[j + 1]))):
+                loop[uv].uv = (u, v)
+    for ring, u in ((rings[0], 0.0), (rings[-1], 1.0)):
+        face = bm.faces.new(ring if u else list(reversed(ring)))
+        for loop in face.loops:
+            loop[uv].uv = (u, v_of[ring.index(loop.vert)])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     for face in bm.faces:
         face.smooth = True
-        face.material_index = 1 if all(v.co.x > a * 0.97 for v in face.verts) else 0
+    print(f'{name}: girth {girth:.3f} m, length {2 * a * 1.05:.3f} m')
     return proto_mesh(name, bm, mats)
 
 
 def sandbag_wall(wall, meshes, seed=0):
-    """Five sacks side by side along the wall's X with four on top over the gaps, each turned a little, the end ones
-    with their tied ends outwards; children of the decor object `wall`."""
+    """Four sacks side by side along the wall's X with three on top over the gaps, piled by hand: each shifted and
+    turned a little, some end for end (their prints face different ways), one of the top row knocked askew; children
+    of the decor object `wall`."""
     rng = random.Random(seed)
     h = SACK[2]
     # A bottom sack's flattened underside is 0.7 h below its centre; a top sack's slimmer ends rest on the middles of
-    # the two below it (their tops h above their centres), its sagging middle dipping into the gap between them.
-    rows = ((5, 0.7 * h, 'sack'), (4, 0.7 * h + h + 0.6 * h + 0.004, 'sack_top'))
+    # the two below it (their tops h above their centres), settling SACK_SETTLE into them as a full sack would.
+    rows = ((4, 0.7 * h), (3, 0.7 * h + h + 0.6 * h - SACK_SETTLE))
+    askew = rng.randrange(3)
     k = 0
-    for count, z, kind in rows:
+    for row, (count, z) in enumerate(rows):
         for i in range(count):
-            x = (i - (count - 1) / 2) * 0.5 + rng.uniform(-0.02, 0.02)
-            # The end sacks show their tied ends outwards; the others alternate (tucked against a neighbour).
+            x = (i - (count - 1) / 2) * 2 * SACK[0] + rng.uniform(-0.08, 0.08)
+            y = rng.uniform(-0.08, 0.08)
+            turn = rng.uniform(-0.14, 0.14)
+            if row == 1 and i == askew:
+                y += rng.choice((-1, 1)) * 0.1
+                turn += rng.choice((-1, 1)) * 0.3
+            # Turned end for end on alternate sacks, so the stencils do not all read the same way.
             outwards = 0.0 if i == count - 1 else (math.pi if i == 0 or (i + k) % 2 else 0.0)
-            bag = obj(f'{wall.name}_Bag{k}', meshes[kind], wall, (x, rng.uniform(-0.025, 0.025), z), outwards + rng.uniform(-0.08, 0.08))
-            bag.rotation_euler.x = rng.uniform(-0.03, 0.03)
+            bag = obj(f'{wall.name}_Bag{k}', meshes['sack'], wall, (x, y, z), outwards + turn)
+            bag.rotation_euler.x = rng.uniform(-0.05, 0.05)
             k += 1
+
+
+# A sack stood on its end in front of a wall, leaning back against it by SACK_LEAN (rad) from upright.
+SACK_LEAN = 0.3
+
+
+def leaning_sack(fixed_thing, sack, point, yaw, road_point, seed=0):
+    """One sack stood on its seam beside the wall at three.js ground `point` (wall yaw `yaw`), on the side towards
+    `road_point`, its broad face to the road and its top leaning back onto the pile. Its own decor (kind 'sack', yaw a
+    quarter turn like the wall's) with a shadow and a box, so the character and the pieces do not pass through it; the
+    tilted sack is its child."""
+    rng = random.Random(seed)
+    a, b, h = SACK
+    along3 = (math.cos(yaw), -math.sin(yaw))          # the wall's local X and Y in three.js ground axes
+    across3 = (-math.sin(yaw), -math.cos(yaw))
+    side = 1 if (road_point[0] - point[0]) * across3[0] + (road_point[1] - point[1]) * across3[1] > 0 else -1
+    lean = SACK_LEAN + rng.uniform(-0.06, 0.06)
+    dx = rng.choice((-1.5, -0.5, 0.5, 1.5)) * 2 * a + rng.uniform(-0.1, 0.1)
+    # Its back (0.7 h behind its middle) touches the front of the pile (about the sacks' half width out) at mid height.
+    out = b + 0.04 + 0.7 * h * math.cos(lean)
+    spot = (point[0] + along3[0] * dx + across3[0] * side * out, point[1] + along3[1] * dx + across3[1] * side * out)
+    holder = fixed_thing('sack', None, spot, yaw, (1.1, 0.8), (1.0, 2 * a * math.cos(lean), 2 * h))
+    # Sack axes: its length (X) up and leaning back, its width (Y) along the wall, its broad face (Z) to the road.
+    n = Vector((0, side, 0))
+    up = Vector((0, 0, 1)) * math.cos(lean) - n * math.sin(lean)
+    face = n * math.cos(lean) + Vector((0, 0, 1)) * math.sin(lean)
+    along = Vector((side, 0, 0))
+    basis = Matrix.Rotation(rng.uniform(-0.12, 0.12), 3, 'Z') @ Matrix((up, along, face)).transposed()
+    # It stands on the corners of its lower seam, sunk a little as a full sack slumps.
+    child = obj(f'{holder.name}_Sack', sack, holder, (0, 0, 0.97 * a * math.cos(lean)))
+    child.rotation_mode = 'QUATERNION'
+    child.rotation_quaternion = basis.to_quaternion()
+    return holder
+
+
+# ------------------------------------------------------------------ tyres
+
+# A car tyre lying flat (outer radius, bead radius, width): thicker than a torus, a smooth tread, rounded shoulders,
+# bulging sidewalls and a band of lettering on each side. The tread's chevron blocks are only painted, faintly
+# (scripts/tyre_tread.ts → TYRE_TEXTURE): TYRE_TREAD_REPEATS copies round the tyre, the tread shoulder to shoulder over
+# TYRE_TREAD_V of the image's height. TYRE_GAP keeps the tyres of a wall apart, so they never start inside each other
+# (the physics would fling them).
+TYRE = {'outer': 0.4, 'bead': 0.2, 'width': 0.3}
+TYRE_SEGMENTS = 32
+TYRE_GAP = 0.04
+TYRE_PITCH = 2 * TYRE['outer'] + TYRE_GAP
+TYRE_TEXTURE = ROOT / 'assets' / 'textures' / 'circuit' / 'tyre.png'
+TYRE_TREAD_REPEATS = 3
+TYRE_TREAD_V = (0.2, 0.8)
+
+
+def tyre_mesh(mats):
+    """One shared tyre (textured rubber, and lighter rubber for the sidewall lettering), centred on its origin. UVs: u
+    round the tyre, v across the profile from bead to bead by its length, the tread between TYRE_TREAD_V."""
+    r, bead, half = TYRE['outer'], TYRE['bead'], TYRE['width'] / 2
+    # Half the cross-section from the bead to the middle of the tread, as (radius, height); mirrored for the other side.
+    side = [(bead, 0.62 * half), (bead + 0.025, 0.9 * half), (0.29, half), (0.35, 0.99 * half), (r - 0.01, 0.88 * half),
+            (r, 0.7 * half)]
+    profile = side + [(radius, -height) for radius, height in reversed(side)]
+    rows = len(profile)
+    shoulder = 4                              # the tread runs from this row to its mirror
+    lettering = {2, rows - 4}                 # the faces between these rows and the next: the sidewall band, both sides
+    letters = {1, 2, 3, 4, 9, 10, 11}         # which segments of every 16 carry lettering (two words a side)
+    # v by length along the profile, piece by piece: sidewall, tread, sidewall.
+    lengths = [0.0]
+    for (r0, z0), (r1, z1) in zip(profile, profile[1:]):
+        lengths.append(lengths[-1] + math.hypot(r1 - r0, z1 - z0))
+    def spread(first, last, v0, v1):
+        return [v0 + (v1 - v0) * (lengths[row] - lengths[first]) / (lengths[last] - lengths[first]) for row in range(first, last + 1)]
+    low, high = TYRE_TREAD_V
+    vs = spread(0, shoulder, 0.0, low) + spread(shoulder, rows - 1 - shoulder, low, high)[1:] + spread(rows - 1 - shoulder, rows - 1, high, 1.0)[1:]
+    bm = bmesh.new()
+    uv = bm.loops.layers.uv.new('UVMap')
+    rings = []
+    for k in range(TYRE_SEGMENTS):
+        a = k / TYRE_SEGMENTS * math.tau
+        rings.append([bm.verts.new((math.cos(a) * radius, math.sin(a) * radius, z)) for radius, z in profile])
+    for k in range(TYRE_SEGMENTS):
+        a, b = rings[k], rings[(k + 1) % TYRE_SEGMENTS]
+        u0, u1 = k / TYRE_SEGMENTS * TYRE_TREAD_REPEATS, (k + 1) / TYRE_SEGMENTS * TYRE_TREAD_REPEATS
+        for row in range(rows):
+            n = (row + 1) % rows          # the last row closes over the bead back to the first
+            face = bm.faces.new((a[row], b[row], b[n], a[n]))
+            face.material_index = 1 if row in lettering and k % 16 in letters else 0
+            v0, v1 = vs[row], vs[n] if n else 1.0
+            for loop, coords in zip(face.loops, ((u0, v0), (u1, v0), (u1, v1), (u0, v1))):
+                loop[uv].uv = coords
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return proto_mesh('Prop_Tyre', bm, mats, smooth_angle=50)
+
+
+def road_walk(i, side, distance):
+    """three.js ground point `distance` metres along the line `side` metres left of the road's middle, from beside
+    index i (back along the road when negative): things set down this way follow the bends."""
+    step = 1 if distance >= 0 else -1
+    left = abs(distance)
+    here = road(i, side)
+    j = i
+    while 0 < j + step <= N if step > 0 else j + step >= 0:
+        there = road(j + step, side)
+        gap = math.hypot(there[0] - here[0], there[1] - here[1])
+        if gap >= left:
+            t = left / gap
+            return (here[0] + (there[0] - here[0]) * t, here[1] + (there[1] - here[1]) * t)
+        left -= gap
+        here, j = there, j + step
+    return here
 
 
 # ------------------------------------------------------------------ the pieces and fixed things
@@ -413,8 +559,7 @@ def build_meshes(m):
     meshes['bump'] = mesh('Circuit_Bump', lambda bm: bm_prism(bm, [(BUMP[0] / 2, 0), (-BUMP[0] / 2, 0), (-0.05, BUMP[2]), (0.05, BUMP[2])], -BUMP[1] / 2, BUMP[1] / 2, 0), [m['wood']])
     meshes['jersey'] = mesh('Circuit_Jersey', lambda bm: bm_prism(bm, [(0.3, 0), (0.3, 0.08), (0.12, 0.3), (0.08, 0.8), (-0.08, 0.8), (-0.12, 0.3), (-0.3, 0.08), (-0.3, 0)], -1.0, 1.0, 0), [m['concrete']])
 
-    meshes['sack'] = sack_mesh('Circuit_Sandbag', [m['burlap'], m['tie']], sag=0.0)
-    meshes['sack_top'] = sack_mesh('Circuit_SandbagTop', [m['burlap'], m['tie']], sag=SACK_SAG)
+    meshes['sack'] = sack_mesh('Circuit_Sandbag', [m['coffee']])
 
     def pallet(bm):
         for k in range(5):
@@ -504,14 +649,7 @@ def build_meshes(m):
             v.co.z -= 0.73
     meshes['works'] = mesh('Prop_WorksSign', works, [m['yellow'], m['black'], m['concrete']])
 
-    meshes['tyre'] = mesh('Prop_Tyre', lambda bm: bm_torus(bm, 0.3, 0.12, 12, 6, 0), [m['rubber']], 50)
-
-    def tyre_row(bm):
-        for k in range(4):
-            bm_torus(bm, 0.3, 0.12, 12, 6, 0, 0.12)
-            for v in bm.verts[-72:]:
-                v.co.x += (k - 1.5) * 0.66
-    meshes['tyres'] = mesh('Circuit_TyreRow', tyre_row, [m['rubber']], 50)
+    meshes['tyre'] = tyre_mesh([m['tyre'], m['rubber_text']])
 
     def fence_leg(bm):
         for side in (-1, 1):
@@ -654,8 +792,12 @@ def build(root):
     for k, i in enumerate(range(76, 88, 2)):
         fixed_thing('jersey', meshes['jersey'], road(i, 1.3 if k % 2 else -1.3), yaw_along(i, QUARTER), (2.2, 0.8), (2.0, 0.8, 0.6))
     for i in (92, 106):
-        wall = fixed_thing('sandbags', None, road(i, outer(i) * (HALF + 0.6)), yaw_along(i, QUARTER), (2.8, 0.8), (2.6, 0.4, 0.45))
+        # Far enough out that the sack leaning on the road side stays off the road.
+        point = road(i, outer(i) * (HALF + 1.3))
+        yaw = yaw_along(i, QUARTER)
+        wall = fixed_thing('sandbags', None, point, yaw, (4.4, 1.3), (4.1, 0.8, 0.7))
         sandbag_wall(wall, meshes, seed=i)
+        leaning_sack(fixed_thing, meshes['sack'], point, yaw, road(i), seed=i)
     for i, side, layers in ((46, -1, 3), (50, 1, 2), (140, -1, 2), (144, -1, 3)):
         point = road(i, side * (HALF + 0.8))
         for layer in range(layers):
@@ -707,15 +849,27 @@ def build(root):
     for i in (88, 89, 90, 94, 126, 127):
         loose('cone', meshes['cone'], road(i, -(HALF - 0.3)), out.CONE_ORIGIN, 0.0, MASS['cone'], [0.36, 0.54, 0.36],
               cylinders=[round(v, 4) for r, h, c in out.CONE_CYLINDERS for v in (r, h, c - out.CONE_ORIGIN)])
+    # Tyre walls: four tyres on the ground and three loose ones on top, each over the gap between two below, laid along
+    # the bend of the road rather than in a straight line and a little untidy; all of them at least TYRE_PITCH apart
+    # along the road, so none starts inside another. Each tyre on the ground is its own decor (a box the size of the
+    # tyre's middle for the physics and the character), turned a quarter like the rest, the tyre itself its child,
+    # shifted, spun round its axis and tipped a little.
+    width = TYRE['width']
     for i in (22, 40, 104, 138):
+        rng = random.Random(i)
         side = outer(i) * (HALF + 0.9)
-        point = road(i, side)
         yaw = yaw_along(i, QUARTER)
-        fixed_thing('tyres', meshes['tyres'], point, yaw, (2.8, 0.8), (2.6, 0.24, 0.6))
+        bottom = [road_walk(i, side, (k - 1.5) * TYRE_PITCH) for k in range(4)]
+        for point in bottom:
+            holder = fixed_thing('tyres', None, point, yaw, (2 * TYRE['outer'] + 0.15, 2 * TYRE['outer'] + 0.15), (0.68, width, 0.68))
+            tyre = obj(f'{holder.name}_Tyre', meshes['tyre'], holder, (rng.uniform(-0.03, 0.03), rng.uniform(-0.03, 0.03), width / 2), rng.uniform(0, math.tau))
+            tyre.rotation_euler.x = rng.uniform(-0.04, 0.04)
+            tyre.rotation_euler.y = rng.uniform(-0.04, 0.04)
         for k in range(3):
-            dx = (k - 1) * 0.66
-            loose('tyre', meshes['tyre'], (point[0] + math.cos(yaw) * dx, point[1] - math.sin(yaw) * dx), 0.36, yaw, MASS['tyre'], [0.84, 0.24, 0.84],
-                  cylinders=[0.42, 0.24, 0.0])
+            a, c = bottom[k], bottom[k + 1]
+            middle = ((a[0] + c[0]) / 2 + rng.uniform(-0.04, 0.04), (a[1] + c[1]) / 2 + rng.uniform(-0.04, 0.04))
+            loose('tyre', meshes['tyre'], middle, width * 1.5, yaw, MASS['tyre'],
+                  [2 * TYRE['outer'], width, 2 * TYRE['outer']], cylinders=[TYRE['outer'], width, 0.0])
     for i in (27, 38, 43, 66, 99, 130):
         loose('chevron', meshes['chevron'], road(i, outer(i) * (HALF + 1.5)), 0.625, 0.0, MASS['sign'], [0.6, 1.25, 0.4])
     loose('works', meshes['works'], road(149, -(HALF + 1.0)), 0.73, 0.0, MASS['sign'], [0.76, 1.46, 0.4])
