@@ -189,6 +189,11 @@ const RIDER_BACK = 0.16;
  * off the sack.
  */
 const XMAS = { every: 0.55, back: 1.6, up: 2.2 } as const;
+/**
+ * Christmas: the sleigh's footprint round its base (m): to each side (its thrusters included), ahead to the curl of its
+ * runners and behind to the end of its thrusters (create_christmas.py SLEIGH and THRUSTER).
+ */
+const SLEIGH_BOX = { across: 0.93, ahead: 1.1, behind: 0.92 } as const;
 /** Blob shadow slots: the character first, then the signs, then the loose pieces, then the thrown laptops. */
 const CHARACTER_SHADOW = 0;
 /** cannon-es sleepState of a sleeping body. */
@@ -375,8 +380,11 @@ export class CharacterViewer {
    */
   private cauldron?: Object3D;
   private readonly brewPlane = new Plane(new Vector3(0, 1, 0), 1e4);
-  /** Half size of the square round the free chair (or cauldron) that stops the character (PUSH.block for the chair). */
-  private chairBlockHalf: number = PUSH.block;
+  /**
+   * The box round the free chair that stops the character: how far it reaches to each side, ahead of the chair's base
+   * and behind it (PUSH.block every way for the chair, more round the cauldron, the sleigh's own length for Christmas).
+   */
+  private chairBlock3 = { across: PUSH.block as number, ahead: PUSH.block as number, behind: PUSH.block as number };
   /** How far the character reaches to push the free chair: its own radius, more round the wide cauldron. */
   private chairPushReach = CHARACTER_RADIUS;
   /** A throw is under way and its laptop has not appeared yet: it shows up only at THROW_RELEASE, already leaving the hand. */
@@ -1288,6 +1296,8 @@ export class CharacterViewer {
       };
       // A fence breaking cracks like wood; a snowman coming apart thuds softly in the snow.
       physics.onBreak = (key) => this.sound(key.startsWith('snowman') ? 'crumble' : 'woodHeavy', 6);
+      // The sleigh knocks things over along its whole length, not just round its seat.
+      if (this.sleigh) physics.shapeChair([SLEIGH_BOX.across, 0.6, (SLEIGH_BOX.ahead + SLEIGH_BOX.behind) / 2], (SLEIGH_BOX.ahead - SLEIGH_BOX.behind) / 2);
       this.physics = physics;
       this.host.dataset.physics = 'ready';
     } catch {
@@ -1993,7 +2003,7 @@ export class CharacterViewer {
       if (grip) rig.armrests[side] = grip;
     }
     this.cauldron = cauldron;
-    this.chairBlockHalf = 0.5;
+    this.chairBlock3 = { across: 0.5, ahead: 0.5, behind: 0.5 };
     this.chairPushReach = CHARACTER_RADIUS + 0.22;
     if (this.renderer) this.renderer.localClippingEnabled = true;
     this.interaction!.instant.add('office');
@@ -2029,8 +2039,8 @@ export class CharacterViewer {
       if (grip) rig.armrests[side] = grip;
     }
     this.sleigh = sleigh;
-    this.chairBlockHalf = 0.75;
-    this.chairPushReach = CHARACTER_RADIUS + 0.45;
+    this.chairBlock3 = { ...SLEIGH_BOX };
+    this.chairPushReach = CHARACTER_RADIUS + 0.5;
     this.interaction!.instant.add('office');
     this.interaction!.onInstant = this.onCauldron;
     this.host.dataset.vehicle = 'sleigh';
@@ -2129,11 +2139,15 @@ export class CharacterViewer {
     const left = { x: Math.cos(state.yaw), z: -Math.sin(state.yaw) };
     spot.stand = { x: position.x, z: position.z };
     spot.yaw = state.yaw;
-    // Its sides first (where the character steps off to), then the front.
+    // Its sides first (where the character steps off to), then the front; always outside the block round it (the
+    // sleigh's is much bigger than the chair's), or the character could never reach them.
+    const { across, ahead } = this.chairBlock3;
+    const aside = Math.max(0.85, across + CHARACTER_RADIUS + 0.12);
+    const front = Math.max(0.75, ahead + CHARACTER_RADIUS + 0.12);
     spot.approaches = [
-      { x: position.x + left.x * 0.85 + forward.x * 0.15, z: position.z + left.z * 0.85 + forward.z * 0.15 },
-      { x: position.x - left.x * 0.85 + forward.x * 0.15, z: position.z - left.z * 0.85 + forward.z * 0.15 },
-      { x: position.x + forward.x * 0.75, z: position.z + forward.z * 0.75 },
+      { x: position.x + left.x * aside + forward.x * 0.15, z: position.z + left.z * aside + forward.z * 0.15 },
+      { x: position.x - left.x * aside + forward.x * 0.15, z: position.z - left.z * aside + forward.z * 0.15 },
+      { x: position.x + forward.x * front, z: position.z + forward.z * front },
     ];
   }
 
@@ -2251,11 +2265,16 @@ export class CharacterViewer {
     const phase = this.interaction?.phase;
     const solid = state && !riding && !state.airborne && (phase === 'free' || phase === 'approaching');
     const block = this.chairBlock;
-    const half = this.chairBlockHalf;
-    block.minX = solid ? state.x - half : 1e6;
-    block.maxX = solid ? state.x + half : 1e6;
-    block.minZ = solid ? state.z - half : 1e6;
-    block.maxZ = solid ? state.z + half : 1e6;
+    // Its middle shifted ahead or back along the chair's facing; unturned, x runs across it and z along it.
+    const { across, ahead, behind } = this.chairBlock3;
+    const shift = (ahead - behind) / 2;
+    const x = state ? state.x + Math.sin(state.yaw) * shift : 0;
+    const z = state ? state.z + Math.cos(state.yaw) * shift : 0;
+    const along = (ahead + behind) / 2;
+    block.minX = solid ? x - across : 1e6;
+    block.maxX = solid ? x + across : 1e6;
+    block.minZ = solid ? z - along : 1e6;
+    block.maxZ = solid ? z + along : 1e6;
     block.yaw = solid ? state.yaw : 0;
   }
 

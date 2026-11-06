@@ -17,11 +17,14 @@ assets/textures/christmas/ornament.png by this script.
   export as Blender's z, `bulb` radius): the viewer draws every bulb of every string as one instanced, blinking mesh.
 - `ChristmasHat`: a Santa hat modelled over the web V4 head without its cap, in the character's own frame (feet at Z=0,
   facing -Y). `ChristmasHat_Pompom` is the white bobble with its origin at the hat's tip: the viewer swings it.
-- `ChristmasSleigh`: the ride that replaces the office chair: a red sleigh with gold trim and runners, a sack of gifts
-  on its back deck and a snow thruster on each side pointing backwards (`SleighNozzle_<side>` at its mouth,
-  `SleighFuel_<side>` the icy blue charge in its window, origin at the window's front end and turned so its local height
-  runs backwards along the thruster: the viewer scales it), `SleighGrip_<side>` where the hands rest, `SleighSack` where
-  the falling gifts leave from. Its origin is on the ground under the rider's hips, facing -Y (three.js +Z).
+- `ChristmasSleigh`: the ride that replaces the office chair, after the user's reference: a red body with a low rolled
+  front, a gold rim, gold scrolls and swirls, a high back curling into a scroll, a green tufted seat, a pile of wrapped
+  gifts on its back (`SleighGifts`; `SleighSack_Mouth` on its top is where the falling gifts leave from), dark red
+  runners curling up just ahead of the body (short in front, so its block in the viewer matches it), and a snow
+  thruster on each side pointing backwards (`SleighNozzle_<side>` at its mouth, `SleighFuel_<side>` the icy blue charge
+  in its window, origin at the window's front end and turned so its local height runs backwards along the thruster:
+  the viewer scales it), `SleighGrip_<side>` where the hands rest. Its origin is on the ground under the rider's hips,
+  facing -Y (three.js +Z).
 - `ChristmasLibrary`: meshes the viewer uses as they are: the bowling pin in red with a green ribbon
   (`Christmas_Pin`), the ball in red with little vector drawings (`Christmas_Ball`), each with the same size as the
   piece it dresses; the thrown snowball (`Snowball`), a lump of snow (`SnowChunk`) and the gifts that fall off the sleigh
@@ -73,7 +76,7 @@ TREE_GIFTS = [(0.2, 3.5, 2, 0.1), (0.75, 3.4, 0, 0.5), (1.2, 3.6, 1, -0.2), (1.9
 DROP_GIFT_SIZES = [(0.26, 0.26, 0.26), (0.34, 0.22, 0.28), (0.22, 0.32, 0.22)]
 SNOWBALL_RADIUS = 0.11
 # The sleigh in its own frame (Blender: x across, -y ahead, z up; origin on the ground under the rider's hips).
-SLEIGH = {'width': 1.16, 'floor': 0.3, 'side': 0.86, 'front': -1.25, 'back': 0.52, 'deck': 1.12, 'seat': 0.6}
+SLEIGH = {'width': 1.16, 'side': 0.86, 'seat': 0.6}  # body width, where the hands rest, seat top
 # The two snow thrusters: how far out of the middle, their front end, height of their axis, length and radius.
 THRUSTER = {'out': 0.78, 'front': -0.2, 'height': 0.46, 'length': 1.05, 'radius': 0.13}
 
@@ -205,8 +208,7 @@ def materials():
         'giftWhite': m('GiftWhite', (1.0, 1.0, 1.0), 0.55),
         'sleighRed': m('SleighRed', (0.66, 0.03, 0.05), 0.3, 0.15),
         'sleighDark': m('SleighDark', (0.18, 0.02, 0.03), 0.5),
-        'seat': m('SleighSeat', (0.08, 0.2, 0.1), 0.9),
-        'sack': m('SleighSack', (0.42, 0.28, 0.16), 0.95),
+        'seat': m('SleighSeat', (0.03, 0.34, 0.09), 0.85),
         'metal': m('ThrusterMetal', (0.55, 0.58, 0.64), 0.25, 0.9),
         'glow': m('ThrusterGlow', (0.55, 0.85, 1.0), 0.2, emission=(0.45, 0.8, 1.0), strength=4.0),
         'fuel': m('ThrusterFuel', (0.7, 0.92, 1.0), 0.1, emission=(0.4, 0.75, 1.0), strength=1.5),
@@ -434,7 +436,7 @@ def pine_mesh(name, height, m, baubles, pot=False, rng_seed=1, round_baubles=1):
     colours = [0, 1, 2, 3]
     tiers_bm, bm = bm, bmesh.new()
     for k, (bottom, r, tier_h) in enumerate(rims):
-        count = max(3, int(r * (4.5 if height > 5 else 6)))
+        count = max(3, int(r * (3.3 if height > 5 else 6)))
         for i in range(count):
             a = (i + 0.5 * (k % 2)) / count * math.tau + rng.uniform(-0.15, 0.15)
             size = height * rng.uniform(0.022, 0.03)
@@ -892,15 +894,62 @@ def build_hat(root, m, tree, centre, crown):
 
 # ------------------------------------------------------------------ the sleigh
 
+def chaikin(points, rounds=2, closed=True):
+    """Corner cutting: a polyline rounded `rounds` times (closed or open, the ends kept when open)."""
+    for _ in range(rounds):
+        out = []
+        count = len(points) if closed else len(points) - 1
+        if not closed:
+            out.append(points[0])
+        for i in range(count):
+            a = Vector(points[i])
+            b = Vector(points[(i + 1) % len(points)])
+            out += [a.lerp(b, 0.25), a.lerp(b, 0.75)]
+        if not closed:
+            out.append(points[-1])
+        points = [tuple(v) for v in out]
+    return points
+
+
+def spiral(cy, cz, r0, r1, a0, turns, steps=18):
+    """A flat spiral in the side's plane (Blender y, z) from radius r0 at angle a0 (0 = +y, turning towards +z) inwards to r1."""
+    return [(cy + math.cos(a0 + k / steps * turns * math.tau) * (r0 + (r1 - r0) * k / steps),
+             cz + math.sin(a0 + k / steps * turns * math.tau) * (r0 + (r1 - r0) * k / steps)) for k in range(steps + 1)]
+
+
 def sleigh_side_profile():
-    """The sleigh's side panel seen from the side (Blender y, z): flat along the bottom, a high curl at the front, the
-    top edge dipping where the rider sits and rising to the backrest."""
-    s = SLEIGH
-    return [(s['front'] - 0.1, s['floor'] + 0.1), (s['front'] + 0.15, s['floor'] - 0.02), (s['back'] + 0.6, s['floor'] - 0.02),
-            (s['back'] + 0.62, s['floor'] + 0.18), (s['back'] + 0.25, s['floor'] + 0.22), (s['back'] + 0.02, s['side'] + 0.35),
-            (s['back'] - 0.12, s['side'] + 0.4), (s['back'] - 0.3, s['side']), (-0.35, s['side'] - 0.05), (s['front'] + 0.35, s['side'] + 0.02),
-            (s['front'] + 0.02, s['side'] + 0.3), (s['front'] - 0.12, s['side'] + 0.55), (s['front'] - 0.3, s['side'] + 0.48),
-            (s['front'] - 0.24, s['side'] + 0.3), (s['front'] - 0.22, s['floor'] + 0.4)]
+    """The sleigh's side panel seen from the side (Blender y, z; ahead is -y), after the user's reference: a low rounded
+    front, the top edge dipping where the rider's hands rest, then sweeping up into a tall back that ends in a scroll,
+    a rounded bottom. Rounded by corner cutting."""
+    return chaikin([(-0.86, 0.3), (-0.97, 0.42), (-1.0, 0.68), (-0.95, 0.84), (-0.83, 0.89), (-0.55, 0.86), (-0.3, 0.82),
+                    (-0.05, 0.85), (0.18, 0.98), (0.36, 1.18), (0.5, 1.36), (0.62, 1.46), (0.74, 1.47), (0.81, 1.39),
+                    (0.77, 1.16), (0.69, 0.92), (0.7, 0.62), (0.76, 0.46), (0.71, 0.32), (0.5, 0.28), (-0.6, 0.28)], 1)
+
+
+def cushion(bm, lo, hi, material, round_off=0.035):
+    """A puffy upholstered block: a box with its edges well rounded."""
+    verts = box(bm, lo, hi, material)
+    edges = list({e for v in verts for e in v.link_edges})
+    made = bmesh.ops.bevel(bm, geom=edges, offset=round_off, segments=1, affect='EDGES', profile=0.7)
+    for face in made['faces']:
+        face.material_index = material
+
+
+def gift_into(bm, centre, size, yaw, body, ribbon):
+    """A wrapped box with a ribbon both ways and a bow on top into `bm` (materials by index), sitting on `centre`."""
+    w, d, h = size
+    made = []
+    made += box(bm, (-w / 2, -d / 2, 0), (w / 2, d / 2, h), body)
+    r = min(w, d) * 0.08
+    made += box(bm, (-r, -d / 2 - 0.004, -0.004), (r, d / 2 + 0.004, h + 0.004), ribbon)
+    made += box(bm, (-w / 2 - 0.004, -r, -0.004), (w / 2 + 0.004, r, h + 0.004), ribbon)
+    loop = min(w, d) * 0.2
+    for side in (-1, 1):
+        made += sphere(bm, (side * loop * 0.7, 0, h + loop * 0.35), loop * 0.55, ribbon, 1, squash=(1.2, 0.5, 0.7))
+    made += sphere(bm, (0, 0, h + loop * 0.15), loop * 0.3, ribbon, 1)
+    turn = Matrix.Rotation(yaw, 3, 'Z')
+    for v in made:
+        v.co = turn @ v.co + Vector(centre)
 
 
 def build_sleigh(root, m):
@@ -909,50 +958,66 @@ def build_sleigh(root, m):
     bm = bmesh.new()
     profile = sleigh_side_profile()
     half = s['width'] / 2
+    # Materials: 0 red, 1 dark red (runners, floor), 2 gold, 3 green upholstery.
     for side in (-1, 1):
-        for x0, x1 in ((side * half - 0.03, side * half + 0.03),):
-            outer = [bm.verts.new((x1 if side > 0 else x0, y, z)) for y, z in profile]
-            inner = [bm.verts.new((x0 if side > 0 else x1, y, z)) for y, z in profile]
-            bm.faces.new(outer).material_index = 0
-            bm.faces.new(list(reversed(inner))).material_index = 0
-            for i in range(len(profile)):
-                j = (i + 1) % len(profile)
-                bm.faces.new((outer[i], outer[j], inner[j], inner[i])).material_index = 0
-        # Gold trim along the side's top edge.
-        trim = [Vector((side * (half + 0.035), y, z)) for y, z in profile[5:13]]
-        tube(bm, trim, 0.022, 2, sides=6)
-    # Floor, front panel, the seat and its backrest.
-    box(bm, (-half, s['front'] - 0.2, s['floor'] - 0.02), (half, s['back'] + 0.55, s['floor'] + 0.04), 1)
-    box(bm, (-half, s['front'] - 0.27, s['floor']), (half, s['front'] - 0.19, s['side'] + 0.32), 0)
-    box(bm, (-half + 0.03, -0.25, s['floor']), (half - 0.03, 0.25, s['seat'] - 0.06), 1)
-    box(bm, (-half + 0.03, -0.27, s['seat'] - 0.08), (half - 0.03, 0.27, s['seat']), 3)
-    box(bm, (-half + 0.03, 0.27, s['seat'] - 0.05), (half - 0.03, 0.38, s['side'] + 0.42), 3)
-    # The back deck the sack rides on.
-    box(bm, (-half, s['back'] - 0.1, s['floor'] + 0.18), (half, s['back'] + 0.6, s['floor'] + 0.24), 1)
-    # Runners: gold tubes under each side with a curl at the front, on struts.
+        x0, x1 = side * half - 0.03, side * half + 0.03
+        outer = [bm.verts.new((x1 if side > 0 else x0, y, z)) for y, z in profile]
+        inner = [bm.verts.new((x0 if side > 0 else x1, y, z)) for y, z in profile]
+        bm.faces.new(outer).material_index = 0
+        bm.faces.new(list(reversed(inner))).material_index = 0
+        for i in range(len(profile)):
+            j = (i + 1) % len(profile)
+            bm.faces.new((outer[i], outer[j], inner[j], inner[i])).material_index = 0
+        # A gold rim all round the panel's outer edge, and gold scrolls at its back top and its front.
+        out_x = side * (half + 0.032)
+        tube(bm, [Vector((out_x, y, z)) for y, z in profile], 0.02, 2, sides=5, closed=True)
+        for curl in (spiral(0.73, 1.33, 0.13, 0.03, math.pi * 0.5, 1.35), spiral(-0.9, 0.76, 0.1, 0.025, math.pi * 0.6, -1.25)):
+            tube(bm, [Vector((side * half, y, z)) for y, z in curl], 0.03, 2, sides=6)
+        # Gold swirls on the outer face: one along the front, one sweeping up the back (above the thruster).
+        for swirl in (
+            [(-0.36, 0.66), (-0.5, 0.7), (-0.62, 0.66)] + spiral(-0.7, 0.66, 0.08, 0.02, 0.0, 1.1, 12),
+            [(-0.36, 0.66), (-0.22, 0.7)] + spiral(-0.17, 0.66, 0.05, 0.015, math.pi, -1.0, 10),
+            [(0.05, 0.78), (0.25, 0.86), (0.42, 1.02)] + spiral(0.5, 1.1, 0.09, 0.02, math.pi * 1.25, 1.1, 12),
+        ):
+            tube(bm, [Vector((side * (half + 0.034), y, z)) for y, z in swirl], 0.012, 2, sides=4)
+    # Floor, the front panel with a rolled top edge, and the solid back the gifts ride on.
+    box(bm, (-half, -0.92, 0.28), (half, 0.72, 0.34), 1)
+    box(bm, (-half, -0.98, 0.32), (half, -0.9, 0.82), 0)
+    roll = Matrix.Rotation(math.pi / 2, 4, 'Y')
+    made = lathe(bm, [(0.0, 0.0), (0.0, 0.075), (half * 2, 0.075), (half * 2, 0.0)], 14, 0)
+    bmesh.ops.transform(bm, matrix=Matrix.Translation((-half, -0.9, 0.84)) @ roll, verts=[v for ring in made for v in ring])
     for side in (-1, 1):
-        x = side * (half - 0.08)
-        run = [Vector((x, s['back'] + 0.75, 0.05)), Vector((x, 0.0, 0.04)), Vector((x, s['front'] - 0.1, 0.04)),
-               Vector((x, s['front'] - 0.42, 0.12)), Vector((x, s['front'] - 0.55, 0.32)), Vector((x, s['front'] - 0.46, 0.5)),
-               Vector((x, s['front'] - 0.32, 0.5)), Vector((x, s['front'] - 0.3, 0.38))]
-        tube(bm, run, 0.032, 2, sides=8)
-        for y in (s['front'] + 0.15, -0.2, s['back'] + 0.35):
-            tube(bm, [Vector((x, y, 0.06)), Vector((x, y, s['floor']))], 0.022, 2, sides=6)
-    mesh_object('Sleigh_Body', finish('Sleigh_Body', bm, [m['sleighRed'], m['sleighDark'], m['gold'], m['seat']], 40), holder)
-    # The sack of gifts on the deck: a lumpy brown sack tied at the top with gifts peeking out.
-    sack_c = Vector((0, s['back'] + 0.25, s['floor'] + 0.62))
+        sphere(bm, (side * half, -0.9, 0.84), 0.07, 2, 1)
+    box(bm, (-half, 0.44, 0.32), (half, 0.7, 1.0), 0)
+    # The seat: a red base and a green tufted cushion, and a tufted backrest of puffy cells.
+    box(bm, (-half + 0.03, -0.3, 0.32), (half - 0.03, 0.3, s['seat'] - 0.12), 0)
+    cols = 3
+    for c in range(cols):
+        x0 = -half + 0.04 + c * (2 * half - 0.08) / cols
+        x1 = x0 + (2 * half - 0.08) / cols
+        cushion(bm, (x0, -0.31, s['seat'] - 0.13), (x1, 0.3, s['seat']), 3)
+        for z0, z1 in ((s['seat'], s['seat'] + 0.27), (s['seat'] + 0.27, s['seat'] + 0.54)):
+            cushion(bm, (x0, 0.3, z0), (x1, 0.44, z1), 3)
+    # Runners: dark red, curling up in front of the body (not far: the sleigh is short in front) and a little behind,
+    # on three struts a side.
+    for side in (-1, 1):
+        x = side * (half - 0.1)
+        run = chaikin([(0.9, 0.13), (0.84, 0.05), (0.7, 0.035), (-0.8, 0.035), (-0.95, 0.07), (-1.05, 0.18), (-1.08, 0.3),
+                       (-1.03, 0.4), (-0.95, 0.42), (-0.9, 0.36), (-0.93, 0.3), (-0.98, 0.31)], 1, closed=False)
+        tube(bm, [Vector((x, y, z)) for y, z in run], 0.034, 1, sides=8)
+        for y in (-0.62, -0.05, 0.5):
+            tube(bm, [Vector((x, y, 0.06)), Vector((x, y, 0.29))], 0.024, 1, sides=6)
+    mesh_object('Sleigh_Body', finish('Sleigh_Body', bm, [m['sleighRed'], m['sleighDark'], m['gold'], m['seat']], 62), holder)
+    # A pile of wrapped gifts on the back, as in the reference (the falling gifts leave from its top).
     bm = bmesh.new()
-    sphere(bm, sack_c, 0.42, 0, 2, squash=(1.15, 0.85, 1.0), rng=random.Random(5), wobble=0.08)
-    lathe_bm = bm
-    tube(lathe_bm, [sack_c + Vector((0, 0, 0.36)), sack_c + Vector((0, 0.02, 0.5))], [0.12, 0.08], 0, sides=8)
-    tube(lathe_bm, [sack_c + Vector((0, 0, 0.42)), sack_c + Vector((0, 0.01, 0.45))], 0.11, 1, sides=8)
-    for (dx, dy, dz, size, mat) in ((-0.2, 0.05, 0.38, 0.2, 2), (0.15, -0.05, 0.42, 0.17, 3), (0.02, 0.12, 0.5, 0.15, 4)):
-        g = box(bm, (-size / 2, -size / 2, -size / 2), (size / 2, size / 2, size / 2), mat)
-        rot = Matrix.Rotation(dx * 2, 3, 'Z') @ Matrix.Rotation(dy * 3, 3, 'X')
-        for v in g:
-            v.co = rot @ v.co + sack_c + Vector((dx, dy, dz))
-    mesh_object('SleighSack', finish('SleighSack', bm, [m['sack'], m['red'], m['baubleBlue'], m['green'], m['baubleGold']], 40), holder)
-    room.anchor('SleighSack_Mouth', sack_c + Vector((0, 0.15, 0.4)), holder, 0.0, sack=1)
+    for centre, size, yaw, body, ribbon in (
+        ((-0.25, 0.58, 1.0), (0.36, 0.3, 0.3), 0.1, 0, 1), ((0.18, 0.57, 1.0), (0.4, 0.3, 0.34), -0.08, 1, 2),
+        ((-0.06, 0.6, 1.3), (0.3, 0.26, 0.28), 0.25, 0, 1), ((0.3, 0.6, 1.34), (0.24, 0.24, 0.24), -0.3, 2, 0),
+        ((-0.33, 0.6, 1.3), (0.22, 0.22, 0.22), 0.4, 1, 0),
+    ):
+        gift_into(bm, centre, size, yaw, body, ribbon)
+    mesh_object('SleighGifts', finish('SleighGifts', bm, [m['red'], m['green'], m['gold']], 30), holder)
+    room.anchor('SleighSack_Mouth', (0, 0.62, 1.66), holder, 0.0, sack=1)
     # A thruster on each side, outside the side panels and pointing backwards (Blender +Y): a rounded nose, the tank
     # with a glass window along its top showing the icy charge, a collar, the throat and a flared bell glowing inside.
     length = THRUSTER['length']

@@ -239,6 +239,8 @@ export class PropPhysics {
   /** The ridden office chair: a kinematic box that only meets the pieces while someone drives it. */
   private readonly chair: BodyType;
   private chairActive = false;
+  /** Half the height of the ridden chair's box (it stands on the ground). */
+  private chairHalfY: number = CHAIR_HALF[1];
 
   static async load(pieces: readonly PieceBody[], statics: readonly StaticBox[], groundY: number, targets: readonly TargetDisc[] = [], bags: readonly BagBody[] = []): Promise<PropPhysics> {
     return new PropPhysics(await import('cannon-es'), pieces, statics, groundY, targets, bags);
@@ -349,7 +351,8 @@ export class PropPhysics {
     }
     this.pusher.allowSleep = false;
     this.world.addBody(this.pusher);
-    this.chair = new Body({ type: Body.KINEMATIC, shape: new Box(new Vec3(...CHAIR_HALF)) });
+    this.chair = new Body({ type: Body.KINEMATIC });
+    this.chair.addShape(new Box(new Vec3(...CHAIR_HALF)));
     this.chair.allowSleep = false;
     this.chair.collisionResponse = false;
     this.chair.position.set(0, groundY - 10, 0);
@@ -1062,7 +1065,7 @@ export class PropPhysics {
       }
       return;
     }
-    const y = chair.y + CHAIR_HALF[1];
+    const y = chair.y + this.chairHalfY;
     if (!this.chairActive || delta <= 0) {
       body.position.set(chair.x, y, chair.z);
       body.velocity.setZero();
@@ -1073,6 +1076,17 @@ export class PropPhysics {
     body.quaternion.setFromEuler(0, chair.yaw, 0);
     body.collisionResponse = true;
     this.chairActive = true;
+  }
+
+  /**
+   * Another ride in the chair's place (the Christmas sleigh): its box's half sizes [across, up, along] and how far its
+   * middle sits ahead of the chair's base (m), so what it drives into is knocked by its whole length.
+   */
+  shapeChair(half: readonly [number, number, number], ahead: number): void {
+    const { Box, Vec3 } = this.cannon;
+    while (this.chair.shapes.length) this.chair.removeShape(this.chair.shapes[0]);
+    this.chair.addShape(new Box(new Vec3(...half)), new Vec3(0, 0, ahead));
+    this.chairHalfY = half[1];
   }
 
   /** Advance by `delta` seconds with the character at `pusher` (and the ridden chair). Returns false when the world was skipped. */
