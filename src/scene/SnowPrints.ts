@@ -1,10 +1,13 @@
 import {
   CanvasTexture, DoubleSide, InstancedBufferAttribute, InstancedMesh, Matrix4, PlaneGeometry, SRGBColorSpace, ShaderMaterial,
 } from 'three';
-import { SNOW, SOLE } from '../world/snowPrints.ts';
+import { SOLE } from '../world/snowPrints.ts';
 
-/** How many sole prints show at once (the oldest is reused): enough for SNOW.fade seconds of running. */
-export const PRINTS = { max: 160 } as const;
+/**
+ * Each sole print fades out over `fade` seconds, quickly enough that walking leaves only about five behind the
+ * character; `max` slots are more than ever show at once, so none is taken away before it has faded.
+ */
+export const PRINTS = { max: 24, fade: 2 } as const;
 
 /** Canvas pixels per metre of sole. */
 const PPM = 480;
@@ -80,7 +83,7 @@ function soleTexture(): CanvasTexture {
 
 /**
  * Christmas: the sneaker's sole printed in the snow at every step, crisp at any zoom: one instanced quad per print,
- * lying just over the ground, turned like the foot (left prints mirrored), fading out over SNOW.fade seconds. The
+ * lying just over the ground, turned like the foot (left prints mirrored), fading out over PRINTS.fade seconds. The
  * texture is the outline of the character's own sole (SOLE) in the bare ground's colour: a hole in the snow.
  */
 export class SnowPrints {
@@ -101,7 +104,7 @@ export class SnowPrints {
     geometry.setAttribute('aBorn', this.born);
     const material = new ShaderMaterial({
       vertexShader, fragmentShader, transparent: true, depthWrite: false, side: DoubleSide,
-      uniforms: { map: { value: soleTexture() }, uTime: { value: 0 }, uFade: { value: SNOW.fade } },
+      uniforms: { map: { value: soleTexture() }, uTime: { value: 0 }, uFade: { value: PRINTS.fade } },
       polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
     });
     this.mesh = new InstancedMesh(geometry, material, PRINTS.max);

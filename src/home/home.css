@@ -77,15 +77,8 @@ h1, p { margin: 0; }
 }
 .room-bar { top: 16px; left: 16px; display: flex; align-items: center; padding: 6px; }
 
-/* Language switch, and for Christmas the countdown pill beside it. */
+/* Language switch. */
 .language-switch button { min-height: 28px; padding: 0 9px; font-size: 11px; letter-spacing: 1px; }
-.room-bar { gap: 8px; }
-.christmas-countdown {
-  display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 10px 0 8px; border-radius: 7px;
-  color: #fff; background: linear-gradient(#ffffff1c, #00000000), #b3121e; box-shadow: 0 2px 0 #5a0a10, 0 1px 0 #ffffff26 inset;
-  font-size: 11px; letter-spacing: 0.6px; white-space: nowrap;
-}
-.christmas-countdown svg { width: 14px; height: 14px; flex: none; }
 
 /* Options behind a menu button, closed by default: one panel of labelled rows under the button. */
 .menu-toggle {

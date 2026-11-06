@@ -163,7 +163,8 @@ export type OutsideData = {
   chair?: OfficeChair;
   lapBoard?: Scoreboard;
   /** Christmas: the board by the giant tree counting the gifts brought there off the sleigh. */
-  giftBoard?: Scoreboard;
+  /** Christmas: the big sign the days to Christmas are painted on. */
+  countdownBoard?: Scoreboard;
   trafficLight?: Object3D;
   /** The park benches as seats (the bed's clips and the lap laptop), each with its bench's name as `id`. */
   benches: SeatSpot[];
@@ -263,7 +264,7 @@ export function readOutside(root: Object3D): OutsideData {
   const tapes: Tape[] = [];
   let chair: OfficeChair | undefined;
   let lapBoard: Scoreboard | undefined;
-  let giftBoard: Scoreboard | undefined;
+  let countdownBoard: Scoreboard | undefined;
   let trafficLight: Object3D | undefined;
   const benches: SeatSpot[] = [];
   const bags: PunchBag[] = [];
@@ -293,8 +294,8 @@ export function readOutside(root: Object3D): OutsideData {
       if (object.name === 'LapBoard' && data.board?.length === 3) {
         lapBoard = { position, yaw, width: data.board[0], height: data.board[1], bottom: data.board[2] };
       }
-      if (object.name === 'GiftBoard' && data.board?.length === 3) {
-        giftBoard = { position, yaw, width: data.board[0], height: data.board[1], bottom: data.board[2] };
+      if (object.name === 'CountdownBoard' && data.board?.length === 3) {
+        countdownBoard = { position, yaw, width: data.board[0], height: data.board[1], bottom: data.board[2] };
       }
       if (object.name === 'TrafficLight') trafficLight = object;
       if (data.seat === 'bench' && data.stand !== undefined && data.approach !== undefined) {
@@ -387,7 +388,7 @@ export function readOutside(root: Object3D): OutsideData {
   targets.sort((a, b) => a.index - b.index);
   tapes.sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }));
   bags.sort((a, b) => a.id.localeCompare(b.id));
-  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost, decor, plaques, targets, scoreboard, ramps, tapes, chair, lapBoard, giftBoard, trafficLight, benches, bags, experience };
+  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost, decor, plaques, targets, scoreboard, ramps, tapes, chair, lapBoard, countdownBoard, trafficLight, benches, bags, experience };
 }
 
 /** Height of a ramp's surface above the ground at a point, 0 off it. */

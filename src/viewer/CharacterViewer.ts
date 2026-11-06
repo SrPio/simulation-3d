@@ -58,9 +58,8 @@ import { ChristmasLights } from '../scene/ChristmasLights.ts';
 import { SNOWFALL, SnowFall } from '../scene/SnowFall.ts';
 import { SnowGround } from '../scene/SnowGround.ts';
 import { SnowPlay } from '../scene/SnowPlay.ts';
-import { GiftBoard } from '../scene/GiftBoard.ts';
+import { CountdownBoard } from '../scene/CountdownBoard.ts';
 import { printSpot, snowAt, type BareGround } from '../world/snowPrints.ts';
-import { GiftDelivery } from '../world/giftDelivery.ts';
 import { pompomAt, pompomStep, type PompomState } from '../character/pompom.ts';
 import { HatTail, type TailBinding } from '../character/hatTail.ts';
 import { hiddenBehind, revealStep, type Bounds3 } from '../world/reveal.ts';
@@ -360,10 +359,9 @@ export class CharacterViewer {
   private runners?: Vector3[];
   private giftIn = 0;
   private xmasClock = 0;
-  /** Christmas: the gift delivery game under the giant tree, and its board. */
-  private delivery?: GiftDelivery;
-  private giftBoard?: GiftBoard;
-  private treeCentre?: { x: number; z: number };
+  /** Christmas: the big sign counting the days to Christmas, and when it was last checked against the date. */
+  private countdown?: CountdownBoard;
+  private countdownAt = 0;
   /** Christmas: snowman balls drawn hidden (crumbled into snow). */
   private crumbledShown = new Set<number>();
   /** halloween.glb split up while the Halloween dress-up is on (its world joins the outside). */
@@ -691,7 +689,7 @@ export class CharacterViewer {
       if (this.room) this.scene.add(this.room);
       if (this.outside) this.scene.add(this.outside);
       for (const object of [this.bags.length ? this.bagRoot : undefined, this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.rubik?.root, this.targetsView?.root, this.circuit?.root, this.graffiti?.root, this.candyBurst?.root, this.sky?.root, this.likeKey?.view.root,
-        this.lights?.mesh, this.snowFall?.points, this.snowPlay?.root, this.snowPrints?.mesh, this.giftBoard?.mesh]) if (object) this.scene.add(object);
+        this.lights?.mesh, this.snowFall?.points, this.snowPlay?.root, this.snowPrints?.mesh, this.countdown?.mesh]) if (object) this.scene.add(object);
       if (!this.ground) this.createFloor(this.mixer ? 0 : box.min.y);
       this.frameLights();
       this.cameraDistance = Math.max(this.bounds.length() * 2.5, 1);
@@ -1063,7 +1061,7 @@ export class CharacterViewer {
 
   /**
    * Christmas: the snow on the ground (bare on the road, the room's platform and the crossroads green), the
-   * falling snow, the blinking bulbs, the snowballs, gifts and lumps of snow, and the gift delivery board.
+   * falling snow, the blinking bulbs, the snowballs, gifts and lumps of snow, and the sign counting the days to Christmas.
    */
   private addChristmas(data: OutsideData): void {
     const xmas = this.xmas!;
@@ -1082,14 +1080,10 @@ export class CharacterViewer {
     this.snowPlay = new SnowPlay(xmas.library, data.groundY);
     this.lights = new ChristmasLights(bulbPositions(xmas));
     this.host.dataset.bulbs = String(this.lights.count);
-    const tree = data.decor.find((item) => item.kind === 'xmastree');
-    if (tree) this.treeCentre = { x: tree.position.x, z: tree.position.z };
-    this.delivery = new GiftDelivery((() => { try { return window.localStorage; } catch { return undefined; } })());
-    if (data.giftBoard) {
-      this.giftBoard = new GiftBoard(data.giftBoard);
-      this.giftBoard.paint(0, this.delivery.best);
+    if (data.countdownBoard) {
+      this.countdown = new CountdownBoard(data.countdownBoard);
+      this.countdown.paint();
     }
-    this.host.dataset.delivered = '0';
     this.host.dataset.gifts = '0';
     this.host.dataset.snowmen = 'standing';
   }
@@ -1137,6 +1131,11 @@ export class CharacterViewer {
   private updateChristmas(delta: number): void {
     if (!this.xmas || !this.model) return;
     this.xmasClock += delta;
+    // The day may turn over while the page is open: the sign checks the date now and then (it repaints only on a change).
+    if (this.countdown && this.xmasClock - this.countdownAt > 30) {
+      this.countdownAt = this.xmasClock;
+      this.countdown.paint();
+    }
     this.lights?.update(this.xmasClock, this.reducedMotion);
     const physics = this.physics;
     // A burst snowball is gone: its lumps fly (SnowPlay) and it leaves nothing on the ground.
@@ -1167,17 +1166,6 @@ export class CharacterViewer {
       if (this.host.dataset.snowmen !== state) this.host.dataset.snowmen = state;
       const gifts = String(physics.gifts.length);
       if (this.host.dataset.gifts !== gifts) this.host.dataset.gifts = gifts;
-      // Gifts off the sleigh resting under the giant tree count as delivered.
-      if (this.delivery && this.treeCentre && physics.gifts.length) {
-        const added = this.delivery.check(physics.gifts.map((gift) => ({
-          key: gift.body, at: { x: gift.body.position.x, z: gift.body.position.z, speed: gift.body.velocity.length() },
-        })), this.treeCentre);
-        if (added) {
-          this.sound('bell', 0.8, this.treeCentre);
-          this.giftBoard?.paint(this.delivery.delivered, this.delivery.best);
-          this.host.dataset.delivered = String(this.delivery.delivered);
-        }
-      }
     }
     // The sleigh's runners leave two grooves in the snow while it slides on the ground.
     const chair = this.chairDrive;
@@ -1887,11 +1875,6 @@ export class CharacterViewer {
     this.candyBurst?.clear();
     this.snowPlay?.clear();
     this.snowPrints?.clear();
-    this.delivery?.reset();
-    if (this.delivery) {
-      this.giftBoard?.paint(0, this.delivery.best);
-      this.host.dataset.delivered = '0';
-    }
     this.crumbledShown.clear();
     this.pieces?.reset();
     this.syncFlaps(true);
@@ -2537,6 +2520,7 @@ export class CharacterViewer {
     if (this.disposed) return;
     this.areas?.setLanguage();
     this.floorTexts?.paint();
+    this.countdown?.paint();
     this.signpost?.paint();
     this.about?.paint();
     this.graffiti?.setLanguage(getLanguage());
@@ -3376,7 +3360,7 @@ export class CharacterViewer {
     this.events.render?.(null);
     this.areas?.dispose();
     this.floorTexts?.dispose();
-    for (const part of [this.snowFall, this.snowGround, this.snowPrints, this.snowPlay, this.lights, this.giftBoard]) part?.dispose();
+    for (const part of [this.snowFall, this.snowGround, this.snowPrints, this.snowPlay, this.lights, this.countdown]) part?.dispose();
     this.signpost?.dispose();
     this.about?.dispose();
     this.rubik?.dispose();

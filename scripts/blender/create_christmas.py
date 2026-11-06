@@ -9,7 +9,8 @@ assets/textures/christmas/ornament.png by this script.
     the physics holds them together until a knock), and the gifts piled round the giant tree (`prop` 'gift', white: the
     viewer tints each one).
   - Fixed: decorated pines (decor `pine`), the giant Christmas tree (decor `xmastree`, a shout landmark), the gift
-    board (`GiftBoard`, `board` [w, h, bottom]), garlands, wreaths, bows and
+    countdown sign (`CountdownBoard`, decor 'countdown', `board` [w, h, bottom]: the face the viewer paints the days to
+    Christmas on), garlands, wreaths, bows and
     stockings in the room and outside (plain meshes, merged with the outside), `Floor_ChristmasTree` (floor
     'xmastree') and `Zone_Christmas` (reset zone, target 'christmas').
 - `ChristmasLights`: one empty per string of bulbs (`bulbs` [x, y, z, …] in the empty's own axes, three.js y up after
@@ -55,7 +56,7 @@ RENDERS = ROOT / 'assets' / 'renders' / 'christmas'
 ROOM_FLOOR = -GROUND_Z            # the room floor over the outside ground
 XMAS = (44.5, -4.5)               # the giant tree, on the lawn east of the about-me plaza
 XMAS_TREE = {'height': 8.6, 'radius': 3.0, 'tiers': 6}
-GIFT_BOARD = (40.6, -1.2)
+COUNTDOWN = (16.0, 2.5)          # the big countdown sign, east of the start on the way to the plaza
 # Snowmen (three.js x, z, yaw): beside the room, by the crossroads, in the plaza, in the playground, in the park and by
 # the giant tree. Balls: radius of the base, body and head.
 SNOWMEN = [(3.4, 8.6, 0.3), (14.2, 9.4, -0.2), (38.2, 0.4, 0.5), (13.4, 27.4, 0.1), (-9.0, 18.6, -0.4), (48.2, -2.4, -0.6)]
@@ -213,8 +214,8 @@ def materials():
         'hat': m('SantaHatRed', (0.7, 0.02, 0.04), 0.75),
         'stocking': m('StockingRed', (0.66, 0.03, 0.05), 0.85),
         'stockingGreen': m('StockingGreen', (0.03, 0.34, 0.1), 0.85),
-        'board': m('GiftBoardWood', (0.36, 0.06, 0.07), 0.6),
-        'boardFace': m('GiftBoardFace', (0.05, 0.12, 0.08), 0.8),
+        'board': m('CountdownWood', (0.5, 0.03, 0.05), 0.6),
+        'boardFace': m('CountdownFace', (0.05, 0.12, 0.08), 0.8),
         'plinth': m('XmasPlinth', (0.25, 0.1, 0.06), 0.8),
     }
 
@@ -516,6 +517,30 @@ def giant_tree(m, parent, lights):
     centre = Vector(at(XMAS))
     light_string('Lights_XmasTree', [centre + p for p in bulbs_spiral(rims, top, 5.5, 240, out=0.07)], lights, centre, 0.06)
     return tree
+
+
+def countdown_sign(m, parent, lights):
+    """The big sign counting the days to Christmas: a red wooden frame on two posts with a dark green face (the viewer
+    paints the count on it, `board` [w, h, bottom]), a gold bow on top and bulbs round the frame. Faces three.js +Z."""
+    bw, bh, bottom = 3.6, 1.9, 1.0
+    frame = 0.1
+    bm = bmesh.new()
+    for side in (-1, 1):
+        box(bm, (side * (bw / 2 + frame / 2) - 0.07, -0.07, 0), (side * (bw / 2 + frame / 2) + 0.07, 0.07, bottom + bh + 0.18), 0)
+    box(bm, (-bw / 2 - frame, -0.06, bottom - frame), (bw / 2 + frame, 0.06, bottom + bh + frame), 0)
+    box(bm, (-bw / 2, -0.07, bottom), (bw / 2, -0.06, bottom + bh), 1)
+    bow(bm, (0, -0.09, bottom + bh + frame + 0.1), 0.16, 2)
+    decor('CountdownBoard', finish('Decor_CountdownBoard', bm, [m['board'], m['boardFace'], m['gold']], 180), COUNTDOWN, BLOCK_YAW, parent,
+          'countdown', (bw + 0.6, 0.7), (bw + 0.3, bottom + bh, 0.2))
+    board = bpy.data.objects['CountdownBoard']
+    board['board'] = [bw - 0.02, bh - 0.02, bottom + 0.01]
+    # Bulbs along the frame's top and down its sides, just in front of it.
+    centre = Vector(at(COUNTDOWN))
+    edge_x, top = bw / 2 + frame * 0.5, bottom + bh + frame * 0.5
+    points = [Vector((edge_x * (2 * k / 22 - 1), -0.09, top)) for k in range(23)]
+    for side in (-1, 1):
+        points += [Vector((side * edge_x, -0.09, top - (top - bottom + frame * 0.5) * k / 9)) for k in range(1, 10)]
+    light_string('Lights_Countdown', [centre + p for p in points], lights, centre, 0.045)
 
 
 # ------------------------------------------------------------------ garlands, wreaths, bows, stockings
@@ -1012,19 +1037,10 @@ def build(root, head):
         light_string(f'Lights_Pine{index}', [centre + p for p in bulbs_spiral(rims, top, 3.0, 26 if in_room else 40, out=0.04)], lights, centre, 0.035)
 
     giant_tree(m, fixed, lights)
-    # The tree's zone: its painted ring and name, the reset zone and the gift board.
+    # The tree's zone: its painted ring and name and the reset zone.
     room.anchor('Floor_ChristmasTree', at((XMAS[0], XMAS[1] + 0.6)), world, BLOCK_YAW, floor='xmastree', size=[11.0, 10.6])
     room.anchor('Zone_Christmas', at((41.4, -8.6)), world, BLOCK_YAW, zone='reset', target='christmas', area=list(RESET_AREA))
-    bm = bmesh.new()
-    bw, bh, bottom = 2.0, 1.2, 0.9
-    for side in (-1, 1):
-        box(bm, (side * bw / 2 - 0.06, -0.06, 0), (side * bw / 2 + 0.06, 0.06, bottom + bh + 0.1), 0)
-    box(bm, (-bw / 2 - 0.06, -0.05, bottom), (bw / 2 + 0.06, 0.05, bottom + bh), 0)
-    box(bm, (-bw / 2 + 0.04, -0.056, bottom + 0.04), (bw / 2 - 0.04, -0.05, bottom + bh - 0.04), 1)
-    decor('GiftBoard', finish('Decor_GiftBoard', bm, [m['board'], m['boardFace']], None), GIFT_BOARD, BLOCK_YAW, fixed, 'board', (2.3, 0.5),
-          (2.2, bottom + bh, 0.14))
-    board = bpy.data.objects['GiftBoard']
-    board['board'] = [bw - 0.08, bh - 0.08, bottom + 0.04]
+    countdown_sign(m, fixed, lights)
 
     room_decor(m, fixed, lights)
     outside_decor(m, fixed, lights)

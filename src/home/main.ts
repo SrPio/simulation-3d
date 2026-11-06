@@ -12,7 +12,7 @@ import { setupCineMode } from './cineMode.ts';
 import { GamepadInput, type PadKind } from '../input/GamepadInput.ts';
 import { Sounds } from '../audio/Sounds.ts';
 import { halloweenMode } from '../core/halloween.ts';
-import { christmasMode, daysToChristmas, seasonOf } from '../core/christmas.ts';
+import { christmasMode, seasonOf } from '../core/christmas.ts';
 import { LikeCounter } from '../core/likes.ts';
 import { CharacterViewer, type CameraMode, type LightPreset, type MovementState, type ViewerStatus } from '../viewer/CharacterViewer';
 
@@ -32,7 +32,6 @@ app.innerHTML = `
       <div class="language-switch tool-segmented" role="group" data-i18n-label="language.label">
         ${LANGUAGES.map((language) => `<button type="button" data-language="${language}" lang="${language}" aria-pressed="false">${language.toUpperCase()}</button>`).join('')}
       </div>
-      <span class="christmas-countdown" id="christmas-countdown" role="status" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M12 2l1.6 3.6L17 4l-1.6 3.6L19 9l-3.6 1.4L17 14l-3.4-1.6L12 16l-1.6-3.6L7 14l1.6-3.6L5 9l3.6-1.4L7 4l3.4 1.6z" opacity=".95"/><path fill="#7a0a14" d="M11 15h2v7h-2z"/></svg><span></span></span>
     </header>
     <button type="button" class="menu-toggle" id="menu-toggle" aria-expanded="false" aria-controls="room-tools" data-i18n-label="menu.open">
       <span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>
@@ -279,24 +278,9 @@ function applyTexts(): void {
   for (const button of languageButtons) button.setAttribute('aria-pressed', String(button.dataset.language === language));
   menuToggle.setAttribute('aria-label', t(tools.hidden ? 'menu.open' : 'menu.close'));
   start.setLabel(t('start.label'));
-  applyCountdown();
   touchControls.setLabels(t);
   applySound();
   updateStatus(lastStatus);
-}
-
-/**
- * Christmas: a pill beside ES | EN counting the days to Christmas Eve, «¡Feliz Navidad!» on the 24th and 25th, and
- * hidden from the 26th to the end of the season.
- */
-const countdown = app.querySelector<HTMLSpanElement>('#christmas-countdown');
-function applyCountdown(): void {
-  if (!countdown) return;
-  const days = daysToChristmas();
-  countdown.hidden = !christmas || days === null;
-  const text = countdown.querySelector('span');
-  if (!text || days === null) return;
-  text.textContent = days === 0 ? t('christmas.today') : days === 1 ? t('christmas.countdownOne') : t('christmas.countdown', { days: String(days) });
 }
 
 function updateStatus(state: ViewerStatus): void {

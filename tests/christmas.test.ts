@@ -14,8 +14,8 @@ import { GIFT, PropPhysics, SNOWMAN, type PieceBody } from '../src/world/PropPhy
 import { HatTail, TAIL } from '../src/character/hatTail.ts';
 import { POMPOM, pompomAt, pompomStep } from '../src/character/pompom.ts';
 import { SNOW, SOLE, printLeft, printSpot, snowAt } from '../src/world/snowPrints.ts';
-import { DELIVERY, GiftDelivery } from '../src/world/giftDelivery.ts';
 import { bulbOn } from '../src/scene/ChristmasLights.ts';
+import { countdownLines } from '../src/scene/CountdownBoard.ts';
 import { BOTTLE_UNITS, bottlePath } from '../src/ui/bottle.ts';
 
 async function parse(file: string): Promise<Object3D> {
@@ -47,6 +47,13 @@ test('Christmas is on from 1 December to 5 January, across the new year, and ?na
   for (let d = new Date(2026, 0, 1); d.getFullYear() === 2026; d.setDate(d.getDate() + 1)) {
     assert.ok(!(isChristmasSeason(d) && halloweenMode('', d)), `${d.toDateString()}: one season`);
   }
+});
+
+test('the countdown sign reads «FALTAN / N / DÍAS PARA NAVIDAD», one day in the singular, then Merry Christmas and Happy New Year', () => {
+  assert.deepEqual(countdownLines(12), { top: 'FALTAN', number: '12', bottom: 'DÍAS PARA NAVIDAD' });
+  assert.deepEqual(countdownLines(1), { top: 'FALTA', number: '1', bottom: 'DÍA PARA NAVIDAD' });
+  assert.equal(countdownLines(0).bottom, '¡FELIZ NAVIDAD!');
+  assert.equal(countdownLines(null).bottom, '¡FELIZ AÑO NUEVO!');
 });
 
 test('the countdown counts the days to Christmas Eve and says Merry Christmas on the 24th and 25th', () => {
@@ -84,7 +91,7 @@ test('christmas.glb: its world, the hat with its bobble, the sleigh, the light s
   assert.ok(new Set(bulbs.map((bulb) => bulb.string)).size >= 10, 'on many strings');
 });
 
-test('the world of christmas.glb reads as snowmen and gifts, pines, the giant tree, its zone and its board', async () => {
+test('the world of christmas.glb reads as snowmen and gifts, pines, the giant tree, its zone and the countdown sign', async () => {
   const outside = await parse('outside');
   const dress = takeChristmas(await parse('christmas'));
   outside.add(dress.world);
@@ -107,7 +114,11 @@ test('the world of christmas.glb reads as snowmen and gifts, pines, the giant tr
   assert.ok(!data.decor.some((item) => item.kind === 'ice'), 'no frozen pond');
   assert.ok(data.floors.some((floor) => floor.id === 'xmastree'), 'the tree\'s painted zone');
   assert.ok(data.zones.some((zone) => zone.target === 'christmas'), 'its reset zone');
-  assert.ok(data.giftBoard, 'the gift board');
+  // The countdown sign stands off the road and clear of the start, facing the camera side (+Z) like the other signs.
+  const sign = data.countdownBoard!;
+  assert.ok(sign && sign.width > 3 && sign.height > 1.5, 'a big countdown sign');
+  assert.ok(Math.abs(sign.yaw) < 1e-3, 'facing +Z');
+  assert.ok(Math.hypot(sign.position.x - 2.3, sign.position.z - 2.3) > 8, 'away from the start point');
   // The tree's zone keeps off the circuit's road.
   const road = data.floors.find((floor) => floor.id === 'circuit')!;
   assert.ok(snowAt(tree!.position, { road: { line: road.targets, width: road.gap + 6 } }), 'the tree is well off the road');
@@ -284,7 +295,7 @@ test('a snowball bursts where it lands; a hard knock breaks a snowman apart, its
   assert.ok(physics.world.bodies.includes(physics.bodies[2]), 'back in the world');
 });
 
-test('gifts fall off the sleigh, can be kicked, are capped and go after a while; under the tree they count', () => {
+test('gifts fall off the sleigh, can be kicked, are capped and go after a while', () => {
   const physics = new PropPhysics(cannon, [], [], 0);
   for (let k = 0; k < GIFT.max + 4; k++) physics.dropGift({ x: k * 0.6, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }, { x: 0, y: 0, z: 0 }, k);
   assert.equal(physics.gifts.length, GIFT.max, 'capped');
@@ -298,19 +309,6 @@ test('gifts fall off the sleigh, can be kicked, are capped and go after a while;
   assert.ok(gift.body.position.x > before.x + 0.3, 'a kick sends it flying');
   for (let i = 0; i < Math.ceil(GIFT.life * 60) + 30; i++) physics.step(1 / 60, { x: 3, y: 0, z: 0 });
   assert.equal(physics.gifts.length, 0, 'they go after GIFT.life seconds');
-  // Delivery: resting gifts within the radius count once; moving or far ones do not.
-  const delivery = new GiftDelivery();
-  const a = {};
-  const b = {};
-  const c = {};
-  const centre = { x: 0, z: 0 };
-  assert.equal(delivery.check([{ key: a, at: { x: 1, z: 1, speed: 0 } }, { key: b, at: { x: DELIVERY.radius + 1, z: 0, speed: 0 } }, { key: c, at: { x: 0, z: 1, speed: 3 } }], centre), 1);
-  assert.equal(delivery.check([{ key: a, at: { x: 1, z: 1, speed: 0 } }], centre), 0, 'counted once');
-  assert.equal(delivery.delivered, 1);
-  assert.equal(delivery.best, 1);
-  delivery.reset();
-  assert.equal(delivery.delivered, 0);
-  assert.equal(delivery.best, 1, 'the best stays');
 });
 
 test('the bulbs blink in patterns, never all off at once along a string', () => {

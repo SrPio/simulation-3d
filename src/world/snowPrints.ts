@@ -1,10 +1,11 @@
 import type { Point2 } from './collisions.ts';
 
 /**
- * Christmas: where the snow on the ground is and how the prints in it fade. The prints are drawn into a texture over the
- * whole map (`SNOW_MAP` texels per metre) and fade out evenly over `fade` seconds, a step every `tick` seconds.
+ * Christmas: where the snow on the ground is and how what is pressed into it fades. The sleigh's runner marks are drawn
+ * into a texture over the whole map (`texels` per metre) and fade out evenly over `fade` seconds, a step every `tick`
+ * seconds; the shoe prints are their own decals (SnowPrints, `PRINTS`).
  */
-export const SNOW = { texels: 24, fade: 25, tick: 0.25 } as const;
+export const SNOW = { texels: 24, fade: 4, tick: 0.25 } as const;
 /**
  * The character's sneaker sole as it presses into the snow (metres, measured on ShoeSole_* of the web V4 rig): `length`
  * heel to toe, `width` across the ball of the foot and `heel` across the heel, its corners rounded by `corner`
@@ -13,7 +14,7 @@ export const SNOW = { texels: 24, fade: 25, tick: 0.25 } as const;
  */
 export const SOLE = { length: 0.55, width: 0.272, heel: 0.2, corner: 0.075, ahead: 0.13, out: 0.025, toeOut: 0.13 } as const;
 
-/** How much each fade tick takes away (the texture holds 0…1): a print goes in SNOW.fade seconds. */
+/** How much each fade tick takes away (the texture holds 0…1): a mark goes in SNOW.fade seconds. */
 export const fadeStep = (): number => SNOW.tick / SNOW.fade;
 
 /** Distance from a point to a polyline. */
