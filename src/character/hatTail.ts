@@ -11,14 +11,20 @@ import { BufferAttribute, Matrix4, Quaternion, Vector3, type BufferGeometry } fr
  * - tilting the head lets the tail fall towards the ground by `sag` (m at the tip for a quarter turn), since the
  *   modelled shape already hangs as it would standing straight;
  * - no point comes nearer the head's middle than it is in the modelled shape or than the head plus its own ring
- *   (`clear`), so the tail rests on the head instead of going through it.
+ *   (`clear`), so the tail rests on the head instead of going through it, and none goes into the white fur cuff
+ *   (`cuff`, an upright elliptic band round the head) either.
  */
 export const TAIL = { frequency: 7, damping: 1, smooth: 0.18, reach: 0.16, sag: 0.11, clear: 0.6, maxStep: 1 / 120 } as const;
 
 /** What the hat's GLB says about the tail (extras of ChristmasHat_Cap, in the hat's own axes). */
-export type TailSpine = { spine: number[]; radii: number[]; free: number; head: number[] };
+export type TailSpine = { spine: number[]; radii: number[]; free: number; head: number[]; cuff?: number[] };
+
+/** The hat's fur cuff as an upright elliptic band (hat axes): middle x, z, reach to the side, ahead and behind, bottom and top. */
+type Cuff = { x: number; z: number; side: number; ahead: number; behind: number; bottom: number; top: number };
 
 const DOWN = new Vector3(0, -1, 0);
+/** Over how many rings either side the push off the cuff fades out. */
+const CUFF_SPREAD = 7;
 
 export class HatTail {
   /** The spine as modelled (hat axes). */
@@ -27,6 +33,8 @@ export class HatTail {
   private readonly free: number;
   private readonly headCentre: Vector3;
   private readonly headRadius: number;
+  private readonly cuff?: Cuff;
+  private readonly outside: boolean[];
   private readonly nearest: number[];
   /** The chain now (world). */
   private readonly points: Vector3[];
@@ -45,6 +53,12 @@ export class HatTail {
     this.free = Math.max(1, Math.min(this.rest.length - 1, data.free));
     this.headCentre = new Vector3(data.head[0], data.head[1], data.head[2]);
     this.headRadius = data.head[3] ?? 0;
+    const c = data.cuff;
+    this.cuff = c && c.length === 7 ? { x: c[0], z: c[1], side: c[2], ahead: c[3], behind: c[4], bottom: c[5], top: c[6] } : undefined;
+    // Only rings that hang outside the cuff in the modelled shape are kept out of it (the dome's sit over it).
+    const cuff = this.cuff;
+    this.outside = this.rest.map((point) => !!cuff
+      && Math.hypot((point.x - cuff.x) / cuff.side, (point.z - cuff.z) / (point.z < cuff.z ? cuff.behind : cuff.ahead)) >= 1);
     this.nearest = this.rest.map((point, i) => Math.min(point.distanceTo(this.headCentre), this.headRadius + (this.radii[i] ?? 0) * TAIL.clear));
     this.points = this.rest.map((point) => point.clone());
   }
@@ -104,18 +118,54 @@ export class HatTail {
     // A tilted head lets the tail fall a little towards the ground.
     const hatDown = DOWN.clone().transformDirection(matrix);
     const fall = DOWN.clone().sub(hatDown).multiplyScalar(TAIL.sag * scale / Math.SQRT2);
-    const offset = this.sway.clone().add(fall);
-    const centre = this.headCentre.clone().applyMatrix4(matrix);
+    // Worked out in the hat's own axes (where the head and the cuff are), then put back in the world.
+    this.inverse.copy(matrix).invert();
+    const world = this.sway.clone().add(fall);
+    const offset = world.clone().transformDirection(this.inverse).multiplyScalar(world.length() / scale);
     const span = this.points.length - this.free;
-    for (let i = 0; i < this.points.length; i++) {
-      const point = this.points[i].copy(this.rest[i]).applyMatrix4(matrix);
-      if (i < this.free) continue;
-      const along = (i - this.free + 1) / span;
-      point.addScaledVector(offset, along * along);
-      const out = point.clone().sub(centre);
-      const reach = out.length();
-      const least = this.nearest[i] * scale;
-      if (reach < least && reach > 1e-6) point.copy(centre).addScaledVector(out, least / reach);
+    const local = this.points.map((point, i) => {
+      point.copy(this.rest[i]);
+      if (i >= this.free) point.addScaledVector(offset, ((i - this.free + 1) / span) ** 2);
+      return point;
+    });
+    this.keepOffCuff(local);
+    for (const [i, point] of local.entries()) {
+      if (i >= this.free) {
+        const out = point.clone().sub(this.headCentre);
+        const reach = out.length();
+        if (reach < this.nearest[i] && reach > 1e-6) point.copy(this.headCentre).addScaledVector(out, this.nearest[i] / reach);
+      }
+      point.applyMatrix4(matrix);
+    }
+  }
+
+  /**
+   * Keep the hanging tail (hat axes) outside the white fur cuff, an upright elliptic band round the head, its own
+   * ring's thickness away: each point that would sink into it says how far out it must go, and the tail is pushed out by
+   * a smooth swell over that (fading over `CUFF_SPREAD` rings either side), so the push never kinks it.
+   */
+  private keepOffCuff(points: Vector3[]): void {
+    const cuff = this.cuff;
+    if (!cuff) return;
+    const need = points.map((point, i) => {
+      if (i < this.free || !this.outside[i]) return 0;
+      const margin = (this.radii[i] ?? 0) + 0.01;
+      if (point.y < cuff.bottom - margin || point.y > cuff.top + margin) return 0;
+      const dx = point.x - cuff.x;
+      const dz = point.z - cuff.z;
+      const into = Math.hypot(dx / (cuff.side + margin), dz / ((dz < 0 ? cuff.behind : cuff.ahead) + margin));
+      return into < 1 && into > 1e-6 ? Math.hypot(dx, dz) * (1 / into - 1) : 0;
+    });
+    if (!need.some((value) => value > 0)) return;
+    for (const [i, point] of points.entries()) {
+      let push = 0;
+      for (const [j, value] of need.entries()) if (value > 0) push = Math.max(push, value * Math.max(0, 1 - Math.abs(i - j) / CUFF_SPREAD));
+      if (push <= 0) continue;
+      const dx = point.x - cuff.x;
+      const dz = point.z - cuff.z;
+      const length = Math.hypot(dx, dz) || 1;
+      point.x += (dx / length) * push;
+      point.z += (dz / length) * push;
     }
   }
 

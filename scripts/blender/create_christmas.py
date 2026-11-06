@@ -710,7 +710,7 @@ HAT_CLEAR = 0.045
 # dome rising from it and leaning back (`lean` rad, up to `straight` of the way), an arc of radius `bend` turning it
 # over backwards through `sweep` rad, and the tail hanging straight down `drop` m behind the head to the bobble.
 HAT = {'brim': 2.38, 'tilt': 0.045, 'gap': 0.012, 'cuff': 0.1, 'thick': 0.055, 'rise': 0.02, 'straight': 0.36, 'lean': 0.75,
-       'bend': 0.15, 'sweep': 2.95, 'arc': 0.74, 'drop': 0.2, 'pompom': 0.075}
+       'bend': 0.22, 'sweep': 2.95, 'arc': 0.74, 'drop': 0.2, 'flare': 0.6, 'pompom': 0.075}
 
 
 def build_hat(root, m, tree, centre, crown):
@@ -752,6 +752,14 @@ def build_hat(root, m, tree, centre, crown):
             z = math.copysign(abs(sn) ** 0.6, sn) * h['cuff'] * 0.5
             ring_verts.append(bm.verts.new(base + out * x + Vector((0, 0, h['cuff'] * 0.5 + z))))
         cuff_rings.append(ring_verts)
+    # The cuff as an upright elliptic band round the head's axis (three.js axes: x across, z ahead, y up), for the
+    # viewer to keep the swinging tail out of: its middle, its reach to the sides, ahead and behind, and its bottom and top.
+    cuff_points = [v.co.copy() for ring_verts in cuff_rings for v in ring_verts]
+    cuff_band = [round(centre.x, 4), round(-centre.y, 4),
+                 round(max(abs(p.x - centre.x) for p in cuff_points), 4),
+                 round(max(centre.y - p.y for p in cuff_points), 4),
+                 round(max(p.y - centre.y for p in cuff_points), 4),
+                 round(min(p.z for p in cuff_points), 4), round(max(p.z for p in cuff_points), 4)]
     for k in range(segments):
         a_ring, b_ring = cuff_rings[k], cuff_rings[(k + 1) % segments]
         for j in range(sides):
@@ -788,8 +796,10 @@ def build_hat(root, m, tree, centre, crown):
             tangent = Vector((0.1 * u, math.sin(theta), math.cos(theta))).normalized()
         else:
             u = (t - arc_end) / (1 - arc_end)
-            tangent = Vector((0.1, math.sin(sweep), math.cos(sweep))).normalized()
-            point = arc_point(sweep, 1) + tangent * h['drop'] * u
+            # Hanging down, it swings out backwards more and more (`flare`), clear of the cuff's back.
+            start_tangent = Vector((0.1, math.sin(sweep), math.cos(sweep))).normalized()
+            tangent = (start_tangent + Vector((0, h['flare'] * u, 0))).normalized()
+            point = arc_point(sweep, 1) + start_tangent * h['drop'] * u + Vector((0, h['flare'] * h['drop'] * u * u / 2, 0))
         centres.append(point)
         right = Vector((1, 0, 0))
         right = (right - tangent * right.dot(tangent)).normalized()
@@ -884,6 +894,7 @@ def build_hat(root, m, tree, centre, crown):
     cap['radii'] = [round(r, 4) for r in radii]
     cap['tail_free'] = int(round(h['straight'] * steps)) + 1
     cap['head'] = [round(inside.x, 4), round(inside.z, 4), round(-inside.y, 4), round(head_reach, 4)]
+    cap['cuff'] = cuff_band
     # The bobble: its origin at the tip, the ball hanging just under it (the viewer swings it like a pendulum).
     bm = bmesh.new()
     sphere(bm, (0, 0, -h['pompom'] * 0.85), h['pompom'], 0, 2, rng=random.Random(3), wobble=0.12)

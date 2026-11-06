@@ -1105,9 +1105,9 @@ export class CharacterViewer {
   /** Christmas: tie the Santa hat's meshes to its tail's chain (the spine Blender left on ChristmasHat_Cap). */
   private bindHatTail(hat: Object3D): void {
     const cap = hat.getObjectByName('ChristmasHat_Cap');
-    const data = cap?.userData as { spine?: number[]; radii?: number[]; tail_free?: number; head?: number[] } | undefined;
+    const data = cap?.userData as { spine?: number[]; radii?: number[]; tail_free?: number; head?: number[]; cuff?: number[] } | undefined;
     if (!cap || !data?.spine || !data.radii || !data.head) return;
-    const tail = new HatTail({ spine: data.spine, radii: data.radii, free: data.tail_free ?? 1, head: data.head });
+    const tail = new HatTail({ spine: data.spine, radii: data.radii, free: data.tail_free ?? 1, head: data.head, cuff: data.cuff });
     const bindings: TailBinding[] = [];
     // Only the red cloth: the white fur cuff stays on the head (its back is right by where the tail hangs).
     cap.traverse((object) => {

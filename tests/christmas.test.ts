@@ -172,8 +172,8 @@ test('the Santa hat sits over the head, clear of the hair, its bobble at the tip
 test('the Santa hat red tail swings when the head moves, rests on the head and settles back into its shape', async () => {
   const dress = takeChristmas(await parse('christmas'));
   const cap = dress.hat!.getObjectByName('ChristmasHat_Cap')!;
-  const data = cap.userData as { spine: number[]; radii: number[]; tail_free: number; head: number[] };
-  const tail = new HatTail({ spine: data.spine, radii: data.radii, free: data.tail_free, head: data.head });
+  const data = cap.userData as { spine: number[]; radii: number[]; tail_free: number; head: number[]; cuff: number[] };
+  const tail = new HatTail({ spine: data.spine, radii: data.radii, free: data.tail_free, head: data.head, cuff: data.cuff });
   assert.ok(tail.count > 30 && data.tail_free > 5 && data.tail_free < tail.count - 10, 'a chain with a fixed part on the head and a free tail');
   // Every mesh of the cap is tied to the chain, and the tail's vertices follow it.
   const meshes: Mesh[] = [];
@@ -194,19 +194,28 @@ test('the Santa hat red tail swings when the head moves, rests on the head and s
   // Nothing of the tail comes nearer the head's middle than it is in the modelled shape (or than the head plus its ring).
   const head = new Vector3(data.head[0], data.head[1], data.head[2]);
   const least = tail.rest.map((point, i) => Math.min(point.distanceTo(head), data.head[3] + data.radii[i] * TAIL.clear));
+  // Nor into the white fur cuff: an upright elliptic band round the head.
+  const [cx, cz, side, ahead, behind, bottom, top] = data.cuff;
+  const inCuff = (point: Vector3, radius: number) => point.y > bottom - radius && point.y < top + radius
+    && Math.hypot((point.x - cx) / (side + radius), (point.z - cz) / ((point.z < cz ? behind : ahead) + radius)) < 0.999;
   let lag = 0;
   let closest = Infinity;
+  let throughCuff = 0;
   for (let i = 0; i < 240; i++) {
     const x = Math.min(1, i / 20) * 0.6;
     matrix.makeTranslation(x, 0, 0);
     tail.step(1 / 60, matrix);
     at = tail.local(matrix);
     lag = Math.max(lag, at[at.length - 1].distanceTo(tipRest));
-    for (let k = data.tail_free; k < at.length; k++) closest = Math.min(closest, at[k].distanceTo(head) / least[k]);
+    for (let k = data.tail_free; k < at.length; k++) {
+      closest = Math.min(closest, at[k].distanceTo(head) / least[k]);
+      if (inCuff(at[k], data.radii[k])) throughCuff++;
+    }
   }
   assert.ok(lag > 0.03, `the tail swings (${lag.toFixed(3)} m)`);
   assert.ok(at[at.length - 1].distanceTo(tipRest) < 0.01, 'and settles back');
   assert.ok(closest > 0.99, `never into the head (${closest.toFixed(3)} of its least distance)`);
+  assert.equal(throughCuff, 0, 'never through the fur cuff');
   // Head bowed forwards: the tail falls over towards the ground (gravity beyond the modelled shape).
   matrix.makeRotationX(0.8);
   tail.reset(matrix);
