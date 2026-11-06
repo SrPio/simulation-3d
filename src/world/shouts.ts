@@ -2,10 +2,10 @@ import type { Point2 } from './collisions.ts';
 
 /**
  * The about-me plaza's landmarks that make the character shout something about its author when it comes near, and
- * Halloween's graveyard (its fence, decor kind 'graveyard').
+ * Halloween's graveyard (its fence, decor kind 'graveyard') and Christmas' giant tree (decor kind 'xmastree').
  */
-export type ShoutId = 'bust' | 'colombia' | 'univalle' | 'experience' | 'graveyard';
-export const SHOUT_IDS: readonly ShoutId[] = ['bust', 'colombia', 'univalle', 'experience', 'graveyard'];
+export type ShoutId = 'bust' | 'colombia' | 'univalle' | 'experience' | 'graveyard' | 'xmastree';
+export const SHOUT_IDS: readonly ShoutId[] = ['bust', 'colombia', 'univalle', 'experience', 'graveyard', 'xmastree'];
 
 /** A landmark on the ground: its centre and the half sizes of its footprint (its blob shadow), axis aligned. */
 export type ShoutSpot = { id: ShoutId; x: number; z: number; halfX: number; halfZ: number };

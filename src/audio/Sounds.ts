@@ -2,8 +2,9 @@ import { SOUND_FILES, type RecordedSound } from './soundFiles.ts';
 
 /** Sounds made in the browser instead of recorded: the swing of a blow, a chick's cheep, a bottle popping, a Rubik's cube
  * layer clicking round, a neon sign lighting; for Halloween a pumpkin bursting, a candy ticking on the ground and the
- * cauldron's brew bubbling as the rider pops in or out. */
-export type SynthSound = 'whoosh' | 'chirp' | 'pop' | 'twist' | 'neon' | 'splat' | 'candy' | 'bubble';
+ * cauldron's brew bubbling as the rider pops in or out; for Christmas a snowball bursting, a snowman crumbling, the
+ * sleigh's bells and footsteps crunching in the snow or tapping on the frozen pond. */
+export type SynthSound = 'whoosh' | 'chirp' | 'pop' | 'twist' | 'neon' | 'splat' | 'candy' | 'bubble' | 'snowhit' | 'crumble' | 'jingle' | 'stepSnow';
 export type SoundName = RecordedSound | SynthSound;
 /** Continuous sounds whose level and pitch follow something: the office chair's casters, the soda fizzing. */
 export type LoopName = 'rolling' | 'fizz';
@@ -65,6 +66,10 @@ export const SOUNDS: Record<SoundName, SoundDef> = {
   splat: impact(0, 0.15, [0.55, 1], [0.85, 1.1], 80),
   candy: impact(0.6, 0.3, [0.1, 0.45], [0.9, 1.4], 35),
   bubble: fixed(0.7, [0.9, 1.1], 200),
+  snowhit: impact(0, 0.12, [0.45, 0.9], [0.85, 1.15], 70),
+  crumble: fixed(0.8, [0.85, 1.1], 150),
+  jingle: impact(0, 1, [0.2, 0.7], [0.94, 1.06], 90),
+  stepSnow: fixed(0.4, [0.85, 1.15], 120),
   ui: fixed(0.45, [1, 1], 40),
 };
 
@@ -326,6 +331,39 @@ export class Sounds {
         osc.connect(blip).connect(master);
         osc.start(t + offset);
         osc.stop(t + offset + 0.08);
+      }
+    } else if ((name === 'snowhit' || name === 'crumble' || name === 'stepSnow') && this.noise) {
+      // Snow: a soft, crunchy burst of low-passed noise (a short squeak for a step, a long falling crunch for a snowman).
+      const length = name === 'crumble' ? 0.55 : name === 'stepSnow' ? 0.11 : 0.2;
+      const source = context.createBufferSource();
+      source.buffer = this.noise;
+      const filter = context.createBiquadFilter();
+      filter.type = name === 'stepSnow' ? 'bandpass' : 'lowpass';
+      filter.Q.value = name === 'stepSnow' ? 1.2 : 0.7;
+      filter.frequency.setValueAtTime((name === 'stepSnow' ? 1600 : 1900) * rate, t);
+      filter.frequency.exponentialRampToValueAtTime(name === 'crumble' ? 220 : 500, t + length);
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(volume, t + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + length);
+      source.connect(filter).connect(gain);
+      source.start(t, Math.random() * 0.5, length + 0.02);
+    } else if (name === 'jingle') {
+      // Sleigh bells: a cluster of small bells, each a bright tone with an inharmonic partial, ringing a little apart.
+      for (let k = 0; k < 4; k++) {
+        const offset = k * 0.028 + Math.random() * 0.02;
+        const base = (2600 + Math.random() * 900) * rate;
+        for (const [ratio, level] of [[1, 1], [2.76, 0.4]]) {
+          const osc = context.createOscillator();
+          const ring = context.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = base * ratio;
+          ring.gain.setValueAtTime(0.0001, t + offset);
+          ring.gain.exponentialRampToValueAtTime(volume * 0.22 * level, t + offset + 0.004);
+          ring.gain.exponentialRampToValueAtTime(0.0001, t + offset + 0.28);
+          osc.connect(ring).connect(master);
+          osc.start(t + offset);
+          osc.stop(t + offset + 0.3);
+        }
       }
     } else if (name === 'neon') {
       // A neon tube striking: a low electric hum that stutters on, then settles.

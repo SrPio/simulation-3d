@@ -222,7 +222,7 @@ export type SprayFill = { d: string; x: number; y: number; size: number };
 export type SpraySymbolName =
   | 'crownline' | 'swoosh' | 'stitched' | 'cross' | 'zigzag' | 'arrowdown' | 'heartline' | 'splat' | 'dot'
   | 'react' | 'js' | 'ts' | 'node' | 'git' | 'three' | 'vite' | 'html' | 'css' | 'terminal' | 'konami' | 'konamiTouch'
-  | 'web' | 'batline' | 'skull';
+  | 'web' | 'batline' | 'skull' | 'snowflake' | 'candycane';
 export const SPRAY_SYMBOLS: Record<SpraySymbolName, SpraySymbol> = {
   crownline: {
     width: 1,
@@ -306,6 +306,15 @@ export const SPRAY_SYMBOLS: Record<SpraySymbolName, SpraySymbol> = {
     ],
     blobs: [[0.8, 0.52, 0.09]],
   },
+  // Christmas: a snowflake and a candy cane with its stripes.
+  snowflake: { width: 1, strokes: snowflake(0.5, 0.5, 0.48) },
+  candycane: {
+    width: 0.62,
+    strokes: [
+      [[0.22, 1.0], [0.22, 0.32], ...arc(0.38, 0.32, 0.16, 0.2, PI, 2 * PI, 8), [0.56, 0.42]],
+      [[0.13, 0.92], [0.3, 0.82]], [[0.13, 0.74], [0.3, 0.64]], [[0.13, 0.56], [0.3, 0.46]], [[0.15, 0.36], [0.3, 0.26]], [[0.38, 0.13], [0.47, 0.28]],
+    ],
+  },
   skull: {
     width: 0.9,
     strokes: [
@@ -317,6 +326,22 @@ export const SPRAY_SYMBOLS: Record<SpraySymbolName, SpraySymbol> = {
     blobs: [[0.3, 0.46, 0.1], [0.6, 0.46, 0.1]],
   },
 };
+
+/** A six-armed snowflake round (cx, cy): each arm with a pair of little branches. */
+function snowflake(cx: number, cy: number, r: number): Stroke[] {
+  const strokes: Stroke[] = [];
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * 2 * PI - PI / 2;
+    const at = (d: number, turn = 0): Point => [cx + Math.cos(a + turn) * d, cy + Math.sin(a + turn) * d];
+    strokes.push([at(0.02), at(r)]);
+    for (const d of [0.45, 0.72]) {
+      const base = at(r * d);
+      const len = r * (d < 0.6 ? 0.3 : 0.22);
+      for (const side of [-1, 1]) strokes.push([base, [base[0] + Math.cos(a + side * 0.75) * len, base[1] + Math.sin(a + side * 0.75) * len]]);
+    }
+  }
+  return strokes;
+}
 
 /** A cobweb round (cx, cy): eight threads out from the middle and four rings sagging between them; its spider below. */
 function cobweb(cx: number, cy: number, rx: number, ry: number): Stroke[] {

@@ -18,9 +18,14 @@ const BUBBLES = [[-6, 1.6, 0], [3, 1.2, 0.35], [-1, 1.9, 0.7], [7, 1.1, 1.05], [
  * Each vessel's own drawing: how far across its bubbles rise (the tube is narrower), its shine, where the restart mark
  * sits beside it, and the liquid's gradient (cola, or the cauldron's glowing green brew).
  */
-const LOOKS: Record<Vessel, { spread: number; shine: string; mark: [number, number]; fill: string[] }> = {
+const LOOKS: Record<Vessel, { spread: number; shine: string; mark: [number, number]; fill: string[]; bands?: string }> = {
   bottle: { spread: 1, shine: 'M-8.6 86 C-10.6 70 -10.4 58 -9.2 48', mark: [10, 16], fill: ['#2a1208', '#6e3a1a', '#532810', '#220e06'] },
   tube: { spread: 0.62, shine: 'M-5.6 88 L-5.6 14', mark: [7, 13], fill: ['#1d6b12', '#7dff4a', '#3fd122', '#164f0e'] },
+  // The thruster: icy blue charge, the tank's collars and the nozzle's throat drawn across it.
+  thruster: {
+    spread: 1.05, shine: 'M-11.6 74 L-11.6 26', mark: [11, 17], fill: ['#2a5fa8', '#bfe9ff', '#7cc8ff', '#1f4a88'],
+    bands: 'M-16 76 H16 M-16 24 H16 M-16 50 H16 M-8.2 86 H8.2',
+  },
 };
 
 /**
@@ -28,7 +33,8 @@ const LOOKS: Record<Vessel, { spread: number; shine: string; mark: [number, numb
  * outline as the 3D one, see src/ui/bottle.ts) filled with cola up to the fuel left. It drains while the nitro sprays
  * (the bottle shakes and foams), bubbles up as it refills, dims and pulses below the level the nitro lights again at
  * and glows once when full. Reads `data-drive`, `data-nitro` and `data-fuel` from the viewer's host. For Halloween the
- * same as the cauldron's test tube full of glowing green brew (`vessel` 'tube', `data-vessel` on the gauge).
+ * same as the cauldron's test tube full of glowing green brew (`vessel` 'tube', `data-vessel` on the gauge); for
+ * Christmas one of the sleigh's thrusters charged with icy blue snow (`vessel` 'thruster').
  */
 export class NitroGauge {
   readonly root: HTMLDivElement;
@@ -67,6 +73,7 @@ export class NitroGauge {
             ${BUBBLES.map(([x, r, delay]) => `<circle class="nitro-bubble" cx="${x * look.spread}" cy="${BOTTLE_UNITS - 3}" r="${r}" style="animation-delay:${delay}s"/>`).join('')}
           </g>
           <path class="nitro-shine" d="${look.shine}"/>
+          ${look.bands ? `<path class="nitro-bands" d="${look.bands}"/>` : ''}
         </g>
         <line class="nitro-mark" x1="${look.mark[0]}" x2="${look.mark[1]}" y1="${restart}" y2="${restart}"/>
         <path class="nitro-outline" d="${path}"/>

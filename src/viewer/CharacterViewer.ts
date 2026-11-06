@@ -17,7 +17,7 @@ import { KeyboardInput, type HoldAction, type PressAction } from '../input/Keybo
 import {
   EXPECTED_BYTES, boxingFile, circuitFile, colombiaFile, disposeObjects, loadBoxing, loadColombia, laptopFile, loadCharacter, loadChick, loadCircuit, loadLaptop, loadOutside, loadRoom,
   loadUnivalle, modelVersions, outsideFile, roomFile, univalleFile, experienceFile, loadExperience, halloweenFile, loadHalloween,
-  type ModelVersionId, type SceneId,
+  christmasFile, loadChristmas, type ModelVersionId, type SceneId,
 } from '../core/loadAssets';
 import { DOWNLOAD_SHARE, ProgressMeter } from '../core/loadProgress.ts';
 import { distanceGain, type SoundName, type Sounds } from '../audio/Sounds.ts';
@@ -34,6 +34,8 @@ import { ShoutBurst } from '../scene/ShoutBurst.ts';
 import { shoutAt, shoutSpots, type ShoutId, type ShoutSpot } from '../world/shouts.ts';
 import { ChargeMeter } from '../scene/ChargeMeter.ts';
 import { InfiniteFloor } from '../scene/InfiniteFloor.ts';
+import { SnowPrints } from '../scene/SnowPrints.ts';
+import { setGroundInk } from '../scene/groundInk.ts';
 import { BlobShadows } from '../scene/BlobShadows.ts';
 import { PieceMeshes } from '../scene/PieceMeshes.ts';
 import { AboutPlaza } from '../scene/AboutPlaza.ts';
@@ -43,20 +45,30 @@ import { TargetsView } from '../scene/TargetsView.ts';
 import { CircuitView } from '../scene/CircuitView.ts';
 import { DRIVE, NITRO, PUSH, chairAt, driveStep, forwardSpeed, pushChair, strikeChair, type ChairState } from '../world/chairDrive.ts';
 import { applyLean, leanStep, leanTarget, restHand, restLean, solveArm, type Lean } from '../character/riderPose.ts';
-import { BREW, SODA, SodaSpray } from '../scene/SodaSpray.ts';
+import { BREW, SODA, SNOW_JET, SodaSpray } from '../scene/SodaSpray.ts';
 import type { ChairRig } from '../scene/CircuitView.ts';
 import type { SeatSpot } from '../interactions/InteractionController.ts';
 import type { FloorBlock } from '../scene/outsideData.ts';
 import { RoomReveal } from '../scene/RoomReveal.ts';
 import { dressPieces, ghostBag, takeHalloween, wearMask, type HalloweenDress } from '../scene/halloweenDress.ts';
 import { Graffiti, paintGraffiti, type Paintings } from '../scene/Graffiti.ts';
-import { GRAFFITI, graffitiForHalloween, graffitiForTouch, type GraffitiSpot } from '../scene/graffitiData.ts';
+import { GRAFFITI, graffitiForChristmas, graffitiForHalloween, graffitiForTouch, type GraffitiSpot } from '../scene/graffitiData.ts';
+import { SNOWY, bulbPositions, christmasBag, dressChristmasPieces, hideCap, snowOnTop, takeChristmas, type ChristmasDress } from '../scene/christmasDress.ts';
+import { ChristmasLights } from '../scene/ChristmasLights.ts';
+import { SNOWFALL, SnowFall } from '../scene/SnowFall.ts';
+import { SnowGround } from '../scene/SnowGround.ts';
+import { SnowPlay } from '../scene/SnowPlay.ts';
+import { GiftBoard } from '../scene/GiftBoard.ts';
+import { printSpot, snowAt, type BareGround } from '../world/snowPrints.ts';
+import { GiftDelivery } from '../world/giftDelivery.ts';
+import { pompomAt, pompomStep, type PompomState } from '../character/pompom.ts';
+import { HatTail, type TailBinding } from '../character/hatTail.ts';
 import { hiddenBehind, revealStep, type Bounds3 } from '../world/reveal.ts';
 import { TargetGame, type Lane } from '../world/targets.ts';
 import { signAt } from '../world/signs.ts';
 import { KEY_SINK, onKey, pressStep, type FloorKey } from '../world/keyPress.ts';
 import { ChickRain } from '../scene/ChickRain.ts';
-import { BAG_PUSH, LAPTOP, MAX_CHICKS, PropPhysics, type ChairPusher, type StaticBox, type TargetDisc, type TargetHit, type Thrown, type ThrownLaptop } from '../world/PropPhysics.ts';
+import { BAG_PUSH, GIFT, LAPTOP, MAX_CHICKS, PropPhysics, type ChairPusher, type StaticBox, type TargetDisc, type TargetHit, type Thrown, type ThrownLaptop } from '../world/PropPhysics.ts';
 import { CandyBurst } from '../scene/CandyBurst.ts';
 import { HalloweenSky } from '../scene/HalloweenSky.ts';
 import type { Box2 } from '../world/collisions.ts';
@@ -106,6 +118,12 @@ type ViewerOptions = {
    * pins, the eye ball, dark bricks, Halloween graffiti, a moonlit night with bats and ghosts.
    */
   halloween?: boolean;
+  /**
+   * Room only: the Christmas dress-up (src/core/christmas.ts): christmas.glb's snowmen, pines, the giant tree and the
+   * decorations, snow on the ground with footprints, falling snow, snowy trees, the Santa hat, the sleigh instead of the
+   * office chair, snowballs instead of laptops, Christmas pins, ball and bags, Christmas graffiti and a winter dusk.
+   */
+  christmas?: boolean;
   /** Room only: the shared like counter, shown on the like key on the ground (stepping on it likes the project). */
   likes?: LikeCounter;
 };
@@ -167,6 +185,11 @@ const RIDER_WRIST = { ahead: 0.02, up: 0.045 };
 const RIDER_FORWARD = 0.15;
 /** Halloween: how far behind the cauldron's middle the rider's hips are (m), leaving room for the legs in front. */
 const RIDER_BACK = 0.16;
+/**
+ * Christmas: gifts fall off the sleigh's sack every `every` seconds while its thrusters blow, thrown back (m/s) and up
+ * off the sack.
+ */
+const XMAS = { every: 0.55, back: 1.6, up: 2.2 } as const;
 /** Blob shadow slots: the character first, then the signs, then the loose pieces, then the thrown laptops. */
 const CHARACTER_SHADOW = 0;
 /** cannon-es sleepState of a sleeping body. */
@@ -316,6 +339,33 @@ export class CharacterViewer {
   /** Link signs and playground reset zones: the floor zones the character can step into. */
   private zones: Sign[] = [];
   private physics?: PropPhysics;
+  /** christmas.glb split up while the Christmas dress-up is on (its world joins the outside). */
+  private xmas?: ChristmasDress;
+  /** Christmas: the blinking bulbs, the falling snow, the snow on the ground and what is thrown and falls in it. */
+  private lights?: ChristmasLights;
+  private snowFall?: SnowFall;
+  private snowGround?: SnowGround;
+  private snowPlay?: SnowPlay;
+  private snowPrints?: SnowPrints;
+  /** Christmas: where there is no snow to step in (the road, the room, the green). */
+  private bare: BareGround = {};
+  /** Christmas: the feet's bones, whose ankles place the sole prints. */
+  private feet?: { left: Object3D; right: Object3D };
+  /** Christmas: the Santa hat's bobble and its swing. */
+  private pompom?: { object: Object3D; state?: PompomState };
+  /** Christmas: the hat's red tail swinging and resting on the head, and the hat's meshes tied to it. */
+  private hatTail?: { tail: HatTail; hat: Object3D; bindings: TailBinding[] };
+  /** Christmas: the sleigh ridden instead of the office chair, its runners' last marks, the gift timer. */
+  private sleigh?: Object3D;
+  private runners?: Vector3[];
+  private giftIn = 0;
+  private xmasClock = 0;
+  /** Christmas: the gift delivery game under the giant tree, and its board. */
+  private delivery?: GiftDelivery;
+  private giftBoard?: GiftBoard;
+  private treeCentre?: { x: number; z: number };
+  /** Christmas: snowman balls drawn hidden (crumbled into snow). */
+  private crumbledShown = new Set<number>();
   /** halloween.glb split up while the Halloween dress-up is on (its world joins the outside). */
   private dress?: HalloweenDress;
   /** Halloween: the thrown pumpkins, their shards and candies; the bats, ghosts and mist. */
@@ -417,6 +467,7 @@ export class CharacterViewer {
     this.reducedMotion = options.reducedMotion ?? false;
     this.cameraMode = options.cameraMode ?? 'free';
     this.host.dataset.halloween = this.halloween ? 'on' : 'off';
+    this.host.dataset.christmas = this.christmas ? 'on' : 'off';
     this.pixelRatio = ratioRange(this.quality, window.devicePixelRatio).max;
     const version = modelVersions[options.modelId];
     this.events.status({ kind: 'loading', title: t('viewer.loading', { label: version.label }), detail: t('viewer.preparing', { file: version.file, copy: version.copy }) });
@@ -495,7 +546,7 @@ export class CharacterViewer {
    * some spots get a Halloween painting).
    */
   private get graffitiSpots(): readonly GraffitiSpot[] {
-    const spots = this.halloween ? graffitiForHalloween(GRAFFITI) : GRAFFITI;
+    const spots = this.christmas ? graffitiForChristmas(GRAFFITI) : this.halloween ? graffitiForHalloween(GRAFFITI) : GRAFFITI;
     return this.options.touch ? graffitiForTouch(spots) : spots;
   }
 
@@ -505,7 +556,12 @@ export class CharacterViewer {
 
   /** The Halloween dress-up is on (room only). */
   private get halloween(): boolean {
-    return this.inRoom && (this.options.halloween ?? false);
+    return this.inRoom && (this.options.halloween ?? false) && !this.christmas;
+  }
+
+  /** The Christmas dress-up is on (room only; it wins over Halloween). */
+  private get christmas(): boolean {
+    return this.inRoom && (this.options.christmas ?? false);
   }
 
   private async load(): Promise<void> {
@@ -514,7 +570,7 @@ export class CharacterViewer {
       const track = (file: string) => meter.file(file, EXPECTED_BYTES[file] ?? 1_000_000);
       // The graffiti are painted in a worker meanwhile (seconds of canvas work that would freeze the loading screen).
       const paintings = this.inRoom && GRAFFITI.length ? paintGraffiti(this.graffitiSpots) : Promise.resolve([]);
-      const [, gltf, roomGltf, laptopGltf, outsideGltf, circuitGltf, colombiaGltf, boxingGltf, univalleGltf, experienceGltf, halloweenGltf, graffitiPaintings] = await Promise.all([
+      const [, gltf, roomGltf, laptopGltf, outsideGltf, circuitGltf, colombiaGltf, boxingGltf, univalleGltf, experienceGltf, halloweenGltf, christmasGltf, graffitiPaintings] = await Promise.all([
         // The canvas labels below are painted once, so the typeface must be loaded first (fontsReady never rejects).
         fontsReady(),
         loadCharacter(this.options.modelId, this.abort.signal, track(modelVersions[this.options.modelId].file)),
@@ -527,6 +583,7 @@ export class CharacterViewer {
         this.inRoom ? loadUnivalle(this.abort.signal, track(univalleFile)) : Promise.resolve(undefined),
         this.inRoom ? loadExperience(this.abort.signal, track(experienceFile)) : Promise.resolve(undefined),
         this.halloween ? loadHalloween(this.abort.signal, track(halloweenFile)) : Promise.resolve(undefined),
+        this.christmas ? loadChristmas(this.abort.signal, track(christmasFile)) : Promise.resolve(undefined),
         paintings,
       ]);
       meter.report(DOWNLOAD_SHARE);
@@ -534,9 +591,14 @@ export class CharacterViewer {
       // Parts of the outside in their own files: read and merged as one outside.
       // Halloween: its world (pumpkins, spiders, graves, cobwebs) is read with the outside; the rest is kept aside.
       if (halloweenGltf) this.dress = takeHalloween(halloweenGltf.scene);
-      const extras = [circuitGltf, colombiaGltf, boxingGltf, univalleGltf, experienceGltf, this.dress ? { scene: this.dress.world, scenes: [] } : undefined];
+      // Christmas: its world (snowmen, pines, the giant tree, gifts, decorations) is read with the outside too.
+      if (christmasGltf) this.xmas = takeChristmas(christmasGltf.scene);
+      // On the snow the words and marks on the ground are painted dark grey instead of violet.
+      setGroundInk(!!this.xmas);
+      const extras = [circuitGltf, colombiaGltf, boxingGltf, univalleGltf, experienceGltf, this.dress ? { scene: this.dress.world, scenes: [] } : undefined,
+        this.xmas ? { scene: this.xmas.world, scenes: [] } : undefined];
       const scenes = [...gltf.scenes, ...(roomGltf?.scenes ?? []), ...(laptopGltf?.scenes ?? []), ...(outsideGltf?.scenes ?? []), ...extras.flatMap((extra) => extra?.scenes ?? []),
-        ...(halloweenGltf?.scenes ?? [])];
+        ...(halloweenGltf?.scenes ?? []), ...(christmasGltf?.scenes ?? [])];
       if (this.disposed) {
         disposeObjects(scenes);
         return;
@@ -567,6 +629,17 @@ export class CharacterViewer {
       mergeSkinnedMeshes(this.model);
       // Halloween: Jason's hockey mask on the head bone, and the rider cut at the cauldron's brew (before the shaders are warmed up).
       if (this.dress?.mask) this.host.dataset.mask = wearMask(this.model, this.dress.mask) ? 'on' : 'none';
+      // Christmas: the cap comes off and the Santa hat goes on the head bone; its bobble swings on its own.
+      if (this.xmas?.hat) {
+        hideCap(this.model);
+        this.host.dataset.hat = wearMask(this.model, this.xmas.hat) ? 'santa' : 'none';
+        // The hat's cloth folds over itself where it flops back: drawn from both sides, no face shows the hair through it.
+        this.xmas.hat.traverse((object) => {
+          if (object instanceof Mesh) for (const material of Array.isArray(object.material) ? object.material : [object.material]) material.side = DoubleSide;
+        });
+        if (this.xmas.pompom) this.pompom = { object: this.xmas.pompom };
+        this.bindHatTail(this.xmas.hat);
+      }
       this.clipRider();
       await breathe();
       if (gltf.animations.length) {
@@ -617,7 +690,8 @@ export class CharacterViewer {
       this.scene.add(this.model);
       if (this.room) this.scene.add(this.room);
       if (this.outside) this.scene.add(this.outside);
-      for (const object of [this.bags.length ? this.bagRoot : undefined, this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.rubik?.root, this.targetsView?.root, this.circuit?.root, this.graffiti?.root, this.candyBurst?.root, this.sky?.root, this.likeKey?.view.root]) if (object) this.scene.add(object);
+      for (const object of [this.bags.length ? this.bagRoot : undefined, this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.rubik?.root, this.targetsView?.root, this.circuit?.root, this.graffiti?.root, this.candyBurst?.root, this.sky?.root, this.likeKey?.view.root,
+        this.lights?.mesh, this.snowFall?.points, this.snowPlay?.root, this.snowPrints?.mesh, this.giftBoard?.mesh]) if (object) this.scene.add(object);
       if (!this.ground) this.createFloor(this.mixer ? 0 : box.min.y);
       this.frameLights();
       this.cameraDistance = Math.max(this.bounds.length() * 2.5, 1);
@@ -831,7 +905,7 @@ export class CharacterViewer {
     const data = readOutside(outside);
     this.outsideData = data;
     // The loose pieces move on their own: they leave the static GLB before it is merged.
-    for (const group of ['Letters', 'Tagline', 'Keys', 'Bowling', 'Bricks', 'Clutter', 'Tech', 'CircuitPieces', 'HalloweenPieces']) outside.getObjectByName(group)?.removeFromParent();
+    for (const group of ['Letters', 'Tagline', 'Keys', 'Bowling', 'Bricks', 'Clutter', 'Tech', 'CircuitPieces', 'HalloweenPieces', 'ChristmasPieces']) outside.getObjectByName(group)?.removeFromParent();
     // The chair, the tapes and the traffic light's lenses move or change: the circuit view keeps them out of the merge.
     this.circuit = new CircuitView(data);
     // The flag waves: its cloth stays out of the merge, keeping where it hangs.
@@ -849,8 +923,9 @@ export class CharacterViewer {
       bag.object.traverse((object) => {
         if (object instanceof Mesh) object.castShadow = object.receiveShadow = false;
       });
-      // Halloween: white ghosts with black eyes instead of the JS and TS bags.
+      // Halloween: white ghosts with black eyes instead of the JS and TS bags. Christmas: a snowman and a candy cane.
       if (this.dress) ghostBag(bag);
+      else if (this.xmas) christmasBag(bag, bag.id === 'js' ? 'snowman' : 'candy');
       mergeStaticMeshes(bag.object);
       this.bagRoot.add(bag.object);
       // The character leans into the bag rather than walking through it (BAG_PUSH): a collider that follows the bag.
@@ -866,6 +941,16 @@ export class CharacterViewer {
       if (!(object instanceof Mesh)) return;
       object.receiveShadow = false;
       object.castShadow = false;
+      // Christmas: snow on the tops of the canopies, branches, rocks and pines (in their shaders, nothing added).
+      if (this.xmas) {
+        for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+          // The decorated pines keep most of their green (their baubles and lights must show).
+          if (material instanceof MeshStandardMaterial && SNOWY.test(material.name)) {
+            if (/^Pine/.test(material.name)) snowOnTop(material, 0.85, 0.7, 0.95);
+            else snowOnTop(material);
+          }
+        }
+      }
     });
     mergeStaticMeshes(outside);
     await breathe();
@@ -876,6 +961,8 @@ export class CharacterViewer {
     this.pieceList = [...data.letters, ...data.props.filter((piece) => piece.group !== 'keys'), ...fixed];
     // Halloween: pumpkin pins, an eye for a ball and dark stone bricks (the same sizes: the bodies do not change).
     if (this.dress) dressPieces(this.pieceList, this.dress);
+    // Christmas: red pins with a green ribbon, a red ball with little drawings, the tree's gifts each in its own paper.
+    if (this.xmas) dressChristmasPieces(this.pieceList, this.xmas);
     this.floorKeys = fixed.map((piece, i) => ({
       index: this.pieceList.length - fixed.length + i,
       name: piece.name.replace(/^Key_/, '').toLowerCase(),
@@ -925,6 +1012,7 @@ export class CharacterViewer {
       this.candyBurst = new CandyBurst(this.dress.library, data.groundY);
       this.sky = new HalloweenSky(this.dress.library, data.groundY);
     }
+    if (this.xmas) this.addChristmas(data);
     this.zones = [...data.signs, ...data.zones];
     this.areas = new SignAreas(this.zones, data.groundY);
     this.areas.setOpenKey(this.openKeyLabel);
@@ -942,7 +1030,9 @@ export class CharacterViewer {
       counter.onChange = show;
       show();
     }
-    this.floorTexts = new FloorTexts(this.options.touch ? data.floors.filter((floor) => floor.id !== 'controls') : data.floors, data.groundY, !!this.options.touch);
+    // Christmas: the painted footprints give way to real ones in the snow.
+    const floors = data.floors.filter((floor) => !(this.options.touch && floor.id === 'controls') && !(this.xmas && (floor.id === 'footprints' || floor.id === 'prints')));
+    this.floorTexts = new FloorTexts(floors, data.groundY, !!this.options.touch);
     await breathe();
     this.about = new AboutPlaza(data.plaques);
     if (flag) this.about.waveFlag(flag);
@@ -969,6 +1059,171 @@ export class CharacterViewer {
     this.host.dataset.throws = '0';
     this.host.dataset.targetsHit = '0';
     this.host.dataset.tech = '0';
+  }
+
+  /**
+   * Christmas: the snow on the ground (bare on the road, the room's platform and the crossroads green), the
+   * falling snow, the blinking bulbs, the snowballs, gifts and lumps of snow, and the gift delivery board.
+   */
+  private addChristmas(data: OutsideData): void {
+    const xmas = this.xmas!;
+    const circuit = data.floors.find((floor) => floor.id === 'circuit');
+    const road = circuit && circuit.targets.length > 1 ? { line: circuit.targets, width: circuit.gap } : undefined;
+    const lamp = data.lamppost?.position;
+    this.bare = { road, platform: data.platform, spots: lamp ? [{ x: lamp.x, z: lamp.z, radius: CROSSROADS_GREEN }] : [] };
+    // The rig's side names are mirrored: foot_L is the character's right foot.
+    const right = this.model?.getObjectByName('foot_L');
+    const left = this.model?.getObjectByName('foot_R');
+    if (left && right) this.feet = { left, right };
+    this.snowGround = new SnowGround(data.bounds, road);
+    this.ground?.setSnow(this.snowGround.texture, this.snowGround.road, this.snowGround.min, this.snowGround.size);
+    this.snowFall = new SnowFall(this.snowCount());
+    this.snowPrints = new SnowPrints(data.groundY);
+    this.snowPlay = new SnowPlay(xmas.library, data.groundY);
+    this.lights = new ChristmasLights(bulbPositions(xmas));
+    this.host.dataset.bulbs = String(this.lights.count);
+    const tree = data.decor.find((item) => item.kind === 'xmastree');
+    if (tree) this.treeCentre = { x: tree.position.x, z: tree.position.z };
+    this.delivery = new GiftDelivery((() => { try { return window.localStorage; } catch { return undefined; } })());
+    if (data.giftBoard) {
+      this.giftBoard = new GiftBoard(data.giftBoard);
+      this.giftBoard.paint(0, this.delivery.best);
+    }
+    this.host.dataset.delivered = '0';
+    this.host.dataset.gifts = '0';
+    this.host.dataset.snowmen = 'standing';
+  }
+
+  /** How many flakes fall for the current quality and motion setting. */
+  private snowCount(): number {
+    if (this.reducedMotion) return SNOWFALL.count.reduced;
+    return SNOWFALL.count[this.quality];
+  }
+
+  /** Christmas: tie the Santa hat's meshes to its tail's chain (the spine Blender left on ChristmasHat_Cap). */
+  private bindHatTail(hat: Object3D): void {
+    const cap = hat.getObjectByName('ChristmasHat_Cap');
+    const data = cap?.userData as { spine?: number[]; radii?: number[]; tail_free?: number; head?: number[] } | undefined;
+    if (!cap || !data?.spine || !data.radii || !data.head) return;
+    const tail = new HatTail({ spine: data.spine, radii: data.radii, free: data.tail_free ?? 1, head: data.head });
+    const bindings: TailBinding[] = [];
+    // Only the red cloth: the white fur cuff stays on the head (its back is right by where the tail hangs).
+    cap.traverse((object) => {
+      if (!(object instanceof Mesh) || !/^SantaHat/.test((object.material as Material).name)) return;
+      object.frustumCulled = false;
+      bindings.push(tail.bind(object.geometry));
+    });
+    this.hatTail = { tail, hat, bindings };
+  }
+
+  /**
+   * A foot came down: the print of the sneaker's sole in the snow under it (none on the road, in the room or on the
+   * green). Without a side, the lower of the two feet (the one on the ground at a step of the walk or run).
+   */
+  private printStep(side?: 'left' | 'right'): void {
+    if (!this.snowGround || !this.model || !this.controller || this.controller.airborne || !this.feet) return;
+    const left = this.feet.left.getWorldPosition(new Vector3());
+    const right = this.feet.right.getWorldPosition(new Vector3());
+    const foot = side ?? (left.y <= right.y ? 'left' : 'right');
+    const ankle = foot === 'left' ? left : right;
+    const spot = printSpot({ x: ankle.x, z: ankle.z }, this.controller.yaw, foot === 'left');
+    if (snowAt(spot, this.bare)) this.snowPrints?.add(spot.x, spot.z, spot.heading, foot === 'left');
+  }
+
+  /**
+   * Christmas, every frame: the bulbs blink, the snow falls and fades from the prints, the sleigh's runners mark the
+   * snow, snowballs burst, snowmen crumble, gifts are counted under the tree and the bobble swings.
+   */
+  private updateChristmas(delta: number): void {
+    if (!this.xmas || !this.model) return;
+    this.xmasClock += delta;
+    this.lights?.update(this.xmasClock, this.reducedMotion);
+    const physics = this.physics;
+    // A burst snowball is gone: its lumps fly (SnowPlay) and it leaves nothing on the ground.
+    if (physics?.bursts.length) this.sound('snowhit', 6, physics.bursts[physics.bursts.length - 1].position);
+    if (physics && this.snowPlay) {
+      this.snowPlay.update(delta, physics, this.reducedMotion);
+      const bursts = String(this.snowPlay.bursts);
+      if (this.host.dataset.snowballs !== bursts) this.host.dataset.snowballs = bursts;
+    }
+    // Snowmen: crumbled balls are hidden (and shown again after a reset).
+    if (physics && this.pieces) {
+      let crumbled = 0;
+      for (const [index, piece] of this.pieceList.entries()) {
+        if (piece.prop !== 'snowman') continue;
+        const gone = physics.crumbled(index);
+        if (gone) crumbled++;
+        if (gone && !this.crumbledShown.has(index)) {
+          this.crumbledShown.add(index);
+          this.pieces.setHidden(index, true);
+          this.sound('crumble', 0, piece.position);
+        } else if (!gone && this.crumbledShown.has(index)) {
+          this.crumbledShown.delete(index);
+          this.pieces.setHidden(index, false);
+        }
+      }
+      const { loose } = physics.snowmen;
+      const state = crumbled ? `crumbled:${crumbled}` : loose ? `broken:${loose}` : 'standing';
+      if (this.host.dataset.snowmen !== state) this.host.dataset.snowmen = state;
+      const gifts = String(physics.gifts.length);
+      if (this.host.dataset.gifts !== gifts) this.host.dataset.gifts = gifts;
+      // Gifts off the sleigh resting under the giant tree count as delivered.
+      if (this.delivery && this.treeCentre && physics.gifts.length) {
+        const added = this.delivery.check(physics.gifts.map((gift) => ({
+          key: gift.body, at: { x: gift.body.position.x, z: gift.body.position.z, speed: gift.body.velocity.length() },
+        })), this.treeCentre);
+        if (added) {
+          this.sound('bell', 0.8, this.treeCentre);
+          this.giftBoard?.paint(this.delivery.delivered, this.delivery.best);
+          this.host.dataset.delivered = String(this.delivery.delivered);
+        }
+      }
+    }
+    // The sleigh's runners leave two grooves in the snow while it slides on the ground.
+    const chair = this.chairDrive;
+    if (this.sleigh && chair && this.snowGround) {
+      const moving = Math.hypot(chair.vx, chair.vz) > 0.2 && !chair.airborne;
+      const now = [-0.5, 0.5].map((x) => this.sleigh!.localToWorld(new Vector3(x, 0, 0)));
+      if (moving && this.runners) {
+        for (const [i, point] of now.entries()) {
+          const last = this.runners[i];
+          const dx = point.x - last.x;
+          const dz = point.z - last.z;
+          const length = Math.hypot(dx, dz);
+          if (length < 0.02 || length > 3) continue;
+          const middle = { x: (point.x + last.x) / 2, z: (point.z + last.z) / 2 };
+          if (snowAt(middle, this.bare)) this.snowGround.stamp('stroke', middle.x, middle.z, Math.atan2(dx, dz), 0.1, length + 0.06);
+        }
+      }
+      this.runners = now;
+    }
+    if (this.snowGround && this.renderer) this.snowGround.update(this.renderer, delta, this.reducedMotion);
+    this.snowPrints?.update(delta, this.reducedMotion);
+    if (this.snowFall && this.renderer) this.snowFall.update(delta, this.focus, this.renderer.domElement.height, this.reducedMotion);
+    // The Santa hat's red tail swings and rests on the head; the bobble hangs from its tip.
+    const hatTail = this.hatTail;
+    if (hatTail?.hat.parent) {
+      const { tail, hat, bindings } = hatTail;
+      hat.updateWorldMatrix(true, false);
+      if (this.reducedMotion) tail.reset(hat.matrixWorld);
+      else tail.step(delta, hat.matrixWorld);
+      const at = tail.local(hat.matrixWorld);
+      for (const binding of bindings) tail.deform(binding, at);
+      if (this.pompom) {
+        const end = at[at.length - 1];
+        this.pompom.object.position.copy(end).addScaledVector(HatTail.tangent(at, at.length - 1), 0.01);
+      }
+    }
+    const pompom = this.pompom;
+    if (pompom?.object.parent) {
+      const parent = pompom.object.parent;
+      parent.updateWorldMatrix(true, false);
+      const tip = pompom.object.getWorldPosition(new Vector3());
+      if (!pompom.state || this.reducedMotion) pompom.state = pompomAt(tip);
+      const hang = pompomStep(pompom.state, tip, delta);
+      const local = new Vector3(hang.x, hang.y, hang.z).applyQuaternion(parent.getWorldQuaternion(new Quaternion()).invert());
+      pompom.object.quaternion.setFromUnitVectors(new Vector3(0, -1, 0), local.normalize());
+    }
   }
 
   /**
@@ -1040,10 +1295,11 @@ export class CharacterViewer {
       physics.onImpact = (impact) => {
         const source = impact.source;
         const name: SoundName = source === 'laptop' ? 'laptop' : source === 'pumpkin' ? 'splat' : source === 'candy' ? 'candy' : source === 'chick' ? 'chirp'
-          : source === 'bag' ? 'rubber' : pieceSound(this.pieceList[source]);
+          : source === 'bag' ? 'rubber' : source === 'snowball' ? 'snowhit' : source === 'gift' ? 'cardboard' : pieceSound(this.pieceList[source]);
         this.sound(name, impact.speed, impact.position);
       };
-      physics.onBreak = () => this.sound('woodHeavy', 6);
+      // A fence breaking cracks like wood; a snowman coming apart thuds softly in the snow.
+      physics.onBreak = (key) => this.sound(key.startsWith('snowman') ? 'crumble' : 'woodHeavy', 6);
       this.physics = physics;
       this.host.dataset.physics = 'ready';
     } catch {
@@ -1238,6 +1494,10 @@ export class CharacterViewer {
     if (!this.riding && this.chairDrive && strikeChair(this.chairDrive, { x: point.x, y: point.y - ground, z: point.z }, forward, strike.power)) hits++;
     this.host.dataset.strikeHits = String(hits);
     if (hits) this.sound('punch', strike.power);
+    // Christmas: a kick sprays the snow at the foot.
+    if (this.snowPlay && strike.kind === 'kick' && !this.reducedMotion && point.y - ground < 0.6 && snowAt(point, this.bare)) {
+      this.snowPlay.puff({ x: point.x, y: ground + 0.05, z: point.z }, 7, 0.055, { x: forward.x * 3, y: 0, z: forward.z * 3 }, 1.5);
+    }
   }
 
   private cancelStrike(): void {
@@ -1385,6 +1645,16 @@ export class CharacterViewer {
     const forward = throwDirection(this.controller.position, yaw, pose.position);
     const speed = throwSpeed(power);
     const jitter = () => (Math.random() - 0.5) * 2;
+    if (this.snowPlay) {
+      // Christmas: a snowball leaves the hand instead, from the same place and as fast; it bursts where it lands.
+      const ball = this.physics.throwSnowball(pose.position, { x: forward.x * speed.forward, y: speed.up, z: forward.z * speed.forward },
+        { x: jitter() * 3, y: jitter() * 2, z: jitter() * 3 });
+      if (this.targetLane && this.targetGame.throwFrom(this.controller.position, this.targetLane)) {
+        this.countedThrows.add(ball);
+        this.reportTargets();
+      }
+      return;
+    }
     if (this.candyBurst) {
       // Halloween: a pumpkin leaves the hand instead, from the same place and as fast; it bursts where it lands.
       const pumpkin = this.physics.throwPumpkin(pose.position, { x: forward.x * speed.forward, y: speed.up, z: forward.z * speed.forward },
@@ -1615,6 +1885,14 @@ export class CharacterViewer {
     this.physics?.reset();
     this.chickRain?.clear();
     this.candyBurst?.clear();
+    this.snowPlay?.clear();
+    this.snowPrints?.clear();
+    this.delivery?.reset();
+    if (this.delivery) {
+      this.giftBoard?.paint(0, this.delivery.best);
+      this.host.dataset.delivered = '0';
+    }
+    this.crumbledShown.clear();
     this.pieces?.reset();
     this.syncFlaps(true);
     this.targetGame.reset();
@@ -1687,7 +1965,8 @@ export class CharacterViewer {
     this.lap = { best: readBestLap() };
     this.interaction.setSeat(this.chairSpot);
     if (this.dress?.cauldron) this.dressChair(rig, rider, offset, this.dress.cauldron);
-    this.spray = new SodaSpray(this.cauldron ? BREW : SODA);
+    if (this.xmas?.sleigh) this.dressSleigh(rig, rider, offset, this.xmas.sleigh);
+    this.spray = new SodaSpray(this.cauldron ? BREW : this.sleigh ? SNOW_JET : SODA);
     this.spray.density = this.nitroDensity();
     this.scene.add(this.spray.mesh);
     for (const bottle of rig.bottles) {
@@ -1739,7 +2018,59 @@ export class CharacterViewer {
     this.host.dataset.cauldron = 'ready';
   }
 
-  /** The character popped into the cauldron or out of it: a splash of brew and its blurp, no clips. */
+  /**
+   * Christmas: the office chair becomes Santa's red sleigh. The chair's parts stay as the pivots (the sleigh hangs from
+   * its upper part, so it sways the same) but are not drawn; the two thrusters on its sides take the soda bottles' place
+   * for the nitro, blowing snow, and the sides' top edges the arm pads' for the hands. Like the cauldron it is got into
+   * and out of in a blink (the sitting clips would take the legs through its sides).
+   */
+  private dressSleigh(rig: ChairRig, rider: Group, offset: number, sleigh: Object3D): void {
+    rig.root.traverse((object) => {
+      if (object instanceof Mesh) object.visible = false;
+    });
+    sleigh.removeFromParent();
+    // Its origin under the rider's hips (the seated clip puts them stand_offset behind its origin), facing ahead.
+    sleigh.position.set(rider.position.x, rider.position.y, rider.position.z - offset);
+    sleigh.quaternion.copy(rider.quaternion);
+    rig.upper.add(sleigh);
+    sleigh.traverse((object) => {
+      if (!(object instanceof Mesh)) return;
+      object.castShadow = !/Glass|Fuel/.test(object.name);
+      object.receiveShadow = true;
+    });
+    rig.bottles.length = 0;
+    for (const side of ['right', 'left'] as const) {
+      const nozzle = sleigh.getObjectByName(`SleighNozzle_${side}`);
+      if (nozzle) rig.bottles.push({ side, nozzle, liquid: sleigh.getObjectByName(`SleighFuel_${side}`) });
+      const grip = sleigh.getObjectByName(`SleighGrip_${side}`);
+      if (grip) rig.armrests[side] = grip;
+    }
+    this.sleigh = sleigh;
+    this.chairBlockHalf = 0.75;
+    this.chairPushReach = CHARACTER_RADIUS + 0.45;
+    this.interaction!.instant.add('office');
+    this.interaction!.onInstant = this.onCauldron;
+    this.host.dataset.vehicle = 'sleigh';
+  }
+
+  /** Christmas: a gift falls off the back of the sleigh's sack, tossed back and up, while the thruster blows. */
+  private dropGift(state: ChairState): void {
+    const mouth = this.sleigh?.getObjectByName('SleighSack_Mouth');
+    if (!mouth || !this.physics) return;
+    const at = mouth.getWorldPosition(new Vector3());
+    const back = { x: -Math.sin(state.yaw), z: -Math.cos(state.yaw) };
+    const side = (Math.random() - 0.5) * 1.6;
+    const velocity = {
+      x: state.vx * 0.55 + back.x * XMAS.back + back.z * side, y: XMAS.up * (0.8 + Math.random() * 0.4), z: state.vz * 0.55 + back.z * XMAS.back - back.x * side,
+    };
+    const spin = { x: (Math.random() - 0.5) * 8, y: (Math.random() - 0.5) * 8, z: (Math.random() - 0.5) * 8 };
+    this.physics.dropGift({ x: at.x, y: at.y, z: at.z }, velocity, spin, Math.floor(Math.random() * GIFT.sizes.length), state.yaw);
+  }
+
+  /**
+   * The character popped into the cauldron or the sleigh, or out of it, no clips: for the cauldron a splash of brew and
+   * its blurp, for the sleigh a jingle of its bells.
+   */
   private readonly onCauldron = (inside: boolean): void => {
     const interaction = this.interaction;
     if (!interaction || !this.controller) return;
@@ -1756,6 +2087,10 @@ export class CharacterViewer {
       this.elevation = groundAt(interaction.position, this.outsideData!);
       this.applyController();
       this.host.dataset.locomotion = 'idle';
+    }
+    if (this.sleigh) {
+      this.sound('jingle', 0.8);
+      return;
     }
     this.sound('bubble');
     const rig = this.circuit?.chair;
@@ -1991,7 +2326,16 @@ export class CharacterViewer {
     const controller = this.controller;
     if (!sounds || !controller || !this.model) return;
     const airborne = controller.airborne;
-    if (this.wasAirborne && !airborne) this.sound(this.stepSound());
+    if (this.wasAirborne && !airborne) {
+      this.sound(this.stepSound());
+      // Christmas: both feet land in the snow, throwing a little of it up.
+      if (this.snowGround) {
+        this.printStep('left');
+        this.printStep('right');
+        const { x, z } = this.model.position;
+        if (this.snowPlay && !this.reducedMotion && snowAt({ x, z }, this.bare)) this.snowPlay.puff({ x, y: (this.outsideData?.groundY ?? 0) + 0.05, z }, 8, 0.06, { x: 0, y: 0, z: 0 }, 1.4);
+      }
+    }
     this.wasAirborne = airborne;
     const action = this.actions.get(this.activeClip);
     const locomotion = this.host.dataset.locomotion;
@@ -1999,7 +2343,11 @@ export class CharacterViewer {
       // Two steps per loop: on its start and half way.
       const phase = (action.time / action.getClip().duration) % 1;
       const half = phase >= 0.5 ? 1 : 0;
-      if (this.stepHalf !== undefined && half !== this.stepHalf) this.sound(this.stepSound());
+      if (this.stepHalf !== undefined && half !== this.stepHalf) {
+        this.sound(this.stepSound());
+        // Christmas: a print in the snow under the foot that just came down.
+        this.printStep();
+      }
       this.stepHalf = half;
     } else this.stepHalf = undefined;
     const stage = this.interaction?.phase === 'seated' ? this.interaction.state.stage : 'idle';
@@ -2107,10 +2455,19 @@ export class CharacterViewer {
       this.sound('pop');
       if (!this.capsPopped) {
         for (const bottle of rig.bottles) if (bottle.cap) spray.launchCap(bottle.cap, back, carried);
+        // The sleigh's thruster has no cap: it only roars into life.
         this.capsPopped = true;
       }
     }
     if (boosting) spray.emit(rig.bottles.map((bottle) => bottle.nozzle.getWorldPosition(new Vector3())), back, carried, delta, lit);
+    // Christmas: gifts tumble off the sleigh's sack while the thruster blows.
+    if (this.sleigh && boosting) {
+      this.giftIn -= delta;
+      if (this.giftIn <= 0) {
+        this.giftIn = XMAS.every * (0.7 + Math.random() * 0.6);
+        this.dropGift(state);
+      }
+    } else this.giftIn = XMAS.every * 0.3;
     this.wasBoosting = boosting;
     this.options.sounds?.loop('fizz', boosting ? 0.9 : 0, 0.4 + state.fuel * 0.6);
     for (const bottle of rig.bottles) if (bottle.liquid) bottle.liquid.scale.y = Math.max(0.03, state.fuel);
@@ -2130,6 +2487,8 @@ export class CharacterViewer {
     if (position.x >= platform.minX && position.x <= platform.maxX && position.z >= platform.minZ && position.z <= platform.maxZ) return 'stepWood';
     const lamp = data.lamppost?.position;
     if (lamp && Math.hypot(position.x - lamp.x, position.z - lamp.z) < CROSSROADS_GREEN) return 'stepGrass';
+    // Christmas: crunching snow, the bare road as ever.
+    if (this.snowGround && snowAt(position, this.bare)) return 'stepSnow';
     return 'stepGround';
   }
 
@@ -2389,7 +2748,8 @@ export class CharacterViewer {
 
   /** What the character shouts at a landmark, in the current language (the bust greets differently on Halloween). */
   private shoutWords(id: ShoutId): string {
-    return t(id === 'bust' && this.halloween ? 'shout.bustHalloween' : `shout.${id}`, { years: String(experienceYears()) });
+    const key = id === 'bust' && this.halloween ? 'shout.bustHalloween' : id === 'bust' && this.christmas ? 'shout.bustChristmas' : `shout.${id}` as const;
+    return t(key, { years: String(experienceYears()) });
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
@@ -2630,6 +2990,15 @@ export class CharacterViewer {
         this.ambient.intensity = 0.75;
         this.ground?.setNight();
       }
+      if (this.christmas) {
+        // Christmas' winter dusk: a cool blue key light, lavender fill and a soft blue sky, so the bulbs and the snow glow.
+        this.key.color.set(0xc6d6ff);
+        this.key.intensity = 1.55;
+        this.fill.color.set(0x9a8ce0);
+        this.fill.intensity = 0.8;
+        this.ambient.color.set(0x9fb0e0);
+        this.ambient.intensity = 0.95;
+      }
       this.host.dataset.light = preset;
       return;
     }
@@ -2650,6 +3019,7 @@ export class CharacterViewer {
     if (this.disposed) return;
     this.quality = quality;
     if (this.spray) this.spray.density = this.nitroDensity();
+    this.snowFall?.setCount(this.snowCount());
     const profile = QUALITY[quality];
     const range = ratioRange(quality, window.devicePixelRatio);
     this.pixelRatio = Math.min(range.max, Math.max(range.min, quality === 'auto' ? this.pixelRatio : range.max));
@@ -2882,6 +3252,7 @@ export class CharacterViewer {
       this.syncLaptop(delta);
       this.updateElevation(delta);
       this.updateOutside(delta);
+      this.updateChristmas(delta);
       this.updateKeys(delta);
       this.updateLikeKey(delta);
       this.checkSign();
@@ -3005,6 +3376,7 @@ export class CharacterViewer {
     this.events.render?.(null);
     this.areas?.dispose();
     this.floorTexts?.dispose();
+    for (const part of [this.snowFall, this.snowGround, this.snowPrints, this.snowPlay, this.lights, this.giftBoard]) part?.dispose();
     this.signpost?.dispose();
     this.about?.dispose();
     this.rubik?.dispose();

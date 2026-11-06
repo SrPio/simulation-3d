@@ -39,6 +39,24 @@ body { background: radial-gradient(ellipse at 50% 38%, #2c2337 0, #1b1623 55%, #
 :root[data-halloween='on'] .toggle-track { background: #160c06; }
 :root[data-halloween='on'] .tool-toggle[aria-pressed='true'] .toggle-track::after { background: #ffb15c; }
 :root[data-halloween='on'] :is(button, a):focus-visible { outline-color: #ffb15c; }
+:root[data-christmas='on'] body { background: radial-gradient(ellipse at 50% 38%, #26304a 0, #141a2b 55%, #0b0f1a 100%); }
+/* Christmas: the page's buttons in Christmas red on a deep wine panel, with snow-white text. */
+:root[data-christmas='on'] {
+  --panel: #2a0d12e8; --edge: #ff5a5a5c; --muted: #e3b3b3; --accent: #ff6b6b;
+  --key: #3a1016; --key-top: #561820; --key-shadow: #12050a;
+}
+:root[data-christmas='on'] :is(.menu-toggle, .zoom-button) { color: #ffe3e3; }
+:root[data-christmas='on'] :is(.menu-toggle, .zoom-button):hover { background-color: #4a141cf0; }
+:root[data-christmas='on'] :is(.tool-segmented button, .tool-toggle, .room-retry) { color: #f7d6d6; }
+:root[data-christmas='on'] :is(.tool-segmented button, .tool-toggle, .room-retry):hover { color: #ffffff; }
+:root[data-christmas='on'] .tool-segmented { background: #1a0609; }
+:root[data-christmas='on'] :is(.tool-segmented button, .tool-toggle)[aria-pressed='true'] {
+  color: #fff; border-color: #ff8a8a88; background: linear-gradient(#ffffff20, #00000000), #c41e2a;
+  box-shadow: 0 2px 0 #5a0a10, 0 0 12px #ff2a3a55, 0 1px 0 #ffffff2a inset;
+}
+:root[data-christmas='on'] .toggle-track { background: #1a0609; }
+:root[data-christmas='on'] .tool-toggle[aria-pressed='true'] .toggle-track::after { background: #ffffff; }
+:root[data-christmas='on'] :is(button, a):focus-visible { outline-color: #ff8a8a; }
 button { font: inherit; cursor: pointer; }
 button:focus-visible, a:focus-visible { outline: 2px solid #d7b9ff; outline-offset: 3px; }
 button:disabled { cursor: not-allowed; opacity: 0.45; }
@@ -59,8 +77,15 @@ h1, p { margin: 0; }
 }
 .room-bar { top: 16px; left: 16px; display: flex; align-items: center; padding: 6px; }
 
-/* Language switch: the only thing in the top bar. */
+/* Language switch, and for Christmas the countdown pill beside it. */
 .language-switch button { min-height: 28px; padding: 0 9px; font-size: 11px; letter-spacing: 1px; }
+.room-bar { gap: 8px; }
+.christmas-countdown {
+  display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 10px 0 8px; border-radius: 7px;
+  color: #fff; background: linear-gradient(#ffffff1c, #00000000), #b3121e; box-shadow: 0 2px 0 #5a0a10, 0 1px 0 #ffffff26 inset;
+  font-size: 11px; letter-spacing: 0.6px; white-space: nowrap;
+}
+.christmas-countdown svg { width: 14px; height: 14px; flex: none; }
 
 /* Options behind a menu button, closed by default: one panel of labelled rows under the button. */
 .menu-toggle {

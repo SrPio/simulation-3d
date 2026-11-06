@@ -64,3 +64,14 @@
 @keyframes nitro-full-brew {
   40% { filter: drop-shadow(0 6px 10px #00000080) drop-shadow(0 0 14px #7dff4acc); transform: scale(1.06); }
 }
+
+/* Christmas: the sleigh's thruster, a metal tank charged with icy blue snow, its collars and throat drawn across. */
+.nitro-gauge[data-vessel='thruster'] .nitro-glass { fill: #9aa6b833; }
+.nitro-gauge[data-vessel='thruster'] .nitro-foam { fill: #ffffff; }
+.nitro-gauge[data-vessel='thruster'] .nitro-bubble { fill: #ffffffcc; }
+.nitro-gauge[data-vessel='thruster'] .nitro-cola { filter: drop-shadow(0 0 3px #7cc8ffaa); }
+.nitro-gauge[data-vessel='thruster'] .nitro-bands { fill: none; stroke: #c9d2de; stroke-width: 1.6; opacity: 0.85; }
+.nitro-gauge[data-vessel='thruster'][data-state='full'] svg { animation-name: nitro-full-thruster; }
+@keyframes nitro-full-thruster {
+  40% { filter: drop-shadow(0 6px 10px #00000080) drop-shadow(0 0 14px #bfe6ffcc); transform: scale(1.06); }
+}

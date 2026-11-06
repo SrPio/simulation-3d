@@ -5,6 +5,7 @@ import {
 import { MESSAGES, t, type MessageKey } from '../core/i18n.ts';
 import { FONT } from './canvasText.ts';
 import type { Sign } from './outsideData.ts';
+import { groundInk } from './groundInk.ts';
 
 const BORDER = 0.09;
 const FENCE_HEIGHT = 0.45;
@@ -180,7 +181,7 @@ function titlesMesh(signs: readonly Sign[], groundY: number): Mesh<BufferGeometr
   geometry.setAttribute('position', new BufferAttribute(new Float32Array(position), 3));
   geometry.setAttribute('uv', new BufferAttribute(new Float32Array(uv), 2));
   geometry.setIndex(index);
-  const mesh = new Mesh(geometry, new MeshBasicMaterial({ map: texture, color: VIOLET, transparent: true, opacity: TITLE_OPACITY, depthWrite: false, side: DoubleSide }));
+  const mesh = new Mesh(geometry, new MeshBasicMaterial({ map: texture, color: groundInk(), transparent: true, opacity: TITLE_OPACITY, depthWrite: false, side: DoubleSide }));
   mesh.name = 'SignTitles';
   mesh.renderOrder = -4;
   mesh.matrixAutoUpdate = false;
@@ -230,7 +231,7 @@ export class SignAreas {
         return mesh;
       };
       const border = placed(new Mesh(ringGeometry(area.halfX, area.halfZ, BORDER),
-        new MeshBasicMaterial({ color: VIOLET, transparent: true, opacity: 0.45, depthWrite: false, side: DoubleSide })), groundY + 0.006) as Zone['border'];
+        new MeshBasicMaterial({ color: groundInk(), transparent: true, opacity: 0.45, depthWrite: false, side: DoubleSide })), groundY + 0.006) as Zone['border'];
       const fence = placed(new Mesh(fenceGeometry(area.halfX, area.halfZ, FENCE_HEIGHT), new ShaderMaterial({
         vertexShader: fenceVertex,
         fragmentShader: fenceFragment,

@@ -257,6 +257,8 @@ export class StartScreen {
     this.outline.setAttribute('transform', transform);
     // How far the chin reaches below the screen centre, for the percentage under it.
     this.root.style.setProperty('--start-below', `${this.placement().scale * (HEAD_OUTLINE.height - CENTRE.y)}px`);
+    // The hollow's narrowest width on screen, so a longer word (HO HO HO for Christmas) can be sized to stay inside it.
+    this.root.style.setProperty('--start-head', `${2 * INNER_RADIUS * HEAD_OUTLINE.height * this.placement().scale}px`);
     // The line is drawn in the head's own units: its width is divided by the scale so it keeps its screen width.
     const pixels = this.state === 'loading' ? LINE.loading : LINE.ready;
     this.line.style.strokeWidth = String(pixels / (this.placement().scale * grow));

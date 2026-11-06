@@ -1,16 +1,16 @@
 import {
-  BufferAttribute, BufferGeometry, CanvasTexture, Color, DoubleSide, Mesh, MeshBasicMaterial, SRGBColorSpace,
+  BufferAttribute, BufferGeometry, CanvasTexture, DoubleSide, Mesh, MeshBasicMaterial, SRGBColorSpace,
 } from 'three';
 import { MESSAGES, t, type MessageKey } from '../core/i18n.ts';
 import { FONT, drawArrow, drawKey } from './canvasText.ts';
 import type { FloorBlock } from './outsideData.ts';
+import { groundInk } from './groundInk.ts';
 
 /** Canvas pixels per metre of ground. */
 const PPM = 150;
 const ATLAS_WIDTH = 2048;
 const PAD = 8;
 const OPACITY = 0.6;
-const VIOLET = new Color(0xb79bff);
 /** The circuit is one flat colour with soft edges: a few pixels per metre are enough for its long block. */
 const CIRCUIT_PPM = 16;
 /** The sketched arrow to the office chair: thin strokes over a wide block. */
@@ -134,7 +134,7 @@ export class FloorTexts {
     this.texture = new CanvasTexture(this.canvas);
     this.texture.colorSpace = SRGBColorSpace;
     this.texture.anisotropy = 8;
-    this.mesh = new Mesh(geometry, new MeshBasicMaterial({ map: this.texture, color: VIOLET, transparent: true, opacity: OPACITY, depthWrite: false, side: DoubleSide }));
+    this.mesh = new Mesh(geometry, new MeshBasicMaterial({ map: this.texture, color: groundInk(), transparent: true, opacity: OPACITY, depthWrite: false, side: DoubleSide }));
     this.mesh.name = 'FloorTexts';
     this.mesh.renderOrder = -4;
     this.mesh.matrixAutoUpdate = false;
@@ -340,6 +340,15 @@ export class FloorTexts {
       context.strokeRect(-w / 2 + 0.3, -d / 2 + 0.1, w - 0.6, 1.5);
       context.setLineDash([]);
       scaled(() => text('floor.boxing', 0, (d / 2 - 0.55) * 100, 52, 'center', 700, (w - 0.3) * 100));
+    } else if (block.id === 'xmastree') {
+      // Christmas: a dashed ring round the giant tree (the block's middle sits a little in front of it) and its name.
+      context.lineWidth = 0.06;
+      context.setLineDash([0.3, 0.18]);
+      context.beginPath();
+      context.arc(0, -0.6, 4.4, 0, Math.PI * 2);
+      context.stroke();
+      context.setLineDash([]);
+      scaled(() => text('floor.christmasTree', 0, (d / 2 - 0.5) * 100, 52, 'center', 700, (w - 0.3) * 100));
     } else if (block.id === 'footprints') {
       // Shoe prints walking out of the room's front corner (the block's far-left corner) along a gentle S, left and
       // right in turn, fading as they get further from the room.

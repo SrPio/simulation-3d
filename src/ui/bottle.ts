@@ -16,8 +16,19 @@ export const TUBE_PROFILE: readonly (readonly [number, number])[] = [
   [0.0, 0.0], [0.012, 0.045], [0.035, 0.075], [0.07, 0.09], [0.93, 0.09], [0.955, 0.106], [1.0, 0.106], [1.0, 0.0],
 ];
 
-/** What the gauge is drawn as: the chair's soda bottle, or the cauldron's test tube for Halloween. */
-export type Vessel = 'bottle' | 'tube';
+/**
+ * Christmas: one of the sleigh's snow thrusters standing on its exhaust, as the same kind of half outline: a flared
+ * nozzle bell at the bottom, a narrow throat, the fuel tank's straight body between two collars and a rounded nose.
+ */
+export const THRUSTER_PROFILE: readonly (readonly [number, number])[] = [
+  [0.0, 0.0], [0.0, 0.15], [0.04, 0.138], [0.1, 0.1], [0.14, 0.082], [0.16, 0.12], [0.19, 0.158], [0.24, 0.16],
+  [0.76, 0.16], [0.8, 0.15], [0.86, 0.13], [0.92, 0.1], [0.97, 0.058], [1.0, 0.02], [1.0, 0.0],
+];
+
+/** What the gauge is drawn as: the chair's soda bottle, the cauldron's test tube for Halloween or the sleigh's thruster for Christmas. */
+export type Vessel = 'bottle' | 'tube' | 'thruster';
+
+const PROFILES: Record<Vessel, readonly (readonly [number, number])[]> = { bottle: BOTTLE_PROFILE, tube: TUBE_PROFILE, thruster: THRUSTER_PROFILE };
 
 /** Silhouette units per bottle length: the base sits at y = BOTTLE_UNITS and the mouth at y = 0 (SVG y points down). */
 export const BOTTLE_UNITS = 100;
@@ -27,7 +38,7 @@ export const BOTTLE_FULL = 0.9;
 
 /** The closed SVG path of the bottle (or tube) standing up: up the right side from the base, across the mouth, down the left. */
 export function bottlePath(vessel: Vessel = 'bottle'): string {
-  const side = (vessel === 'tube' ? TUBE_PROFILE : BOTTLE_PROFILE).filter(([, r]) => r > 0).map(([h, r]) => [r * BOTTLE_UNITS, (1 - h) * BOTTLE_UNITS] as const);
+  const side = PROFILES[vessel].filter(([, r]) => r > 0).map(([h, r]) => [r * BOTTLE_UNITS, (1 - h) * BOTTLE_UNITS] as const);
   const right = side.map(([x, y]) => `${fixed(x)} ${fixed(y)}`);
   const left = [...side].reverse().map(([x, y]) => `${fixed(-x)} ${fixed(y)}`);
   return `M0 ${BOTTLE_UNITS} L${right.join(' L')} L${left.join(' L')} Z`;

@@ -1,4 +1,4 @@
-import { Color, Matrix4, Mesh, PerspectiveCamera, PlaneGeometry, ShaderMaterial, Vector2, type Camera } from 'three';
+import { Color, Matrix4, Mesh, PerspectiveCamera, PlaneGeometry, ShaderMaterial, Vector2, type Camera, type Texture } from 'three';
 
 const vertexShader = /* glsl */ `
 uniform mat4 uInverse;
@@ -53,6 +53,54 @@ void main() {
 }`;
 
 /**
+ * Christmas: the same ground under snow. The snow covers it everywhere except the circuit's road (uRoad) and where
+ * something pressed into it (uTrail, SnowGround): there the ground shows through, with a rim of packed snow round the
+ * print. A faint sparkle and a cold gradient keep the white from looking flat.
+ */
+const snowFragmentShader = /* glsl */ `
+uniform vec2 uFocus;
+uniform vec3 uBottomLeft;
+uniform vec3 uBottomRight;
+uniform vec3 uTopLeft;
+uniform vec3 uTopRight;
+uniform vec3 uDot;
+uniform sampler2D uTrail;
+uniform sampler2D uRoad;
+uniform vec2 uMapMin;
+uniform vec2 uMapSize;
+uniform vec3 uSnowLow;
+uniform vec3 uSnowHigh;
+varying vec3 vPoint;
+varying vec2 vUv;
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+void main() {
+  vec3 point = vPoint;
+  vec3 color = mix(mix(uBottomLeft, uBottomRight, vUv.x), mix(uTopLeft, uTopRight, vUv.x), vUv.y);
+  vec2 cell = fract(point.xz) - 0.5;
+  float distanceToDot = length(cell);
+  float width = fwidth(distanceToDot);
+  float dotMask = 1.0 - smoothstep(0.03 - width, 0.03 + width, distanceToDot);
+  float fade = 1.0 - smoothstep(5.0, 14.0, distance(point.xz, uFocus));
+  vec3 ground = color + uDot * dotMask * fade;
+  vec2 uv = (point.xz - uMapMin) / uMapSize;
+  float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+  float road = inside * texture2D(uRoad, uv).r;
+  float trail = inside * texture2D(uTrail, uv).r;
+  float pressed = smoothstep(0.08, 0.55, trail);
+  // Snow: a soft gradient, gentle drifts and a few glints.
+  float drift = hash(floor(point.xz * 0.6)) * 0.5 + hash(floor(point.xz * 1.7)) * 0.5;
+  vec3 snow = mix(uSnowLow, uSnowHigh, vUv.y) * (0.965 + drift * 0.05);
+  float glint = step(0.992, hash(floor(point.xz * 14.0))) * fade;
+  snow += glint * 0.22;
+  // Packed snow round a print: a little darker and bluer just outside its edge.
+  float rim = smoothstep(0.01, 0.1, trail) * (1.0 - pressed);
+  snow *= 1.0 - rim * 0.16;
+  float bare = max(road, pressed * 0.92);
+  gl_FragColor = vec4(mix(snow, ground, bare), 1.0);
+  #include <colorspace_fragment>
+}`;
+
+/**
  * Endless ground outside the room: one quad whose corners are where the screen corners' view rays
  * meet the ground plane, so it always fills the view whatever the camera does and costs a single draw
  * call with no large geometry. It has a real depth (anything below the ground stays hidden) and is
@@ -62,6 +110,8 @@ void main() {
 export class InfiniteFloor {
   readonly mesh: Mesh<PlaneGeometry, ShaderMaterial>;
   private readonly inverse = new Matrix4();
+  /** Snowed on (Christmas): the light presets leave its winter colours alone. */
+  private snowy = false;
 
   constructor(groundY: number) {
     const color = (hex: number) => new Color(hex);
@@ -105,7 +155,31 @@ export class InfiniteFloor {
   }
 
   setLight(violet: boolean): void {
+    if (this.snowy) return;
     (this.mesh.material.uniforms.uTopLeft.value as Color).set(violet ? 0x2f2340 : 0x2c2337);
+  }
+
+  /**
+   * Christmas: snow over the ground, the road and whatever `trail` holds left bare (SnowGround). The ground showing
+   * through takes a cold winter dusk.
+   */
+  setSnow(trail: Texture, road: Texture, min: Vector2, size: Vector2): void {
+    const material = this.mesh.material;
+    const uniforms = material.uniforms;
+    uniforms.uTrail = { value: trail };
+    uniforms.uRoad = { value: road };
+    uniforms.uMapMin = { value: min };
+    uniforms.uMapSize = { value: size };
+    uniforms.uSnowLow = { value: new Color(0xb9c6df) };
+    uniforms.uSnowHigh = { value: new Color(0xe4ebf7) };
+    (uniforms.uBottomLeft.value as Color).set(0x1a1f2e);
+    (uniforms.uBottomRight.value as Color).set(0x202638);
+    (uniforms.uTopLeft.value as Color).set(0x2c3348);
+    (uniforms.uTopRight.value as Color).set(0x252b3e);
+    (uniforms.uDot.value as Color).set(0x3a4258);
+    material.fragmentShader = snowFragmentShader;
+    material.needsUpdate = true;
+    this.snowy = true;
   }
 
   /** Halloween's moonlit night: the ground's gradient darker and colder, its dots fainter. */

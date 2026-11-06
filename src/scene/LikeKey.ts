@@ -7,6 +7,7 @@ import { t } from '../core/i18n.ts';
 import { formatLikes } from '../core/likes.ts';
 import type { FloorKey } from '../world/keyPress.ts';
 import { FONT } from './canvasText.ts';
+import { groundInk } from './groundInk.ts';
 
 /** The like key: cap width and height (m), like the intro's arrow keys but larger. */
 export const LIKE_KEY = { size: 0.9, height: 0.3 };
@@ -20,7 +21,6 @@ const PANEL = { width: 3.6, words: 1.8, count: 0.95, gap: 0.15, wordsGap: 0.65, 
 const WORDS = { size: 0.46, step: 0.56 };
 /** A heart rising off the key when a like counts: seconds, and how high it goes (m). */
 const BURST = { time: 1.1, rise: 1.4 };
-const VIOLET = new Color(0xb79bff);
 const HEART_IDLE = new Color().setRGB(0.36, 0.24, 0.58);
 const HEART_LIKED = new Color(0xff3d7f);
 
@@ -101,7 +101,7 @@ export class LikeKey {
     geometry.setAttribute('uv', new BufferAttribute(new Float32Array([0, 1, 1, 1, 0, 0, 1, 0]), 2));
     geometry.setIndex([0, 2, 1, 1, 2, 3]);
     geometry.computeVertexNormals();
-    this.panel = new Mesh(geometry, new MeshBasicMaterial({ map: this.texture, color: VIOLET, transparent: true, opacity: 0.6, depthWrite: false, side: DoubleSide }));
+    this.panel = new Mesh(geometry, new MeshBasicMaterial({ map: this.texture, color: groundInk(), transparent: true, opacity: 0.6, depthWrite: false, side: DoubleSide }));
     this.panel.renderOrder = -4;
     this.panel.name = 'LikeCount';
     this.root.add(this.cap, this.floating, this.panel);

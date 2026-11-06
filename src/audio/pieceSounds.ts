@@ -6,6 +6,8 @@ const BY_PROP: Record<string, RecordedSound> = {
   pallet: 'wood', plank: 'wood', leg: 'wood', drum: 'metal', pipe: 'metal', metal: 'metal', barrow: 'metal', tyre: 'rubber', key: 'brick',
   // Halloween: a thick-skinned pumpkin thuds like rubber, a spider rattles like plastic, a gravestone knocks like brick.
   pumpkin: 'rubber', spider: 'plastic', grave: 'brick',
+  // Christmas: a wrapped gift sounds like a cardboard box; a snowman's ball thuds softly like rubber.
+  gift: 'cardboard', snowman: 'rubber',
 };
 
 /** What a loose piece sounds like when it hits something: the name letters clatter like bricks, the rest goes by its prop. */

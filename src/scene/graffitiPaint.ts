@@ -573,6 +573,72 @@ function symbolMask(symbol: GraffitiSymbol, spot: GraffitiSpot, random: () => nu
       ctx.fill();
       break;
     }
+    case 'snowman': {
+      // Three snowballs stacked, a top hat on the head; the eyes, the buttons and a smile cut out of the paint.
+      for (const [y, r] of [[0.52, 0.42], [-0.06, 0.32], [-0.52, 0.24]] as const) {
+        ctx.moveTo(r * s, y * s);
+        ctx.arc(shake() * 0.2, y * s, r * s, 0, Math.PI * 2);
+      }
+      ctx.fill();
+      ctx.fillRect(-s * 0.26, -s * 0.78, s * 0.52, s * 0.07);
+      ctx.fillRect(-s * 0.16, -s * 1.02, s * 0.32, s * 0.26);
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath();
+      for (const [x, y, r] of [[-0.09, -0.58, 0.045], [0.09, -0.58, 0.045], [0, -0.14, 0.05], [0, 0.04, 0.05], [0, 0.42, 0.055]] as const) {
+        ctx.moveTo(x * s + r * s, y * s);
+        ctx.arc(x * s, y * s, r * s, 0, Math.PI * 2);
+      }
+      ctx.fill();
+      ctx.lineWidth = size * 0.03;
+      ctx.beginPath();
+      ctx.arc(0, -0.5 * s, s * 0.1, 0.2 * Math.PI, 0.8 * Math.PI);
+      ctx.stroke();
+      ctx.globalCompositeOperation = 'source-over';
+      break;
+    }
+    case 'gift': {
+      // A wrapped box with a bow; the ribbon cut out of the paint.
+      ctx.rect(-s * 0.75, -s * 0.2, s * 1.5, s * 1.05);
+      ctx.rect(-s * 0.85, -s * 0.42, s * 1.7, s * 0.26);
+      ctx.fill();
+      ctx.beginPath();
+      for (const side of [-1, 1]) {
+        ctx.moveTo(0, -s * 0.44);
+        ctx.bezierCurveTo(side * s * 0.25, -s * 0.95 + shake(), side * s * 0.62, -s * 0.78, 0, -s * 0.44);
+      }
+      ctx.fill();
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillRect(-s * 0.09, -s * 0.42, s * 0.18, s * 1.27);
+      ctx.fillRect(-s * 0.85, -s * 0.33, s * 1.7, s * 0.06);
+      ctx.globalCompositeOperation = 'source-over';
+      break;
+    }
+    case 'tree': {
+      // A Christmas tree of three tiers on a short trunk, a star on top; a few baubles cut out of the paint.
+      for (const [top, bottom, half] of [[-0.78, -0.22, 0.42], [-0.45, 0.22, 0.62], [-0.1, 0.62, 0.84]] as const) {
+        ctx.moveTo(0, top * s);
+        ctx.lineTo(half * s + shake(), bottom * s);
+        ctx.lineTo(-half * s + shake(), bottom * s);
+        ctx.closePath();
+      }
+      ctx.rect(-s * 0.1, s * 0.62, s * 0.2, s * 0.26);
+      for (let i = 0; i < 10; i++) {
+        const radius = (i % 2 ? 0.08 : 0.19) * s;
+        const turn = -Math.PI / 2 + (i * Math.PI) / 5;
+        if (i === 0) ctx.moveTo(Math.cos(turn) * radius, -0.86 * s + Math.sin(turn) * radius);
+        else ctx.lineTo(Math.cos(turn) * radius, -0.86 * s + Math.sin(turn) * radius);
+      }
+      ctx.fill();
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath();
+      for (const [x, y] of [[-0.15, -0.35], [0.22, -0.02], [-0.3, 0.2], [0.1, 0.45], [-0.48, 0.55], [0.5, 0.55]] as const) {
+        ctx.moveTo(x * s + s * 0.06, y * s);
+        ctx.arc(x * s, y * s, s * 0.06, 0, Math.PI * 2);
+      }
+      ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      break;
+    }
     case 'chick':
       // The feathers only: body, tuft and the wings sticking out; chickDetails adds the rest over the paint.
       chickBox(ctx, s);

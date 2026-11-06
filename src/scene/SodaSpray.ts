@@ -8,6 +8,8 @@ export type SprayPalette = { foam: Color; liquid: Color; glow: number };
 export const SODA: SprayPalette = { foam: new Color(0xf3e6cf), liquid: new Color(0x5a2a12), glow: 0 };
 /** Halloween: the cauldron's test tubes spray a glowing green brew. */
 export const BREW: SprayPalette = { foam: new Color(0xb8ff6a), liquid: new Color(0x2fd12a), glow: 0.9 };
+/** Christmas: the sleigh's thruster blows snow, white and icy blue, faintly lit. */
+export const SNOW_JET: SprayPalette = { foam: new Color(0xffffff), liquid: new Color(0x9fd8ff), glow: 0.35 };
 
 type Drop = { position: Vector3; velocity: Vector3; age: number; life: number; size: number; foam: boolean };
 type Cap = { object: Object3D; velocity: Vector3; spin: Vector3; resting: boolean };

@@ -12,6 +12,7 @@ import { setupCineMode } from './cineMode.ts';
 import { GamepadInput, type PadKind } from '../input/GamepadInput.ts';
 import { Sounds } from '../audio/Sounds.ts';
 import { halloweenMode } from '../core/halloween.ts';
+import { christmasMode, daysToChristmas, seasonOf } from '../core/christmas.ts';
 import { LikeCounter } from '../core/likes.ts';
 import { CharacterViewer, type CameraMode, type LightPreset, type MovementState, type ViewerStatus } from '../viewer/CharacterViewer';
 
@@ -31,6 +32,7 @@ app.innerHTML = `
       <div class="language-switch tool-segmented" role="group" data-i18n-label="language.label">
         ${LANGUAGES.map((language) => `<button type="button" data-language="${language}" lang="${language}" aria-pressed="false">${language.toUpperCase()}</button>`).join('')}
       </div>
+      <span class="christmas-countdown" id="christmas-countdown" role="status" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M12 2l1.6 3.6L17 4l-1.6 3.6L19 9l-3.6 1.4L17 14l-3.4-1.6L12 16l-1.6-3.6L7 14l1.6-3.6L5 9l3.6-1.4L7 4l3.4 1.6z" opacity=".95"/><path fill="#7a0a14" d="M11 15h2v7h-2z"/></svg><span></span></span>
     </header>
     <button type="button" class="menu-toggle" id="menu-toggle" aria-expanded="false" aria-controls="room-tools" data-i18n-label="menu.open">
       <span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>
@@ -113,9 +115,53 @@ let viewer: CharacterViewer | undefined;
 let generation = 0;
 let disposed = false;
 /** Halloween dress-up: by the system date (1 October to 5 November) unless ?halloween=1 or ?halloween=0 forces it. */
-const halloween = halloweenMode(window.location.search);
+/**
+ * Christmas dress-up: by the system date (1 December to 5 January) unless ?navidad=1 / ?christmas=1 or =0 forces it.
+ * One season at a time: if both are forced on, Christmas wins.
+ */
+const season = seasonOf(christmasMode(window.location.search), halloweenMode(window.location.search));
+const halloween = season === 'halloween';
+const christmas = season === 'christmas';
 document.documentElement.dataset.halloween = halloween ? 'on' : 'off';
+document.documentElement.dataset.christmas = christmas ? 'on' : 'off';
 if (halloween) pumpkinIcon();
+if (christmas) treeIcon();
+
+/** Christmas's tab icon: a green tree with red baubles and a gold star, drawn on a canvas. */
+function treeIcon(): void {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.fillStyle = '#6b3a1a';
+  ctx.fillRect(28, 50, 8, 10);
+  ctx.fillStyle = '#1f8a3a';
+  for (const [top, bottom, half] of [[10, 30, 13], [20, 42, 18], [30, 54, 24]]) {
+    ctx.beginPath();
+    ctx.moveTo(32, top);
+    ctx.lineTo(32 + half, bottom);
+    ctx.lineTo(32 - half, bottom);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.fillStyle = '#e8202e';
+  for (const [x, y] of [[26, 30], [38, 38], [24, 46], [41, 50], [32, 22]]) {
+    ctx.beginPath();
+    ctx.arc(x, y, 3.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = '#ffd23a';
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const r = i % 2 ? 3.2 : 8;
+    const a = -Math.PI / 2 + (i * Math.PI) / 5;
+    ctx.lineTo(32 + Math.cos(a) * r, 9 + Math.sin(a) * r);
+  }
+  ctx.closePath();
+  ctx.fill();
+  const href = canvas.toDataURL('image/png');
+  for (const link of document.querySelectorAll<HTMLLinkElement>('link[rel="icon"]')) link.href = href;
+}
 
 /** Halloween's tab icon: a jack-o'-lantern drawn on a canvas in place of the head (nothing to download). */
 function pumpkinIcon(): void {
@@ -158,7 +204,8 @@ likes.start();
 
 const touchControls = new TouchControls(app.querySelector<HTMLDivElement>('.room-page')!, host, () => viewer?.input);
 // Halloween: the gauge is the cauldron's test tube instead of the soda bottle.
-const nitroGauge = new NitroGauge(app.querySelector<HTMLDivElement>('.room-page')!, host, halloween ? 'tube' : 'bottle');
+// Christmas: one of the sleigh's snow thrusters.
+const nitroGauge = new NitroGauge(app.querySelector<HTMLDivElement>('.room-page')!, host, halloween ? 'tube' : christmas ? 'thruster' : 'bottle');
 const gamepad = new GamepadInput(() => viewer?.input);
 gamepad.inZone = () => (host.dataset.sign ?? 'none') !== 'none';
 gamepad.onMenu = () => setMenu(tools.hidden !== false);
@@ -190,7 +237,7 @@ function setInputMode(mode: 'keyboard' | 'touch' | 'gamepad', kind?: PadKind): v
 const start = new StartScreen(app.querySelector<HTMLDivElement>('.room-page')!, {
   label: t('start.label'),
   // Halloween: BOO! instead of START (the same in both languages).
-  word: halloween ? 'BOO!' : 'START',
+  word: halloween ? 'BOO!' : christmas ? 'HO HO HO' : 'START',
   reducedMotion: motionReduced,
   onStart: () => {
     started = true;
@@ -232,9 +279,24 @@ function applyTexts(): void {
   for (const button of languageButtons) button.setAttribute('aria-pressed', String(button.dataset.language === language));
   menuToggle.setAttribute('aria-label', t(tools.hidden ? 'menu.open' : 'menu.close'));
   start.setLabel(t('start.label'));
+  applyCountdown();
   touchControls.setLabels(t);
   applySound();
   updateStatus(lastStatus);
+}
+
+/**
+ * Christmas: a pill beside ES | EN counting the days to Christmas Eve, «¡Feliz Navidad!» on the 24th and 25th, and
+ * hidden from the 26th to the end of the season.
+ */
+const countdown = app.querySelector<HTMLSpanElement>('#christmas-countdown');
+function applyCountdown(): void {
+  if (!countdown) return;
+  const days = daysToChristmas();
+  countdown.hidden = !christmas || days === null;
+  const text = countdown.querySelector('span');
+  if (!text || days === null) return;
+  text.textContent = days === 0 ? t('christmas.today') : days === 1 ? t('christmas.countdownOne') : t('christmas.countdown', { days: String(days) });
 }
 
 function updateStatus(state: ViewerStatus): void {
@@ -283,7 +345,7 @@ function mount(): void {
     run: (on) => { if (live()) touchControls.setRunning(on); },
   }, {
     modelId: 'v4rig', view: 'three-quarter', light: LIGHT, wireframe: false, scene: 'room',
-    quality: preferences.quality, reducedMotion: motionReduced(), cameraMode: camera, spawn: SPAWN, sounds, touch, halloween, likes,
+    quality: preferences.quality, reducedMotion: motionReduced(), cameraMode: camera, spawn: SPAWN, sounds, touch, halloween, christmas, likes,
   });
   viewer.setInputEnabled(started);
   const mode = inputMode;

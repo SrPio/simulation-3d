@@ -31,6 +31,7 @@
 
 /* START: just the word inside the hollow head, glowing on hover, focus and press. */
 .start-screen .start-button {
+  white-space: nowrap;
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   padding: 14px 22px; border: 0; background: none; color: #e6d8f8;
   font: 600 26px/1 var(--font); letter-spacing: 10px; text-indent: 10px; text-shadow: 0 0 10px #8a5cf066;
@@ -65,3 +66,15 @@ html[data-reduced-motion] .start-outline, html[data-reduced-motion] .start-perce
 :root[data-halloween='on'] .start-screen .start-button { color: #ffd9a8; text-shadow: 0 0 10px #ff7a1a88; }
 :root[data-halloween='on'] .start-screen .start-button:is(:hover, :focus-visible) { color: #fff; text-shadow: 0 0 6px #ffffffcc, 0 0 18px #ffa040, 0 0 34px #ff6a00; }
 :root[data-halloween='on'] .start-percent { color: #c9a58a; }
+
+/* Christmas: Christmas red outline and glass, and HO HO HO sized to stay well inside the hollow head. */
+:root[data-christmas='on'] .start-backdrop { fill: #140a0d; }
+:root[data-christmas='on'] .start-ghost { stroke: #ff5a5a2e; }
+:root[data-christmas='on'] .start-line { stroke: #ff4a4a; filter: drop-shadow(0 0 5px #ff2a3acc); }
+:root[data-christmas='on'] .start-glass { background: #3a0a12b8; }
+:root[data-christmas='on'] .start-screen .start-button {
+  color: #ffe6e6; text-shadow: 0 0 10px #ff2a3a88;
+  font-size: clamp(14px, calc(var(--start-head, 260px) * 0.1), 26px); letter-spacing: 0.22em; text-indent: 0.22em; padding: 12px 10px;
+}
+:root[data-christmas='on'] .start-screen .start-button:is(:hover, :focus-visible) { color: #fff; text-shadow: 0 0 6px #ffffffcc, 0 0 18px #ff6b6b, 0 0 34px #e0102a; }
+:root[data-christmas='on'] .start-percent { color: #d9a8a8; }

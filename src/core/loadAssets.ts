@@ -101,6 +101,7 @@ export const EXPECTED_BYTES: Record<string, number> = {
   'models/univalle.glb': 29_000,
   'models/experience.glb': 25_000,
   'models/halloween.glb': 750_000,
+  'models/christmas.glb': 580_000,
 };
 
 export async function loadCharacter(modelId: ModelVersionId, signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
@@ -169,6 +170,17 @@ export const halloweenFile = 'models/halloween.glb';
  */
 export function loadHalloween(signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
   return loadGlb(halloweenFile, 'ROOM', signal, progress);
+}
+
+export const christmasFile = 'models/christmas.glb';
+
+/**
+ * The Christmas dress-up (src/core/christmas.ts): its snowmen, pines, giant tree, gifts and decorations are read with
+ * the outside; the Santa hat, the sleigh, the light strings and the dressed pieces are taken out by the viewer. Only
+ * fetched while it is on.
+ */
+export function loadChristmas(signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
+  return loadGlb(christmasFile, 'ROOM', signal, progress);
 }
 
 export const chickFile = 'models/chick.glb';

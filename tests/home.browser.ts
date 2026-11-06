@@ -30,8 +30,8 @@ async function start(page: Page) {
 }
 
 async function ready(page: Page) {
-  // The page dresses up for Halloween by the date: these tests check the everyday world (halloween=0).
-  await page.goto(new URL('?halloween=0', baseURL).href);
+  // The page dresses up for Halloween and Christmas by the date: these tests check the everyday world.
+  await page.goto(new URL('?halloween=0&navidad=0', baseURL).href);
   await start(page);
   await expect(page.locator('#viewer-overlay')).toBeHidden();
   await expect(host(page)).toHaveAttribute('data-movement', 'ready');
@@ -513,7 +513,7 @@ test('?halloween=1 dresses the room page up: its own model, the mask, the cauldr
     const url = new URL(request.url());
     if (url.pathname.endsWith('.glb')) models.push(url.pathname.split('/').at(-1)!);
   });
-  await page.goto(new URL('?halloween=1', baseURL).href);
+  await page.goto(new URL('?halloween=1&navidad=0', baseURL).href);
   await start(page);
   assert.ok(models.includes('halloween.glb'), 'halloween.glb is fetched');
   await expect(page.locator('html')).toHaveAttribute('data-halloween', 'on');
@@ -530,5 +530,47 @@ test('?halloween=1 dresses the room page up: its own model, the mask, the cauldr
   await expect.poll(async () => Number(await host(page).getAttribute('data-smashed') ?? 0), { timeout: 6000 }).toBeGreaterThan(0);
   await expect.poll(async () => Number(await host(page).getAttribute('data-candies') ?? 0)).toBeGreaterThan(0);
   await page.screenshot({ path: shot('home-halloween.png') });
+  assert.deepEqual(errors, []);
+});
+
+test('?navidad=1 dresses the room page up for Christmas: its model, the hat, the sleigh, snowballs, the thruster gauge and HO HO HO', async (t) => {
+  const errors: string[] = [];
+  const models: string[] = [];
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 }]) {
+    const page = await browser.newPage({ viewport, ...spanish });
+    t.after(() => page.close());
+    page.on('pageerror', (error) => errors.push(error.message));
+    page.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.endsWith('.glb')) models.push(url.pathname.split('/').at(-1)!);
+    });
+    await page.goto(new URL('?navidad=1&halloween=0', baseURL).href);
+    await expect(page.locator('.start-screen')).toHaveAttribute('data-start', 'ready', { timeout: 30000 });
+    // HO HO HO stays well inside the hollow head, on one line.
+    const button = page.locator('.start-button');
+    await expect(button).toHaveText('HO HO HO');
+    const box = (await button.boundingBox())!;
+    const head = await page.locator('.start-screen').evaluate((element) => parseFloat(getComputedStyle(element).getPropertyValue('--start-head')));
+    assert.ok(box.height < 60, `one line (${box.height.toFixed(0)} px)`);
+    assert.ok(box.width < head * 1.05, `inside the head (${box.width.toFixed(0)} of ${head.toFixed(0)} px)`);
+    await page.screenshot({ path: shot(`home-christmas-start-${viewport.width}.png`) });
+    if (viewport.width < 400) continue;
+    await start(page);
+    assert.ok(models.includes('christmas.glb'), 'christmas.glb is fetched');
+    assert.ok(!models.includes('halloween.glb'), 'not halloween.glb');
+    await expect(page.locator('html')).toHaveAttribute('data-christmas', 'on');
+    await expect(host(page)).toHaveAttribute('data-christmas', 'on');
+    await expect(host(page)).toHaveAttribute('data-hat', 'santa');
+    await expect(host(page)).toHaveAttribute('data-vehicle', 'sleigh');
+    await expect(page.locator('.nitro-gauge')).toHaveAttribute('data-vessel', 'thruster');
+    await expect.poll(async () => (await host(page).getAttribute('data-graffiti')) ?? '').toContain('ground-christmas');
+    await expect(host(page)).toHaveAttribute('data-physics', 'ready', { timeout: 10000 });
+    // F throws a snowball that bursts.
+    await page.keyboard.down('KeyF');
+    await page.waitForTimeout(300);
+    await page.keyboard.up('KeyF');
+    await expect.poll(async () => Number(await host(page).getAttribute('data-snowballs') ?? 0), { timeout: 6000 }).toBeGreaterThan(0);
+    await page.screenshot({ path: shot('home-christmas.png') });
+  }
   assert.deepEqual(errors, []);
 });

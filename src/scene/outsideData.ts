@@ -5,7 +5,7 @@ import type { Bounds, Box2, Point2 } from '../world/collisions.ts';
 /** Floor zone in front of a sign: an oriented rectangle on the ground. */
 export type SignArea = { center: Point2; axisX: Point2; axisZ: Point2; halfX: number; halfZ: number };
 
-export type PieceGroup = 'name' | 'tag' | 'keys' | 'bowling' | 'bricks' | 'decor' | 'tech' | 'circuit' | 'wall' | 'halloween';
+export type PieceGroup = 'name' | 'tag' | 'keys' | 'bowling' | 'bricks' | 'decor' | 'tech' | 'circuit' | 'wall' | 'halloween' | 'christmas';
 /** What a reset zone puts back: a group of pieces, or the targets lane (its thrown laptops and score). */
 export type ResetTarget = PieceGroup | 'targets';
 
@@ -73,7 +73,7 @@ export type Letter = Piece & {
 
 /** Where the viewer paints on the ground: a block in its own axes (local +X along the text, +Z towards the camera). */
 export type FloorBlock = {
-  id: 'intro' | 'crossroads' | 'controls' | 'playground' | 'bowling' | 'footprints' | 'about' | 'targets' | 'tech' | 'playarea' | 'prints' | 'circuit' | 'checker' | 'chairhint' | 'technote' | 'boxing';
+  id: 'intro' | 'crossroads' | 'controls' | 'playground' | 'bowling' | 'footprints' | 'about' | 'targets' | 'tech' | 'playarea' | 'prints' | 'circuit' | 'checker' | 'chairhint' | 'technote' | 'boxing' | 'xmastree';
   position: Vector3;
   yaw: number;
   size: [number, number];
@@ -162,6 +162,8 @@ export type OutsideData = {
   tapes: Tape[];
   chair?: OfficeChair;
   lapBoard?: Scoreboard;
+  /** Christmas: the board by the giant tree counting the gifts brought there off the sleigh. */
+  giftBoard?: Scoreboard;
   trafficLight?: Object3D;
   /** The park benches as seats (the bed's clips and the lap laptop), each with its bench's name as `id`. */
   benches: SeatSpot[];
@@ -195,7 +197,7 @@ function areaOf(position: Vector3, quaternion: Quaternion, size: number[], offse
   };
 }
 
-const PROP_GROUPS = new Set<string>(['keys', 'bowling', 'bricks', 'decor', 'tech', 'circuit', 'wall', 'halloween']);
+const PROP_GROUPS = new Set<string>(['keys', 'bowling', 'bricks', 'decor', 'tech', 'circuit', 'wall', 'halloween', 'christmas']);
 const RESET_TARGETS = new Set<string>([...PROP_GROUPS, 'targets']);
 
 function shapeOf(data: { radius?: number; cylinders?: number[] }): PieceShape {
@@ -261,6 +263,7 @@ export function readOutside(root: Object3D): OutsideData {
   const tapes: Tape[] = [];
   let chair: OfficeChair | undefined;
   let lapBoard: Scoreboard | undefined;
+  let giftBoard: Scoreboard | undefined;
   let trafficLight: Object3D | undefined;
   const benches: SeatSpot[] = [];
   const bags: PunchBag[] = [];
@@ -289,6 +292,9 @@ export function readOutside(root: Object3D): OutsideData {
       }
       if (object.name === 'LapBoard' && data.board?.length === 3) {
         lapBoard = { position, yaw, width: data.board[0], height: data.board[1], bottom: data.board[2] };
+      }
+      if (object.name === 'GiftBoard' && data.board?.length === 3) {
+        giftBoard = { position, yaw, width: data.board[0], height: data.board[1], bottom: data.board[2] };
       }
       if (object.name === 'TrafficLight') trafficLight = object;
       if (data.seat === 'bench' && data.stand !== undefined && data.approach !== undefined) {
@@ -381,7 +387,7 @@ export function readOutside(root: Object3D): OutsideData {
   targets.sort((a, b) => a.index - b.index);
   tapes.sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }));
   bags.sort((a, b) => a.id.localeCompare(b.id));
-  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost, decor, plaques, targets, scoreboard, ramps, tapes, chair, lapBoard, trafficLight, benches, bags, experience };
+  return { bounds, groundY, platform, boxes, signs, zones, letters, props, floors, lamppost, decor, plaques, targets, scoreboard, ramps, tapes, chair, lapBoard, giftBoard, trafficLight, benches, bags, experience };
 }
 
 /** Height of a ramp's surface above the ground at a point, 0 off it. */

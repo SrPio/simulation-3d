@@ -18,14 +18,14 @@ import { SPRAY_SYMBOLS, type SpraySymbolName } from './sprayFont.ts';
 /** Face the paint lies on: the +Z side, the +X side, or facing up (the ground, a ramp, a top). */
 export type GraffitiFace = 'z' | 'x' | 'up';
 /** Symbols drawn filled ('piece' or 'tag'); the chick also gets its sunglasses, beak, cheeks and feet in their own colours. */
-export type FilledSymbol = 'heart' | 'star' | 'crown' | 'arrow' | 'smiley' | 'bolt' | 'code' | 'chick' | 'pumpkin' | 'ghost' | 'bat';
+export type FilledSymbol = 'heart' | 'star' | 'crown' | 'arrow' | 'smiley' | 'bolt' | 'code' | 'chick' | 'pumpkin' | 'ghost' | 'bat' | 'snowman' | 'gift' | 'tree';
 /**
  * Symbols the painter knows; words are any text instead. The filled ones, and the quick one-colour can strokes
  * ('spray', SPRAY_SYMBOLS: the reference set and technology logos such as react, js or git).
  */
 export type GraffitiSymbol = FilledSymbol | SpraySymbolName;
 export const GRAFFITI_SYMBOLS: readonly GraffitiSymbol[] = [
-  'heart', 'star', 'crown', 'arrow', 'smiley', 'bolt', 'code', 'chick', 'pumpkin', 'ghost', 'bat',
+  'heart', 'star', 'crown', 'arrow', 'smiley', 'bolt', 'code', 'chick', 'pumpkin', 'ghost', 'bat', 'snowman', 'gift', 'tree',
   ...(Object.keys(SPRAY_SYMBOLS) as SpraySymbolName[]),
 ];
 /**
@@ -66,6 +66,7 @@ export type GraffitiSpot = {
 /** Spray can colours that read on the dark ground and on the light concrete. */
 export const GRAFFITI_COLORS = {
   black: '#121014', white: '#f4f1ff', pink: '#ff3fa4', lime: '#b6ff3b', cyan: '#3ff0ff', yellow: '#ffd23f', orange: '#ff7a1a', violet: '#a879ff',
+  red: '#e8202e', green: '#1fbf55',
 } as const;
 
 const C = GRAFFITI_COLORS;
@@ -123,6 +124,37 @@ export function graffitiForHalloween(spots: readonly GraffitiSpot[]): GraffitiSp
     if (!dressed) return spot;
     const { symbol: _symbol, text: _text, ...rest } = spot;
     return { ...rest, ...dressed, id: `${spot.id}-halloween` } as GraffitiSpot;
+  });
+}
+
+/**
+ * Christmas' graffiti: some spots get a Christmas painting in their place (the same point, face and width, so they still
+ * find their surface); the rest stay as they are.
+ */
+export const CHRISTMAS_GRAFFITI: Readonly<Record<string, Partial<GraffitiSpot>>> = {
+  // A filled snowman and a filled gift, as big and as high on their barriers as the chick in sunglasses on its own.
+  'barrier-react': { symbol: 'snowman', text: undefined, style: 'piece', at: [1.76, 0.28, -12.22], width: 1.35, color: C.white, fade: '#bcd8ff', outline: '#14223a', seed: 711 },
+  'barrier-force': { symbol: 'gift', text: undefined, style: 'piece', at: [-3.2, 0.28, -11.23], width: 1.35, color: C.red, fade: '#ff7a86', outline: '#3a0610', seed: 713 },
+  'ramp-jump': { text: { es: '¡JO JO JO!', en: 'HO HO HO!' }, style: 'spray', color: C.red, seed: 717 },
+  'road-go': { text: { es: '¡A REPARTIR!', en: 'DELIVER!' }, style: 'spray', color: C.cyan, seed: 719 },
+  'planter-hello': { symbol: 'snowflake', text: undefined, style: 'spray', color: C.white, seed: 731 },
+  'park-code': { symbol: 'tree', style: 'piece', color: '#1fbf55', fade: '#a8ff7a', outline: '#0a2a12', seed: 741 },
+  'works-friday': { text: { es: '24 DIC:\nNO DEPLOY', en: 'DEC 24:\nNO DEPLOY' }, style: 'spray', color: C.red, seed: 743 },
+};
+
+/** Spots only painted for Christmas: the greeting on the ground in front of the room's open corner. */
+export const CHRISTMAS_EXTRA: readonly GraffitiSpot[] = [
+  { id: 'ground-christmas', text: { es: '¡FELIZ\nNAVIDAD!', en: 'MERRY\nCHRISTMAS!' }, style: 'spray', at: [8.4, 'ground', 4.6], face: 'up', width: 4.2, tilt: 5, color: C.red, seed: 753 },
+  { id: 'ground-candycane', symbol: 'candycane', style: 'spray', at: [11.6, 'ground', 5.3], face: 'up', width: 0.9, tilt: -12, color: C.red, seed: 757 },
+];
+
+/** The spots dressed for Christmas (see CHRISTMAS_GRAFFITI), and the ones only painted then (CHRISTMAS_EXTRA). */
+export function graffitiForChristmas(spots: readonly GraffitiSpot[]): GraffitiSpot[] {
+  return [...spots, ...CHRISTMAS_EXTRA].map((spot) => {
+    const dressed = CHRISTMAS_GRAFFITI[spot.id];
+    if (!dressed) return spot;
+    const { symbol: _symbol, text: _text, ...rest } = spot;
+    return { ...rest, ...dressed, id: `${spot.id}-christmas` } as GraffitiSpot;
   });
 }
 

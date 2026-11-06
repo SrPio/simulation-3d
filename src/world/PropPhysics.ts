@@ -26,7 +26,7 @@ export type TargetHit = { target: number; distance: number; laptop: Thrown };
  * Something hit a loose piece (its index), a thrown laptop or pumpkin, a candy, a chick or a punching bag this hard (m/s
  * along the contact normal), for its sound.
  */
-export type Impact = { source: number | 'laptop' | 'pumpkin' | 'candy' | 'chick' | 'bag'; speed: number; position: Vec };
+export type Impact = { source: number | 'laptop' | 'pumpkin' | 'candy' | 'chick' | 'bag' | 'snowball' | 'gift'; speed: number; position: Vec };
 /**
  * A punching bag: a cylinder (`radius`, `length`) hanging from a fixed hook at `pivot`, its middle `centre` below it.
  * It only swings like a pendulum round the hook: a ball joint holds it there and its spin about its own axis is taken away.
@@ -67,6 +67,23 @@ export const PUMPKIN = { radius: 0.17, mass: 1.2 } as const;
 export const CANDY = { radius: 0.045, mass: 0.05, count: 10, spread: 2.6, lift: 2.2, carry: 0.25 } as const;
 /** At most this many candies at once: a new burst retires the oldest. */
 export const MAX_CANDIES = 60;
+/** Christmas: the snowball thrown instead of the laptop; it bursts into snow on the first thing it hits. */
+export const SNOWBALL = { radius: 0.11, mass: 0.35 } as const;
+/**
+ * Christmas: a snowman's balls are held together until something hits one at `breakSpeed` (m/s) or more: a charged blow,
+ * a snowball, the sleigh, or the character running into it. Each ball then lies loose and crumbles into snow `crumble`
+ * seconds later, or at once when it is hit again at `hitAgain` or more.
+ */
+export const SNOWMAN = { breakSpeed: 2.6, crumble: 1.2, hitAgain: 1.5 } as const;
+/**
+ * Christmas: the gifts that fall off the sleigh's sack while its thruster blows: boxes of these sizes (w, h, d) and
+ * masses; at most `max` at once (a new one retires the oldest) and each one goes after `life` seconds.
+ */
+export const GIFT = { sizes: [[0.26, 0.26, 0.26], [0.34, 0.22, 0.28], [0.22, 0.32, 0.22]] as const, mass: 0.8, max: 24, life: 45 } as const;
+/** A gift off the sleigh: its body, which size it is and when it fell. */
+export type FallenGift = { body: BodyType; size: number; born: number };
+/** A snowman's ball that crumbled into snow (its piece index) and where. */
+export type Crumble = { index: number; position: Vec; radius: number };
 /** Where a pumpkin burst and how it was moving: the viewer scatters its shards from there. */
 export type Smash = { position: Vec; velocity: Vec };
 /** A box flap: a thin board hinged on the rim, light, opening from shut (0) up to FLAP_LIMIT. */
@@ -114,7 +131,7 @@ export const STRIKE_SPEED = { min: 1.5, max: 9 };
 const STRIKE_LIFT = 0.35;
 
 type Settings = { material: string; sleepSpeed: number; angularDamping: number; linearDamping: number };
-const SETTINGS: Record<PieceGroup | 'laptop' | 'chick' | 'candy', Settings> = {
+const SETTINGS: Record<PieceGroup | 'laptop' | 'chick' | 'candy' | 'gift' | 'snowball', Settings> = {
   // Generous sleep limits: a letter resting against another keeps a faint rocking that must still count as asleep.
   name: { material: 'letter', sleepSpeed: 0.2, angularDamping: 0.5, linearDamping: 0.1 },
   tag: { material: 'letter', sleepSpeed: 0.2, angularDamping: 0.5, linearDamping: 0.1 },
@@ -127,6 +144,10 @@ const SETTINGS: Record<PieceGroup | 'laptop' | 'chick' | 'candy', Settings> = {
   wall: { material: 'brick', sleepSpeed: 0.15, angularDamping: 0.4, linearDamping: 0.1 },
   // Pumpkins, spiders and gravestones: heavy, they rock a little and settle.
   halloween: { material: 'pumpkin', sleepSpeed: 0.15, angularDamping: 0.5, linearDamping: 0.1 },
+  // Christmas: wrapped gifts slide and tumble like light boxes; snowballs fly true.
+  christmas: { material: 'gift', sleepSpeed: 0.15, angularDamping: 0.4, linearDamping: 0.1 },
+  gift: { material: 'gift', sleepSpeed: 0.15, angularDamping: 0.4, linearDamping: 0.1 },
+  snowball: { material: 'snow', sleepSpeed: 0.15, angularDamping: 0.3, linearDamping: 0.02 },
   laptop: { material: 'laptop', sleepSpeed: 0.15, angularDamping: 0.3, linearDamping: 0.05 },
   chick: { material: 'chick', sleepSpeed: 0.12, angularDamping: 0.9, linearDamping: 0.2 },
   candy: { material: 'candy', sleepSpeed: 0.1, angularDamping: 0.6, linearDamping: 0.15 },
@@ -135,6 +156,8 @@ const SETTINGS: Record<PieceGroup | 'laptop' | 'chick' | 'candy', Settings> = {
 const BAG: Settings = { material: 'bag', sleepSpeed: 0.05, angularDamping: 0.45, linearDamping: 0.5 };
 /** Tyres grip and hardly bounce: a knocked one slides a little and stops instead of skating off the one beside it. */
 const RUBBER: Settings = { material: 'rubber', sleepSpeed: 0.15, angularDamping: 0.5, linearDamping: 0.15 };
+/** A snowman's ball is packed snow: it hardly rolls and does not bounce. */
+const SNOW: Settings = { material: 'snow', sleepSpeed: 0.15, angularDamping: 0.85, linearDamping: 0.3 };
 /** The ball rolls: it keeps less damping than the pins but still comes to rest on the flat ground. */
 const BALL: Settings = { material: 'ball', sleepSpeed: 0.12, angularDamping: 0.12, linearDamping: 0.05 };
 const CONTACTS: [string, string, number, number][] = [
@@ -149,6 +172,8 @@ const CONTACTS: [string, string, number, number][] = [
   ['bag', 'bag', 0.5, 0.05], ['bag', 'laptop', 0.5, 0.05], ['bag', 'chick', 0.5, 0.1],
   // Halloween: pumpkins grip the ground; candies skitter and bounce a little.
   ['pumpkin', 'ground', 0.7, 0.05], ['pumpkin', 'pumpkin', 0.5, 0.05], ['candy', 'ground', 0.35, 0.35], ['candy', 'candy', 0.3, 0.3],
+  // Christmas: packed snow grips and stays put; gifts slide a little.
+  ['snow', 'ground', 0.9, 0.0], ['snow', 'snow', 0.8, 0.0], ['gift', 'ground', 0.45, 0.1], ['gift', 'gift', 0.4, 0.1], ['gift', 'snow', 0.5, 0.05],
 ];
 
 /**
@@ -174,6 +199,18 @@ export class PropPhysics {
   readonly retiredCandies: BodyType[] = [];
   /** Pumpkins that hit something during the step: they burst after it (bodies are not added or removed mid-step). */
   private readonly toSmash = new Set<ThrownPumpkin>();
+  /** Christmas: snowballs in the air, and where the burst ones broke (the viewer empties the list). */
+  readonly snowballs: ThrownPumpkin[] = [];
+  readonly bursts: Smash[] = [];
+  private readonly toBurst = new Set<ThrownPumpkin>();
+  /** Christmas: gifts fallen off the sleigh, oldest first, and the ones taken away (the viewer shrinks them; it empties the list). */
+  readonly gifts: FallenGift[] = [];
+  readonly retiredGifts: FallenGift[] = [];
+  /** Christmas: snowman balls broken loose (piece index → seconds since), crumbled ones (out of the world until a reset) and the crumbles for the viewer. */
+  private readonly loose = new Map<number, number>();
+  private readonly crumbledSet = new Set<number>();
+  readonly crumbles: Crumble[] = [];
+  private readonly toCrumble = new Set<number>();
   /** The punching bags, in the order given, and where each one hangs at rest. */
   readonly bags: BodyType[] = [];
   private readonly bagRest: BagBody[] = [];
@@ -222,7 +259,7 @@ export class PropPhysics {
     this.world.broadphase = new SAPBroadphase(this.world);
     // More solver passes: thin pieces resting on an edge and stacked bricks settle and sleep instead of rocking forever.
     (this.world.solver as unknown as { iterations: number }).iterations = 20;
-    for (const name of ['ground', 'letter', 'brick', 'pin', 'ball', 'laptop', 'chick', 'bag', 'pumpkin', 'candy', 'rubber']) this.materials.set(name, new Material(name));
+    for (const name of ['ground', 'letter', 'brick', 'pin', 'ball', 'laptop', 'chick', 'bag', 'pumpkin', 'candy', 'rubber', 'snow', 'gift']) this.materials.set(name, new Material(name));
     this.world.defaultContactMaterial.friction = 0.4;
     this.world.defaultContactMaterial.restitution = 0.1;
     for (const [a, b, friction, restitution] of CONTACTS) {
@@ -247,7 +284,7 @@ export class PropPhysics {
       body.quaternion.setFromEuler(0, disc.yaw, 0);
       body.addEventListener('collide', (event: { body: BodyType }) => {
         const laptop: Thrown | undefined = this.laptops.find((entry) => entry.base === event.body || entry.lid === event.body)
-          ?? this.pumpkins.find((entry) => entry.body === event.body);
+          ?? this.pumpkins.find((entry) => entry.body === event.body) ?? this.snowballs.find((entry) => entry.body === event.body);
         if (!laptop) return;
         const seen = this.scored.get(laptop) ?? new Set<number>();
         if (seen.has(index)) return;
@@ -267,7 +304,7 @@ export class PropPhysics {
     }
     for (const piece of this.rest) {
       const shape = piece.shape ?? { kind: 'box' };
-      const settings = shape.kind === 'sphere' ? BALL : piece.prop === 'tyre' ? RUBBER : SETTINGS[piece.group ?? 'name'];
+      const settings = piece.prop === 'snowman' ? SNOW : shape.kind === 'sphere' ? BALL : piece.prop === 'tyre' ? RUBBER : SETTINGS[piece.group ?? 'name'];
       const body = new Body({ mass: piece.mass ?? LETTER_MASS, material: this.materials.get(settings.material) });
       if (shape.kind === 'sphere') body.addShape(new Sphere(shape.radius));
       else if (shape.kind === 'cylinders') {
@@ -278,7 +315,10 @@ export class PropPhysics {
       this.configure(body, settings);
       body.collisionFilterGroup = GROUP.piece;
       const index = this.bodies.length;
-      body.addEventListener('collide', (event: CollideEvent) => this.report(index, body, event));
+      body.addEventListener('collide', (event: CollideEvent) => {
+        this.report(index, body, event);
+        if (piece.prop === 'snowman') this.snowmanHit(index, body, event.body);
+      });
       this.world.addBody(body);
       this.bodies.push(body);
       this.flaps.push((piece.flaps ?? []).map((at) => this.addFlap(body, at)));
@@ -319,6 +359,12 @@ export class PropPhysics {
     const byJoint = new Map<string, number[]>();
     for (const [index, piece] of this.rest.entries()) if (piece.joint) byJoint.set(piece.joint, [...(byJoint.get(piece.joint) ?? []), index]);
     for (const [key, indices] of byJoint) {
+      if (indices.every((index) => this.rest[index].prop === 'snowman')) {
+        // A snowman: each ball held to the one under it.
+        const stack = [...indices].sort((a, b) => this.rest[a].position.y - this.rest[b].position.y);
+        for (let k = 1; k < stack.length; k++) this.joints.push({ key, plank: stack[k], leg: stack[k - 1], constraint: undefined });
+        continue;
+      }
       const legs = indices.filter((index) => this.rest[index].half[1] >= 0.3);
       for (const plank of indices.filter((index) => !legs.includes(index))) for (const leg of legs) this.joints.push({ key, plank, leg, constraint: undefined });
     }
@@ -407,7 +453,55 @@ export class PropPhysics {
   /** Something hit `body` at `speed`: a fence piece hit hard enough breaks its whole fence apart. */
   private knock(body: BodyType, speed: number): void {
     const key = this.jointOf(body);
-    if (key && speed >= BREAK_SPEED) this.toBreak.add(key);
+    if (!key) return;
+    const index = this.bodies.indexOf(body);
+    const snowman = this.rest[index]?.prop === 'snowman';
+    if (speed >= (snowman ? SNOWMAN.breakSpeed : BREAK_SPEED)) this.toBreak.add(key);
+    // A loose snowman ball hit again crumbles.
+    if (snowman && this.loose.has(index) && speed >= SNOWMAN.hitAgain) this.toCrumble.add(index);
+  }
+
+  /**
+   * Something touched a snowman's ball: the character running into it (its pusher) knocks it like a blow; a loose ball
+   * that lands hard or is hit again crumbles.
+   */
+  private snowmanHit(index: number, body: BodyType, other: BodyType): void {
+    const speed = body.velocity.vsub(other.velocity).length();
+    if (other === this.pusher) this.knock(body, this.pusher.velocity.length());
+    else if (this.loose.has(index) && this.loose.get(index)! > 0.15 && speed >= SNOWMAN.hitAgain) this.toCrumble.add(index);
+  }
+
+  /** Whether snowman ball `index` has crumbled into snow (it is out of the world until the next reset). */
+  crumbled(index: number): boolean {
+    return this.crumbledSet.has(index);
+  }
+
+  /** How many snowman balls are loose (broken off) and how many have crumbled. */
+  get snowmen(): { loose: number; crumbled: number } {
+    return { loose: this.loose.size, crumbled: this.crumbledSet.size };
+  }
+
+  /** Loose snowman balls crumble CRUMBLE seconds after breaking off, or at once when hit again. */
+  private crumbleSnow(delta: number): void {
+    for (const [index, age] of this.loose) {
+      const next = age + delta;
+      this.loose.set(index, next);
+      if (next >= SNOWMAN.crumble) this.toCrumble.add(index);
+    }
+    for (const index of this.toCrumble) {
+      if (this.crumbledSet.has(index)) continue;
+      const body = this.bodies[index];
+      this.loose.delete(index);
+      this.crumbledSet.add(index);
+      const p = body.position;
+      const shape = this.rest[index].shape;
+      this.crumbles.push({ index, position: { x: p.x, y: p.y, z: p.z }, radius: shape?.kind === 'sphere' ? shape.radius : this.rest[index].half[1] });
+      body.velocity.setZero();
+      body.angularVelocity.setZero();
+      body.sleep();
+      this.world.removeBody(body);
+    }
+    this.toCrumble.clear();
   }
 
   /** A contact on `body`, reported when it is hard enough to hear. */
@@ -427,6 +521,9 @@ export class PropPhysics {
       joint.constraint = undefined;
       this.bodies[joint.plank].wakeUp();
       broke.add(joint.key);
+      for (const index of [joint.plank, joint.leg]) {
+        if (this.rest[index].prop === 'snowman' && !this.crumbledSet.has(index) && !this.loose.has(index)) this.loose.set(index, 0);
+      }
     }
     this.toBreak.clear();
     for (const key of broke) this.onBreak?.(key);
@@ -520,7 +617,17 @@ export class PropPhysics {
 
   reset(group?: PieceGroup): void {
     for (const [index, body] of this.bodies.entries()) {
-      if (!group || this.groups[index] === group) this.place(body, this.rest[index]);
+      if (group && this.groups[index] !== group) continue;
+      // A crumbled snowman ball comes back whole.
+      if (this.crumbledSet.delete(index)) this.world.addBody(body);
+      this.loose.delete(index);
+      this.toCrumble.delete(index);
+      this.place(body, this.rest[index]);
+    }
+    if (!group || group === 'christmas') {
+      for (const gift of this.gifts) this.world.removeBody(gift.body);
+      this.gifts.length = 0;
+      this.retiredGifts.length = 0;
     }
     for (const joint of this.joints) if (!group || this.groups[joint.plank] === group) this.lock(joint);
     if (!group) {
@@ -535,6 +642,11 @@ export class PropPhysics {
       for (const candy of this.candies) this.world.removeBody(candy);
       this.candies.length = 0;
       this.retiredCandies.length = 0;
+      for (const ball of this.snowballs) this.world.removeBody(ball.body);
+      this.snowballs.length = 0;
+      this.toBurst.clear();
+      this.bursts.length = 0;
+      this.crumbles.length = 0;
       for (const [index, body] of this.bags.entries()) this.hang(body, this.bagRest[index]);
       this.retiredChicks.length = 0;
       // The character is put back too: its pusher jumps there on the next step instead of sweeping across the pieces
@@ -614,7 +726,8 @@ export class PropPhysics {
     const speed = STRIKE_SPEED.min + (STRIKE_SPEED.max - STRIKE_SPEED.min) * Math.min(Math.max(power, 0), 1);
     const bagSpeed = BAG_STRIKE.min + (BAG_STRIKE.max - BAG_STRIKE.min) * Math.min(Math.max(power, 0), 1);
     let hits = 0;
-    for (const body of [...this.bodies, ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid]), ...this.chicks, ...this.candies, ...this.bags]) {
+    for (const body of [...this.bodies.filter((_, index) => !this.crumbledSet.has(index)), ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid]), ...this.chicks, ...this.candies,
+      ...this.gifts.map((gift) => gift.body), ...this.bags]) {
       // Only what is in front of the character: a fist or foot can reach past a piece it is pressed against.
       if ((body.position.x - from.x) * along.x + (body.position.z - from.z) * along.z <= 0) continue;
       // Distance to the body's bounds, not its centre: a kick at hip height reaches the top of a short letter.
@@ -733,6 +846,80 @@ export class PropPhysics {
     return made;
   }
 
+  /**
+   * Christmas: a snowball leaving the hand, its middle at `position`. It bursts into snow on the first thing it hits
+   * (ground, piece, target, wall), knocking what it hit like the pumpkin and leaving `bursts` for the viewer.
+   */
+  throwSnowball(position: Vec, velocity: Vec, spin: Vec): ThrownPumpkin {
+    const { Body, Sphere } = this.cannon;
+    const body = new Body({ mass: SNOWBALL.mass, material: this.materials.get('snow'), shape: new Sphere(SNOWBALL.radius) });
+    this.configure(body, SETTINGS.snowball);
+    body.position.set(position.x, position.y, position.z);
+    body.velocity.set(velocity.x, velocity.y, velocity.z);
+    body.angularVelocity.set(spin.x, spin.y, spin.z);
+    const ball = { body, born: this.clock };
+    body.addEventListener('collide', (event: CollideEvent) => {
+      this.knock(event.body, body.velocity.vsub(event.body.velocity).length());
+      this.report('snowball', body, event);
+      this.toBurst.add(ball);
+    });
+    this.world.addBody(body);
+    this.snowballs.push(ball);
+    this.idle = false;
+    return ball;
+  }
+
+  /** The snowballs that hit something last step burst: each leaves where it broke and how it was moving. */
+  private burstSnowballs(): void {
+    for (const ball of this.toBurst) {
+      const index = this.snowballs.indexOf(ball);
+      if (index < 0) continue;
+      this.snowballs.splice(index, 1);
+      this.world.removeBody(ball.body);
+      const { position: p, velocity: v } = ball.body;
+      this.bursts.push({ position: { x: p.x, y: p.y, z: p.z }, velocity: { x: v.x, y: v.y, z: v.z } });
+    }
+    this.toBurst.clear();
+  }
+
+  /**
+   * Christmas: a gift falling off the sleigh's sack at `at` (its middle), of GIFT size `size`, with a velocity and a
+   * spin. Past GIFT.max the oldest one is retired.
+   */
+  dropGift(at: Vec, velocity: Vec, spin: Vec, size: number, yaw = 0): FallenGift {
+    const { Body, Box, Vec3 } = this.cannon;
+    while (this.gifts.length >= GIFT.max) this.retireGift(this.gifts[0]);
+    const [w, h, d] = GIFT.sizes[size % GIFT.sizes.length];
+    const body = new Body({ mass: GIFT.mass, material: this.materials.get('gift'), shape: new Box(new Vec3(w / 2, h / 2, d / 2)) });
+    this.configure(body, SETTINGS.gift);
+    body.position.set(at.x, at.y, at.z);
+    body.quaternion.setFromEuler(0, yaw, 0);
+    body.velocity.set(velocity.x, velocity.y, velocity.z);
+    body.angularVelocity.set(spin.x, spin.y, spin.z);
+    body.addEventListener('collide', (event: CollideEvent) => {
+      this.knock(event.body, body.velocity.vsub(event.body.velocity).length());
+      this.report('gift', body, event);
+    });
+    this.world.addBody(body);
+    const gift = { body, size: size % GIFT.sizes.length, born: this.clock };
+    this.gifts.push(gift);
+    this.idle = false;
+    return gift;
+  }
+
+  private retireGift(gift: FallenGift): void {
+    const index = this.gifts.indexOf(gift);
+    if (index < 0) return;
+    this.gifts.splice(index, 1);
+    this.world.removeBody(gift.body);
+    this.retiredGifts.push(gift);
+  }
+
+  /** Take every gift that fell off the sleigh away (they shrink out in the viewer). */
+  clearGifts(): void {
+    for (const gift of [...this.gifts]) this.retireGift(gift);
+  }
+
   /** Take every thrown laptop away (they shrink out in the viewer like retired ones); the pieces stay as they are. */
   clearThrown(): void {
     for (const laptop of [...this.laptops]) this.retire(laptop);
@@ -804,13 +991,16 @@ export class PropPhysics {
       || this.chicks.some((chick) => chick.sleepState !== asleep)
       || this.pumpkins.length > 0
       || this.candies.some((candy) => candy.sleepState !== asleep)
+      || this.snowballs.length > 0 || this.loose.size > 0
+      || this.gifts.some((gift) => gift.body.sleepState !== asleep)
       || this.bags.some((bag) => bag.sleepState !== asleep);
   }
 
   private near(pusher: Pusher): boolean {
     const close = (body: BodyType) => Math.abs(body.position.x - pusher.x) < WAKE_DISTANCE && Math.abs(body.position.z - pusher.z) < WAKE_DISTANCE
       && Math.hypot(body.position.x - pusher.x, body.position.z - pusher.z) < WAKE_DISTANCE;
-    return this.bodies.some(close) || this.laptops.some((laptop) => close(laptop.base)) || this.chicks.some(close) || this.candies.some(close) || this.bags.some(close);
+    return this.bodies.some(close) || this.laptops.some((laptop) => close(laptop.base)) || this.chicks.some(close) || this.candies.some(close) || this.bags.some(close)
+      || this.gifts.some((gift) => close(gift.body));
   }
 
   /**
@@ -823,7 +1013,8 @@ export class PropPhysics {
     const movers: { x: number; z: number; reach: number }[] = [];
     // The character only wakes what it walks into: standing still next to a piece lets it sleep.
     if (pusher && !this.idle && Math.hypot(pusher.x - this.pusher.position.x, pusher.z - this.pusher.position.z) > 0.002) movers.push({ x: pusher.x, z: pusher.z, reach: 0.8 });
-    const moving = [...this.bodies, ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid]), ...this.pumpkins.map((pumpkin) => pumpkin.body), ...this.chicks, ...this.candies, ...this.bags];
+    const moving = [...this.bodies, ...this.laptops.flatMap((laptop) => [laptop.base, laptop.lid]), ...this.pumpkins.map((pumpkin) => pumpkin.body),
+      ...this.snowballs.map((ball) => ball.body), ...this.chicks, ...this.candies, ...this.gifts.map((gift) => gift.body), ...this.bags];
     for (const body of moving) {
       if (body.sleepState === asleep) continue;
       const speed = body.velocity.length();
@@ -845,7 +1036,7 @@ export class PropPhysics {
         leg.wakeUp();
       }
     }
-    for (const body of [...this.bodies, ...this.chicks, ...this.candies, ...this.bags]) {
+    for (const body of [...this.bodies, ...this.chicks, ...this.candies, ...this.gifts.map((gift) => gift.body), ...this.bags]) {
       if (body.sleepState !== asleep) continue;
       for (const mover of movers) {
         if (Math.abs(body.position.x - mover.x) < mover.reach && Math.abs(body.position.z - mover.z) < mover.reach) {
@@ -909,7 +1100,16 @@ export class PropPhysics {
     this.wakeAround(pusher);
     this.world.step(STEP, Math.min(delta, STEP * MAX_SUBSTEPS), MAX_SUBSTEPS);
     this.smashPumpkins();
+    this.burstSnowballs();
+    this.crumbleSnow(delta);
+    for (const gift of [...this.gifts]) if (this.clock - gift.born > GIFT.life || gift.body.position.y < this.groundY - 2) this.retireGift(gift);
+    for (const ball of [...this.snowballs]) {
+      if (ball.body.position.y > this.groundY - 2) continue;
+      this.snowballs.splice(this.snowballs.indexOf(ball), 1);
+      this.world.removeBody(ball.body);
+    }
     for (const [index, body] of this.bodies.entries()) {
+      if (this.crumbledSet.has(index)) continue;
       // A piece knocked far away or through the ground comes back to its place.
       const rest = this.rest[index];
       if (body.position.y < this.groundY - 2 || Math.hypot(body.position.x - rest.position.x, body.position.z - rest.position.z) > STRAY_DISTANCE) this.place(body, rest);

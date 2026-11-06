@@ -186,9 +186,24 @@ export class PieceMeshes {
     for (const [index, body] of bodies.entries()) if (all || body.sleepState !== SLEEPING) this.set(index, body);
   }
 
-  /** Back to the poses read from the GLB. */
+  /** Back to the poses read from the GLB (hidden pieces show again). */
   reset(): void {
-    for (const [index, piece] of this.pieces.entries()) this.set(index, piece);
+    for (const [index, piece] of this.pieces.entries()) {
+      if (this.hidden.has(index)) this.setHidden(index, false);
+      this.set(index, piece);
+    }
+  }
+
+  /** Pieces taken out of sight (a snowman's ball that crumbled into snow) until they are shown again or reset. */
+  private readonly hidden = new Set<number>();
+
+  /** Hide piece `index` (and its shadow) or show it again. */
+  setHidden(index: number, hidden: boolean): void {
+    if (hidden === this.hidden.has(index)) return;
+    if (hidden) this.hidden.add(index);
+    else this.hidden.delete(index);
+    for (const { mesh, id } of this.instances[index] ?? []) mesh.setVisibleAt(id, !hidden);
+    if (hidden) this.shadows.hide(this.shadowOffset + index);
   }
 
   dispose(): void {
