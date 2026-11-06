@@ -31,6 +31,8 @@ export const SOUND_FILES = {
   best: ['best-0.mp3'],
   bell: ['bell-0.mp3', 'bell-1.mp3'],
   konami: ['konami-0.mp3'],
+  snowBreak: ['snowBreak-0.mp3', 'snowBreak-1.mp3', 'snowBreak-2.mp3'],
+  snowSplat: ['snowSplat-0.mp3', 'snowSplat-1.mp3'],
   crash: ['crash-0.mp3', 'crash-1.mp3', 'crash-2.mp3'],
   ui: ['ui-0.mp3'],
 } as const;

@@ -53,6 +53,10 @@ export const SOURCES: Record<string, string[]> = {
   best: ['digital-audio/threeTone2'],
   bell: ['impact-sounds/impactBell_heavy_000', 'impact-sounds/impactBell_heavy_002'],
   konami: ['digital-audio/powerUp7'],
+  // Christmas: snow coming apart sounds like soft earth, a dull crumbly thud: a snowman's balls breaking off and
+  // crumbling (heavy), a snowball bursting (lighter); both played low.
+  snowBreak: ['impact-sounds/impactSoft_heavy_002', 'impact-sounds/impactSoft_heavy_004', 'impact-sounds/impactSoft_heavy_000'],
+  snowSplat: ['impact-sounds/impactSoft_medium_001', 'impact-sounds/impactSoft_medium_003'],
   crash: ['impact-sounds/impactPlate_heavy_000', 'impact-sounds/impactPlate_heavy_002', 'impact-sounds/impactMetal_light_001'],
   ui: ['interface-sounds/toggle_002'],
 };

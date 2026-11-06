@@ -1147,7 +1147,7 @@ export class CharacterViewer {
     this.lights?.update(this.xmasClock, this.reducedMotion);
     const physics = this.physics;
     // A burst snowball is gone: its lumps fly (SnowPlay) and it leaves nothing on the ground.
-    if (physics?.bursts.length) this.sound('snowhit', 6, physics.bursts[physics.bursts.length - 1].position);
+    if (physics?.bursts.length) this.sound('snowSplat', 6, physics.bursts[physics.bursts.length - 1].position);
     if (physics && this.snowPlay) {
       this.snowPlay.update(delta, physics, this.reducedMotion);
       const bursts = String(this.snowPlay.bursts);
@@ -1163,7 +1163,7 @@ export class CharacterViewer {
         if (gone && !this.crumbledShown.has(index)) {
           this.crumbledShown.add(index);
           this.pieces.setHidden(index, true);
-          this.sound('crumble', 0, piece.position);
+          this.sound('snowBreak', 0, piece.position);
         } else if (!gone && this.crumbledShown.has(index)) {
           this.crumbledShown.delete(index);
           this.pieces.setHidden(index, false);
@@ -1291,11 +1291,11 @@ export class CharacterViewer {
       physics.onImpact = (impact) => {
         const source = impact.source;
         const name: SoundName = source === 'laptop' ? 'laptop' : source === 'pumpkin' ? 'splat' : source === 'candy' ? 'candy' : source === 'chick' ? 'chirp'
-          : source === 'bag' ? 'rubber' : source === 'snowball' ? 'snowhit' : source === 'gift' ? 'cardboard' : pieceSound(this.pieceList[source]);
+          : source === 'bag' ? 'rubber' : source === 'snowball' ? 'snowSplat' : source === 'gift' ? 'cardboard' : pieceSound(this.pieceList[source]);
         this.sound(name, impact.speed, impact.position);
       };
       // A fence breaking cracks like wood; a snowman coming apart thuds softly in the snow.
-      physics.onBreak = (key) => this.sound(key.startsWith('snowman') ? 'crumble' : 'woodHeavy', 6);
+      physics.onBreak = (key) => this.sound(key.startsWith('snowman') ? 'snowBreak' : 'woodHeavy', 6);
       // The sleigh knocks things over along its whole length, not just round its seat.
       if (this.sleigh) physics.shapeChair([SLEIGH_BOX.across, 0.6, (SLEIGH_BOX.ahead + SLEIGH_BOX.behind) / 2], (SLEIGH_BOX.ahead - SLEIGH_BOX.behind) / 2);
       this.physics = physics;

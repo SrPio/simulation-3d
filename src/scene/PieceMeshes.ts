@@ -155,6 +155,11 @@ export class PieceMeshes {
     const lowest = Math.abs(ax.y) + Math.abs(ay.y) + Math.abs(az.y);
     const lift = Math.max(0, p.y - lowest - this.groundY);
     const fade = Math.max(0, 1 - lift / 1.5) ** 2;
+    // A hidden piece (a snowman's ball crumbled into snow) leaves no shadow behind.
+    if (this.hidden.has(index)) {
+      this.shadows.hide(this.shadowOffset + index);
+      return;
+    }
     // Flat pieces (the tagline) only get a faint contact shadow; standing ones a fuller one.
     const presence = Math.min(1, lowest / 0.2);
     this.shadows.set(this.shadowOffset + index, p.x, p.z, yaw, along * 2 + 0.25 * presence, across * 2 + 0.25 * presence, 0.5 * fade * presence);
