@@ -448,10 +448,12 @@ def pine_mesh(name, height, m, baubles, pot=False, rng_seed=1, round_baubles=1):
             sphere(bm, (math.sin(b) * out, -math.cos(b) * out, z), size, colours[(i + k + 2) % 4], round_baubles)
     baubles = finish(f'{name}_Baubles', bm, [m[k] for k in baubles], 180)
     bm = tiers_bm
-    # The star: a flat five-pointed star facing -Y, gently thick, standing on the tip (its two lower points rest just
-    # above it, so none of it sinks into the needles).
+    # The star: a flat five-pointed star facing -Y, gently thick, standing on the tip: the top tier's cone reaches past
+    # `top`, so it is placed from the highest point of the tree itself, its lower points just over it and none of it
+    # sunk into the needles.
     outer, inner = height * 0.085, height * 0.036
-    star_c = Vector((0, 0, top + outer * 0.86))
+    apex = max(v.co.z for v in bm.verts)
+    star_c = Vector((0, 0, apex + outer * 0.62))
     pts = [star_c + Vector((math.sin(i * math.pi / 5) * (outer if i % 2 == 0 else inner), 0, math.cos(i * math.pi / 5) * (outer if i % 2 == 0 else inner)))
            for i in range(10)]
     front = [bm.verts.new(p + Vector((0, -height * 0.012, 0))) for p in pts]
