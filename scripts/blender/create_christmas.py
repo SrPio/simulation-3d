@@ -712,7 +712,7 @@ HAT_CLEAR = 0.045
 # dome rising from it and leaning back (`lean` rad, up to `straight` of the way), an arc of radius `bend` turning it
 # over backwards through `sweep` rad, and the tail hanging straight down `drop` m behind the head to the bobble.
 HAT = {'brim': 2.38, 'tilt': 0.045, 'gap': 0.012, 'cuff': 0.1, 'thick': 0.055, 'rise': 0.02, 'straight': 0.36, 'lean': 0.75,
-       'bend': 0.25, 'sweep': 2.95, 'arc': 0.74, 'drop': 0.2, 'flare': 0.6, 'cone': [0.3, 0.1], 'pompom': 0.075}
+       'bend': 0.21, 'sweep': 2.6, 'arc': 0.74, 'drop': 0.12, 'flare': 0.35, 'cone': [0.3, 0.1], 'pompom': 0.075}
 
 
 def build_hat(root, m, tree, centre, crown):
