@@ -1,11 +1,11 @@
 import {
-  BufferAttribute, BufferGeometry, CanvasTexture, Color, DoubleSide, Group, Mesh, MeshBasicMaterial, PlaneGeometry, SRGBColorSpace,
+  BufferAttribute, BufferGeometry, CanvasTexture, DoubleSide, Group, Mesh, MeshBasicMaterial, PlaneGeometry, SRGBColorSpace,
   ShaderMaterial, Vector3, type Raycaster,
 } from 'three';
 import { MESSAGES, t, type MessageKey } from '../core/i18n.ts';
 import { FONT } from './canvasText.ts';
 import type { Sign } from './outsideData.ts';
-import { groundInk } from './groundInk.ts';
+import { fenceInk, groundInk, labelInk } from './groundInk.ts';
 
 const BORDER = 0.09;
 const FENCE_HEIGHT = 0.45;
@@ -20,7 +20,6 @@ const LABEL_SLIDE = 0.2;
 const ENTER = 0.35;
 const LEAVE = 0.25;
 const FLASH = 1.2;
-const VIOLET = new Color(0xb79bff);
 
 const fenceVertex = /* glsl */ `
 varying vec2 vUv;
@@ -37,6 +36,7 @@ uniform vec3 uColor;
 uniform float uGround;
 uniform float uTime;
 uniform float uAlpha;
+uniform float uStrength;
 varying vec2 vUv;
 varying vec3 vWorld;
 void main() {
@@ -45,7 +45,7 @@ void main() {
   // u counts stripes around the perimeter, so every side scrolls the same way round the loop.
   float stripe = step(fract(vUv.x + vWorld.y * 2.5 - uTime * 0.875), 0.5) * 0.28;
   float band = max(step(1.0 - vUv.y, 0.1), step(vUv.y, 0.1)) * 0.6;
-  float alpha = max(stripe, band) * uAlpha;
+  float alpha = min(1.0, max(stripe, band) * uStrength) * uAlpha;
   if (alpha < 0.01) discard;
   gl_FragColor = vec4(uColor, alpha);
   #include <colorspace_fragment>
@@ -223,6 +223,8 @@ export class SignAreas {
     this.root.name = 'SignAreas';
     this.titles = titlesMesh(signs, groundY);
     this.root.add(this.titles);
+    // The fence's look is the same for every zone (violet, or deep violet and stronger on the snow).
+    const fenceLook = fenceInk();
     for (const sign of signs) {
       const { area } = sign;
       const placed = (mesh: Mesh, y: number) => {
@@ -235,12 +237,12 @@ export class SignAreas {
       const fence = placed(new Mesh(fenceGeometry(area.halfX, area.halfZ, FENCE_HEIGHT), new ShaderMaterial({
         vertexShader: fenceVertex,
         fragmentShader: fenceFragment,
-        uniforms: { uColor: { value: VIOLET.clone() }, uGround: { value: groundY }, uTime: { value: 0 }, uAlpha: { value: 1 } },
+        uniforms: { uColor: { value: fenceLook.color }, uStrength: { value: fenceLook.strength }, uGround: { value: groundY }, uTime: { value: 0 }, uAlpha: { value: 1 } },
         transparent: true,
         depthWrite: false,
         side: DoubleSide,
       })), groundY - FENCE_HEIGHT) as Zone['fence'];
-      const label = new Mesh(this.labelGeometry, new MeshBasicMaterial({ map: labelTexture(signText(sign).label, sign.kind === 'link', this.openKey), transparent: true, depthWrite: false }));
+      const label = new Mesh(this.labelGeometry, new MeshBasicMaterial({ map: labelTexture(signText(sign).label, sign.kind === 'link', this.openKey), color: labelInk(), transparent: true, depthWrite: false }));
       label.position.set(...onZone(sign, -area.halfX + LABEL_WIDTH / 2, area.halfZ + LABEL_AHEAD + LABEL_WIDTH * 160 / 840 / 2, groundY + 0.008));
       label.rotation.y = sign.yaw;
       label.userData.rest = label.position.clone();
