@@ -35,6 +35,7 @@ Run: blender --background --factory-startup --python-exit-code 1 --python script
 import argparse
 import math
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -191,6 +192,8 @@ def materials():
         'red': m('XmasRed', (0.62, 0.02, 0.04), 0.45),
         'green': m('XmasGreen', (0.02, 0.32, 0.09), 0.5),
         'gold': m('XmasGold', (0.95, 0.66, 0.16), 0.3, 0.85),
+        # A flat face of polished metal mirrors one direction only and looks dark: the emblem is gold paint, barely metallic.
+        'emblem': m('SleighEmblemGold', (0.98, 0.72, 0.2), 0.35, 0.2),
         'white': m('XmasWhite', (0.92, 0.94, 0.97), 0.85),
         'fur': m('XmasFur', (0.96, 0.96, 0.98), 0.95),
         'snow': m('SnowmanSnow', (0.9, 0.93, 0.98), 0.85),
@@ -979,6 +982,24 @@ def gift_into(bm, centre, size, yaw, body, ribbon):
         v.co = turn @ v.co + Vector(centre)
 
 
+SLEIGH_EMBLEM = {'height': 0.28, 'middle': 0.57, 'depth': 0.018}   # on the front panel: size, height of its middle, depth
+SILHOUETTES = ROOT / 'src' / 'ui' / 'silhouettes.ts'
+
+
+def head_outline():
+    """The loading screen's head (HEAD_OUTLINE in src/ui/silhouettes.ts, an SVG path in a 100-high box, y down) as points
+    in a 1-high box centred on its middle (x across, z up), seen from the front of the sleigh."""
+    text = SILHOUETTES.read_text(encoding='utf-8')
+    path = re.search(r"HEAD_OUTLINE = \{ d: '([^']+)'", text).group(1)
+    points = [(float(x), float(y)) for x, y in re.findall(r'([\d.]+) ([\d.]+)', path)]
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
+    cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    tall = max(ys) - min(ys)
+    # Seen from the front (-Y) the sleigh's right is Blender -X: mirror x so the head faces the same way as on screen.
+    return [(-(x - cx) / tall, -(y - cy) / tall) for x, y in points]
+
+
 def build_sleigh(root, m):
     s = SLEIGH
     holder = room.anchor('ChristmasSleigh', (0, 0, 0), root)
@@ -1061,6 +1082,14 @@ def build_sleigh(root, m):
     ):
         gift_into(bm, centre, size, yaw, body, ribbon)
     mesh_object('SleighGifts', finish('SleighGifts', bm, [m['red'], m['green'], m['gold']], 30), holder)
+    # On the middle of the front panel, the loading screen's head (HEAD_OUTLINE) filled in gold, standing a little proud.
+    bm = bmesh.new()
+    outline = head_outline()
+    size = SLEIGH_EMBLEM['height']
+    face = bm.faces.new([bm.verts.new((x * size, -0.981, SLEIGH_EMBLEM['middle'] + z * size)) for x, z in outline])
+    grown = bmesh.ops.extrude_face_region(bm, geom=[face])
+    bmesh.ops.translate(bm, vec=(0, -SLEIGH_EMBLEM['depth'], 0), verts=[v for v in grown['geom'] if isinstance(v, bmesh.types.BMVert)])
+    mesh_object('SleighEmblem', finish('SleighEmblem', bm, [m['emblem']], 30), holder)
     room.anchor('SleighSack_Mouth', (0, 0.62, 1.66), holder, 0.0, sack=1)
     # A thruster on each side, outside the side panels and pointing backwards (Blender +Y): a rounded nose, the tank
     # with a glass window along its top showing the icy charge, a collar, the throat and a flared bell glowing inside.
