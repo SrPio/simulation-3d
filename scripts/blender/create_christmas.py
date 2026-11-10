@@ -140,8 +140,9 @@ def box(bm, lo, hi, material=0):
     return geom['verts']
 
 
-def tube(bm, points, radius, material=0, sides=6, closed=False):
-    """A round tube along a polyline (`radius` a number or one per point)."""
+def tube(bm, points, radius, material=0, sides=6, closed=False, across=None):
+    """A round tube along a polyline (`radius` a number or one per point). For a polyline that lies in a plane, `across`
+    (the plane's normal) keeps every ring turned the same way, so the tube never twists where the line turns upright."""
     radii = radius if isinstance(radius, (list, tuple)) else [radius] * len(points)
     rings = []
     count = len(points)
@@ -149,9 +150,12 @@ def tube(bm, points, radius, material=0, sides=6, closed=False):
         a = points[max(i - 1, 0)] if not closed else points[(i - 1) % count]
         b = points[min(i + 1, count - 1)] if not closed else points[(i + 1) % count]
         tangent = (Vector(b) - Vector(a)).normalized()
-        side = tangent.cross(Vector((0, 0, 1)))
-        if side.length < 1e-4:
-            side = tangent.cross(Vector((1, 0, 0)))
+        if across is not None:
+            side = Vector(across) - tangent * Vector(across).dot(tangent)
+        else:
+            side = tangent.cross(Vector((0, 0, 1)))
+            if side.length < 1e-4:
+                side = tangent.cross(Vector((1, 0, 0)))
         side.normalize()
         up = side.cross(tangent).normalized()
         rings.append([bm.verts.new(Vector(p) + (side * math.cos(k / sides * math.tau) + up * math.sin(k / sides * math.tau)) * radii[i])
@@ -991,18 +995,18 @@ def build_sleigh(root, m):
         for i in range(len(profile)):
             j = (i + 1) % len(profile)
             bm.faces.new((outer[i], outer[j], inner[j], inner[i])).material_index = 0
-        # A gold rim all round the panel's outer edge, and gold scrolls at its back top and its front.
-        out_x = side * (half + 0.032)
-        tube(bm, [Vector((out_x, y, z)) for y, z in profile], 0.02, 2, sides=5, closed=True)
+        # A gold rim all round the panel's edge, wrapped over it so it shows from inside the sleigh as well as from
+        # outside, and gold scrolls at its back top and its front; every ring kept square to the side (no twisting).
+        tube(bm, [Vector((side * half, y, z)) for y, z in profile], 0.04, 2, sides=8, closed=True, across=(1, 0, 0))
         for curl in (spiral(0.73, 1.33, 0.13, 0.03, math.pi * 0.5, 1.35), spiral(-0.9, 0.76, 0.1, 0.025, math.pi * 0.6, -1.25)):
-            tube(bm, [Vector((side * half, y, z)) for y, z in curl], 0.03, 2, sides=6)
+            tube(bm, [Vector((side * half, y, z)) for y, z in curl], 0.03, 2, sides=6, across=(1, 0, 0))
         # Gold swirls on the outer face: one along the front, one sweeping up the back (above the thruster).
         for swirl in (
             [(-0.36, 0.66), (-0.5, 0.7), (-0.62, 0.66)] + spiral(-0.7, 0.66, 0.08, 0.02, 0.0, 1.1, 12),
             [(-0.36, 0.66), (-0.22, 0.7)] + spiral(-0.17, 0.66, 0.05, 0.015, math.pi, -1.0, 10),
             [(0.05, 0.78), (0.25, 0.86), (0.42, 1.02)] + spiral(0.5, 1.1, 0.09, 0.02, math.pi * 1.25, 1.1, 12),
         ):
-            tube(bm, [Vector((side * (half + 0.034), y, z)) for y, z in swirl], 0.012, 2, sides=4)
+            tube(bm, [Vector((side * (half + 0.034), y, z)) for y, z in swirl], 0.012, 2, sides=4, across=(1, 0, 0))
     # Floor, the front panel with a rolled top edge, and the solid back the gifts ride on.
     box(bm, (-half, -0.92, 0.28), (half, 0.72, 0.34), 1)
     box(bm, (-half, -0.98, 0.32), (half, -0.9, 0.82), 0)
@@ -1012,6 +1016,23 @@ def build_sleigh(root, m):
     for side in (-1, 1):
         sphere(bm, (side * half, -0.9, 0.84), 0.07, 2, 1)
     box(bm, (-half, 0.44, 0.32), (half, 0.7, 1.0), 0)
+    # The back wall between the side panels, following their curled back edge up to their tops, so the gifts lean on
+    # it; a gold rim along its top edge like the sides'.
+    back = chaikin([(0.77, 1.44), (0.8, 1.36), (0.78, 1.16), (0.74, 0.92), (0.71, 0.62), (0.74, 0.46), (0.7, 0.32)], 2, closed=False)
+    inner = half - 0.025
+    for depth, flip in ((0.0, False), (-0.05, True)):
+        strip = [(bm.verts.new((-inner, y + depth, z)), bm.verts.new((inner, y + depth, z))) for y, z in back]
+        for (a0, a1), (b0, b1) in zip(strip, strip[1:]):
+            face = bm.faces.new((a0, b0, b1, a1) if flip else (a0, a1, b1, b0))
+            face.material_index = 0
+        if depth:
+            front_strip = strip
+        else:
+            back_strip = strip
+    for (b0, b1), (f0, f1) in ((back_strip[0], front_strip[0]),):
+        bm.faces.new((b0, b1, f1, f0)).material_index = 0
+    top_y, top_z = back[0]
+    tube(bm, [Vector((-half, top_y - 0.025, top_z)), Vector((half, top_y - 0.025, top_z))], 0.04, 2, sides=8)
     # The seat: a red base and a green tufted cushion, and a tufted backrest of puffy cells.
     box(bm, (-half + 0.03, -0.3, 0.32), (half - 0.03, 0.3, s['seat'] - 0.12), 0)
     cols = 3
@@ -1027,16 +1048,16 @@ def build_sleigh(root, m):
         x = side * (half - 0.1)
         run = chaikin([(0.9, 0.13), (0.84, 0.05), (0.7, 0.035), (-0.8, 0.035), (-0.95, 0.07), (-1.05, 0.18), (-1.08, 0.3),
                        (-1.03, 0.4), (-0.95, 0.42), (-0.9, 0.36), (-0.93, 0.3), (-0.98, 0.31)], 1, closed=False)
-        tube(bm, [Vector((x, y, z)) for y, z in run], 0.034, 1, sides=8)
+        tube(bm, [Vector((x, y, z)) for y, z in run], 0.034, 1, sides=8, across=(1, 0, 0))
         for y in (-0.62, -0.05, 0.5):
             tube(bm, [Vector((x, y, 0.06)), Vector((x, y, 0.29))], 0.024, 1, sides=6)
     mesh_object('Sleigh_Body', finish('Sleigh_Body', bm, [m['sleighRed'], m['sleighDark'], m['gold'], m['seat']], 62), holder)
     # A pile of wrapped gifts on the back, as in the reference (the falling gifts leave from its top).
     bm = bmesh.new()
     for centre, size, yaw, body, ribbon in (
-        ((-0.25, 0.58, 1.0), (0.36, 0.3, 0.3), 0.1, 0, 1), ((0.18, 0.57, 1.0), (0.4, 0.3, 0.34), -0.08, 1, 2),
-        ((-0.06, 0.6, 1.3), (0.3, 0.26, 0.28), 0.25, 0, 1), ((0.3, 0.6, 1.34), (0.24, 0.24, 0.24), -0.3, 2, 0),
-        ((-0.33, 0.6, 1.3), (0.22, 0.22, 0.22), 0.4, 1, 0),
+        ((-0.25, 0.56, 1.0), (0.36, 0.24, 0.3), 0.06, 0, 1), ((0.18, 0.56, 1.0), (0.4, 0.24, 0.34), -0.05, 1, 2),
+        ((-0.06, 0.56, 1.3), (0.3, 0.22, 0.28), 0.15, 0, 1), ((0.3, 0.56, 1.34), (0.22, 0.2, 0.24), -0.15, 2, 0),
+        ((-0.33, 0.56, 1.3), (0.2, 0.2, 0.22), 0.2, 1, 0),
     ):
         gift_into(bm, centre, size, yaw, body, ribbon)
     mesh_object('SleighGifts', finish('SleighGifts', bm, [m['red'], m['green'], m['gold']], 30), holder)
