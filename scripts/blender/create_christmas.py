@@ -712,7 +712,7 @@ HAT_CLEAR = 0.045
 # dome rising from it and leaning back (`lean` rad, up to `straight` of the way), an arc of radius `bend` turning it
 # over backwards through `sweep` rad, and the tail hanging straight down `drop` m behind the head to the bobble.
 HAT = {'brim': 2.38, 'tilt': 0.045, 'gap': 0.012, 'cuff': 0.1, 'thick': 0.055, 'rise': 0.02, 'straight': 0.36, 'lean': 0.75,
-       'bend': 0.22, 'sweep': 2.95, 'arc': 0.74, 'drop': 0.2, 'flare': 0.6, 'pompom': 0.075}
+       'bend': 0.25, 'sweep': 2.95, 'arc': 0.74, 'drop': 0.2, 'flare': 0.6, 'cone': [0.3, 0.1], 'pompom': 0.075}
 
 
 def build_hat(root, m, tree, centre, crown):
@@ -783,6 +783,7 @@ def build_hat(root, m, tree, centre, crown):
         return top + Vector((0.05 * u * u, bend * (math.cos(lean_angle) - math.cos(theta)), bend * (math.sin(theta) - math.sin(lean_angle))))
     rings = []
     centres = []
+    tangents = []
     steps = 40
     for i in range(steps + 1):
         t = i / steps
@@ -803,21 +804,30 @@ def build_hat(root, m, tree, centre, crown):
             tangent = (start_tangent + Vector((0, h['flare'] * u, 0))).normalized()
             point = arc_point(sweep, 1) + start_tangent * h['drop'] * u + Vector((0, h['flare'] * h['drop'] * u * u / 2, 0))
         centres.append(point)
+        tangents.append(tangent)
+    # A cone seen from the front: its half width shrinks in a straight line with the height, from the cuff's (`cone`
+    # [base, tip]) to a narrow tip where the hat turns over; past that top the tail goes on thinning to its end. Where
+    # the base is wider than the head it only widens to the sides (seen from the front), never out of the cuff's back.
+    apex = max(range(len(centres)), key=lambda i: centres[i].z)
+    z0, z1 = centres[0].z, centres[apex].z
+    side = next(r for a, r in contour if abs(a - math.pi / 2) < 1e-6 or a > math.pi / 2)
+    for i, (point, tangent) in enumerate(zip(centres, tangents)):
+        t = i / steps
         right = Vector((1, 0, 0))
         right = (right - tangent * right.dot(tangent)).normalized()
         ahead = tangent.cross(right).normalized()
-        # Near the cuff the ring keeps the head's shape; higher up it becomes round. Wide and domed over the head, thinning
-        # through the bend and down the tail.
+        # Near the cuff the ring keeps the head's shape; higher up it becomes round.
         shape = max(0.0, 1 - t * 3.0)
-        if t <= start:
-            scale = 1 - 0.3 * (t / start) + 0.1 * math.sin(math.pi * t / start)
-        elif t <= arc_end:
-            scale = 0.7 - 0.42 * (t - start) / (arc_end - start)
+        if i <= apex:
+            k = (point.z - z0) / max(z1 - z0, 1e-6)
+            half = h['cone'][0] + (h['cone'][1] - h['cone'][0]) * k
         else:
-            scale = 0.28 - 0.1 * (t - arc_end) / (1 - arc_end)
+            half = h['cone'][1] * (1 - 0.55 * (i - apex) / max(steps - apex, 1))
+        scale = (half - 0.01) / (side * shape + (1 - shape) * 0.19)
         verts = []
         for a, r in contour:
-            radius = (r * shape + (1 - shape) * 0.19) * scale + 0.01
+            widen = scale if scale < 1 else 1 + (scale - 1) * abs(math.sin(a))
+            radius = (r * shape + (1 - shape) * 0.19) * widen + 0.01
             offset = right * math.sin(a) * radius - ahead * math.cos(a) * radius
             verts.append(bm.verts.new(point + offset + Vector((0, 0, (brim_z(a) - h['brim']) * shape))))
         rings.append(verts)
