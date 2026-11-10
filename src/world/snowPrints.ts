@@ -9,10 +9,18 @@ export const SNOW = { texels: 24, fade: 4, tick: 0.25 } as const;
 /**
  * The character's sneaker sole as it presses into the snow (metres, measured on ShoeSole_* of the web V4 rig): `length`
  * heel to toe, `width` across the ball of the foot and `heel` across the heel, its corners rounded by `corner`
- * (SnowPrints draws it, tread and arch included). On the ground the sole's middle is `ahead` of the ankle (the foot
+ * (SnowPrints draws it). On the ground the sole's middle is `ahead` of the ankle (the foot
  * bone) and `out` to its outer side, and the toes turn out by `toeOut` (radians).
  */
 export const SOLE = { length: 0.55, width: 0.272, heel: 0.2, corner: 0.075, ahead: 0.13, out: 0.025, toeOut: 0.13 } as const;
+
+/**
+ * How anything pressed into the snow looks (the shoe prints and the sleigh's runner marks), softly, like an inset
+ * button: a light grey a little darker than the snow (`floor`, drawn at `alpha` over it), an inner shadow along the edge
+ * nearest the light and a faint highlight along the far one, `depth` metres wide. The light comes from `light` on the
+ * ground (x, z), which is the top left of the screen in the game's isometric view.
+ */
+export const MARK = { floor: 0xbcc6d8, shadow: 0x8995ae, highlight: 0xf7f9fe, alpha: 0.85, depth: 0.06, light: [-1, 0] } as const;
 
 /** How much each fade tick takes away (the texture holds 0…1): a mark goes in SNOW.fade seconds. */
 export const fadeStep = (): number => SNOW.tick / SNOW.fade;

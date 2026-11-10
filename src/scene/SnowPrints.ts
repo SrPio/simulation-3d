@@ -1,7 +1,7 @@
 import {
-  CanvasTexture, DoubleSide, InstancedBufferAttribute, InstancedMesh, Matrix4, PlaneGeometry, SRGBColorSpace, ShaderMaterial,
+  CanvasTexture, Color, DoubleSide, InstancedBufferAttribute, InstancedMesh, Matrix4, PlaneGeometry, ShaderMaterial, Vector2,
 } from 'three';
-import { SOLE } from '../world/snowPrints.ts';
+import { MARK, SOLE } from '../world/snowPrints.ts';
 
 /**
  * Each sole print fades out over `fade` seconds, quickly enough that walking leaves only about five behind the
@@ -16,32 +16,50 @@ const vertexShader = /* glsl */ `
 attribute float aBorn;
 uniform float uTime;
 uniform float uFade;
+uniform vec2 uLight;
+uniform vec2 uSize;
+uniform float uDepth;
 varying vec2 vUv;
+varying vec2 vToLight;
 varying float vLeft;
 void main() {
   vUv = uv;
   // Fresh 1, gone 0 after uFade seconds; a slot never used has aBorn far in the past.
   vLeft = clamp(1.0 - (uTime - aBorn) / uFade, 0.0, 1.0);
+  // The step towards the light in the print's own texture (turned and, for a left foot, mirrored with it): the texture's
+  // u runs along the print's local x and its v along its local z.
+  vec3 across = instanceMatrix[0].xyz;
+  vec3 along = instanceMatrix[2].xyz;
+  vToLight = vec2(dot(uLight, across.xz), dot(uLight, along.xz)) * uDepth / uSize;
   gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
 }`;
 
 const fragmentShader = /* glsl */ `
 uniform sampler2D map;
+uniform vec3 uFloor;
+uniform vec3 uShadow;
+uniform vec3 uHighlight;
+uniform float uAlpha;
 varying vec2 vUv;
+varying vec2 vToLight;
 varying float vLeft;
 void main() {
-  vec4 colour = texture2D(map, vUv);
+  float inside = texture2D(map, vUv).a;
+  if (inside < 0.01) discard;
+  // An inset: in shadow where a step towards the light leaves the print (the edge nearest the light), lit where a
+  // step away from it does (the far edge).
+  float shade = inside * (1.0 - texture2D(map, vUv + vToLight).a);
+  float lit = inside * (1.0 - texture2D(map, vUv - vToLight).a);
+  vec3 colour = mix(uFloor, uShadow, clamp(shade * 1.4, 0.0, 1.0));
+  colour = mix(colour, uHighlight, clamp(lit * 0.8, 0.0, 1.0));
   // Fading, the print fills back in with snow from its shallow parts first.
-  float alpha = colour.a * smoothstep(0.0, 0.35, vLeft) * (0.55 + 0.45 * vLeft);
+  float alpha = inside * uAlpha * smoothstep(0.0, 0.35, vLeft) * (0.55 + 0.45 * vLeft);
   if (alpha < 0.01) discard;
-  gl_FragColor = vec4(colour.rgb, alpha);
+  gl_FragColor = vec4(colour, alpha);
   #include <colorspace_fragment>
 }`;
 
-/** The bare ground under the snow, as the floor shows it in the Christmas dress-up (InfiniteFloor.setSnow). */
-const GROUND = '#262c3f';
-
-/** The right sneaker's sole as a hole pressed into the snow, toe up. */
+/** The right sneaker's sole as a mask (white, its edge a little soft), toe up; the shader colours it (MARK). */
 function soleTexture(): CanvasTexture {
   const canvas = document.createElement('canvas');
   const pad = 10;
@@ -70,13 +88,11 @@ function soleTexture(): CanvasTexture {
   for (let t = 0.86; t >= 0.12; t -= 0.04) outline.lineTo(cx - at(t), top + l * t);
   outline.bezierCurveTo(cx - at(0), top + r * 0.4, cx - at(0) * 0.7, top, cx, top);
   outline.closePath();
-  // A hole in the snow down to the ground: the bare ground's own colour (InfiniteFloor's snowy-night ground), its edge a
-  // little soft like crumbled snow.
-  ctx.filter = 'blur(2px)';
-  ctx.fillStyle = GROUND;
+  // Its edge a little soft, like pressed snow.
+  ctx.filter = 'blur(3px)';
+  ctx.fillStyle = '#ffffff';
   ctx.fill(outline);
   const texture = new CanvasTexture(canvas);
-  texture.colorSpace = SRGBColorSpace;
   texture.anisotropy = 4;
   return texture;
 }
@@ -84,7 +100,8 @@ function soleTexture(): CanvasTexture {
 /**
  * Christmas: the sneaker's sole printed in the snow at every step, crisp at any zoom: one instanced quad per print,
  * lying just over the ground, turned like the foot (left prints mirrored), fading out over PRINTS.fade seconds. The
- * texture is the outline of the character's own sole (SOLE) in the bare ground's colour: a hole in the snow.
+ * texture is the outline of the character's own sole (SOLE), drawn as a soft inset in the snow (MARK): light grey with
+ * an inner shadow on the side towards the light.
  */
 export class SnowPrints {
   readonly mesh: InstancedMesh<PlaneGeometry, ShaderMaterial>;
@@ -99,12 +116,18 @@ export class SnowPrints {
   constructor(groundY: number) {
     this.groundY = groundY;
     // Flat on the ground, the texture's top (the toe) along +Z before the print is turned.
-    const geometry = new PlaneGeometry(SOLE.width + 20 / PPM, SOLE.length + 20 / PPM).rotateX(Math.PI / 2);
+    const size = new Vector2(SOLE.width + 20 / PPM, SOLE.length + 20 / PPM);
+    const geometry = new PlaneGeometry(size.x, size.y).rotateX(Math.PI / 2);
     this.born = new InstancedBufferAttribute(new Float32Array(PRINTS.max).fill(-1e6), 1);
     geometry.setAttribute('aBorn', this.born);
     const material = new ShaderMaterial({
       vertexShader, fragmentShader, transparent: true, depthWrite: false, side: DoubleSide,
-      uniforms: { map: { value: soleTexture() }, uTime: { value: 0 }, uFade: { value: PRINTS.fade } },
+      uniforms: {
+        map: { value: soleTexture() }, uTime: { value: 0 }, uFade: { value: PRINTS.fade },
+        uLight: { value: new Vector2(...MARK.light).normalize() }, uSize: { value: size }, uDepth: { value: MARK.depth },
+        uFloor: { value: new Color(MARK.floor) }, uShadow: { value: new Color(MARK.shadow) }, uHighlight: { value: new Color(MARK.highlight) },
+        uAlpha: { value: MARK.alpha },
+      },
       polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
     });
     this.mesh = new InstancedMesh(geometry, material, PRINTS.max);

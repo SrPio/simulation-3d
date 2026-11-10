@@ -1,4 +1,5 @@
 import { Color, Matrix4, Mesh, PerspectiveCamera, PlaneGeometry, ShaderMaterial, Vector2, type Camera, type Texture } from 'three';
+import { MARK } from '../world/snowPrints.ts';
 
 const vertexShader = /* glsl */ `
 uniform mat4 uInverse;
@@ -68,6 +69,12 @@ uniform sampler2D uTrail;
 uniform sampler2D uRoad;
 uniform vec2 uMapMin;
 uniform vec2 uMapSize;
+uniform vec2 uMarkLight;
+uniform float uMarkDepth;
+uniform vec3 uMarkFloor;
+uniform vec3 uMarkShadow;
+uniform vec3 uMarkHighlight;
+uniform float uMarkAlpha;
 uniform vec3 uSnowLow;
 uniform vec3 uSnowHigh;
 varying vec3 vPoint;
@@ -87,16 +94,21 @@ void main() {
   float road = inside * texture2D(uRoad, uv).r;
   float trail = inside * texture2D(uTrail, uv).r;
   float pressed = smoothstep(0.08, 0.55, trail);
+  // The same soft inset as the shoe prints (MARK): in shadow along the edge nearest the light, lit along the far one.
+  vec2 markStep = uMarkLight * uMarkDepth / uMapSize;
+  float towards = smoothstep(0.08, 0.55, inside * texture2D(uTrail, uv + markStep).r);
+  float away = smoothstep(0.08, 0.55, inside * texture2D(uTrail, uv - markStep).r);
+  float shade = pressed * (1.0 - towards);
+  float lit = pressed * (1.0 - away);
   // Snow: a soft gradient, gentle drifts and a few glints.
   float drift = hash(floor(point.xz * 0.6)) * 0.5 + hash(floor(point.xz * 1.7)) * 0.5;
   vec3 snow = mix(uSnowLow, uSnowHigh, vUv.y) * (0.965 + drift * 0.05);
   float glint = step(0.992, hash(floor(point.xz * 14.0))) * fade;
   snow += glint * 0.22;
-  // Packed snow round a print: a little darker and bluer just outside its edge.
-  float rim = smoothstep(0.01, 0.1, trail) * (1.0 - pressed);
-  snow *= 1.0 - rim * 0.16;
-  float bare = max(road, pressed * 0.92);
-  gl_FragColor = vec4(mix(snow, ground, bare), 1.0);
+  vec3 mark = mix(uMarkFloor, uMarkShadow, clamp(shade * 1.4, 0.0, 1.0));
+  mark = mix(mark, uMarkHighlight, clamp(lit * 0.8, 0.0, 1.0));
+  snow = mix(snow, mark, pressed * uMarkAlpha);
+  gl_FragColor = vec4(mix(snow, ground, road), 1.0);
   #include <colorspace_fragment>
 }`;
 
@@ -172,6 +184,12 @@ export class InfiniteFloor {
     uniforms.uMapSize = { value: size };
     uniforms.uSnowLow = { value: new Color(0xb9c6df) };
     uniforms.uSnowHigh = { value: new Color(0xe4ebf7) };
+    uniforms.uMarkLight = { value: new Vector2(...MARK.light).normalize() };
+    uniforms.uMarkDepth = { value: MARK.depth };
+    uniforms.uMarkFloor = { value: new Color(MARK.floor) };
+    uniforms.uMarkShadow = { value: new Color(MARK.shadow) };
+    uniforms.uMarkHighlight = { value: new Color(MARK.highlight) };
+    uniforms.uMarkAlpha = { value: MARK.alpha };
     (uniforms.uBottomLeft.value as Color).set(0x1a1f2e);
     (uniforms.uBottomRight.value as Color).set(0x202638);
     (uniforms.uTopLeft.value as Color).set(0x2c3348);
