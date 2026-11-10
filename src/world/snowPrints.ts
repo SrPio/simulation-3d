@@ -8,11 +8,23 @@ import type { Point2 } from './collisions.ts';
 export const SNOW = { texels: 24, fade: 4, tick: 0.25 } as const;
 /**
  * The character's sneaker sole as it presses into the snow (metres, measured on ShoeSole_* of the web V4 rig): `length`
- * heel to toe, `width` across the ball of the foot and `heel` across the heel, its corners rounded by `corner`
- * (SnowPrints draws it). On the ground the sole's middle is `ahead` of the ankle (the foot
- * bone) and `out` to its outer side, and the toes turn out by `toeOut` (radians).
+ * heel to toe and `width` at its widest, just ahead of the middle. On the ground the sole's middle is `ahead` of the
+ * ankle (the foot bone) and `out` to its outer side, and the toes turn out by `toeOut` (radians).
  */
-export const SOLE = { length: 0.55, width: 0.272, heel: 0.2, corner: 0.075, ahead: 0.13, out: 0.025, toeOut: 0.13 } as const;
+export const SOLE = { length: 0.552, width: 0.272, ahead: 0.13, out: 0.025, toeOut: 0.13 } as const;
+
+/**
+ * The sole's outline as measured from below (the rig's bottom vertices sliced across, 2026-11-09): pairs of how far
+ * from the sole's middle towards the toe (m, negative towards the heel) and its half width there, from the tip of the
+ * toe to the back of the heel. A long rounded oval, widest a little ahead of the middle, a touch narrower at the heel
+ * and the same on both sides (the sneaker has no arch cut-out). SnowPrints draws it.
+ */
+export const SOLE_OUTLINE: readonly (readonly [number, number])[] = [
+  [0.276, 0], [0.274, 0.045], [0.251, 0.091], [0.228, 0.109], [0.205, 0.12], [0.183, 0.126], [0.16, 0.13],
+  [0.137, 0.133], [0.114, 0.134], [0.091, 0.135], [0.068, 0.136], [0.046, 0.136], [0.023, 0.136], [0, 0.135],
+  [-0.023, 0.134], [-0.046, 0.132], [-0.069, 0.13], [-0.091, 0.128], [-0.114, 0.125], [-0.137, 0.122],
+  [-0.16, 0.12], [-0.183, 0.118], [-0.205, 0.115], [-0.228, 0.109], [-0.251, 0.099], [-0.274, 0.052], [-0.276, 0],
+];
 
 /**
  * How anything pressed into the snow looks (the shoe prints and the sleigh's runner marks), softly, like an inset

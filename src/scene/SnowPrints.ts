@@ -1,7 +1,7 @@
 import {
   CanvasTexture, Color, DoubleSide, InstancedBufferAttribute, InstancedMesh, Matrix4, PlaneGeometry, ShaderMaterial, Vector2,
 } from 'three';
-import { MARK, SOLE } from '../world/snowPrints.ts';
+import { MARK, SOLE, SOLE_OUTLINE } from '../world/snowPrints.ts';
 
 /**
  * Each sole print fades out over `fade` seconds, quickly enough that walking leaves only about five behind the
@@ -66,27 +66,22 @@ function soleTexture(): CanvasTexture {
   canvas.width = Math.ceil(SOLE.width * PPM) + pad * 2;
   canvas.height = Math.ceil(SOLE.length * PPM) + pad * 2;
   const ctx = canvas.getContext('2d')!;
-  const w = SOLE.width * PPM;
-  const l = SOLE.length * PPM;
-  const heel = SOLE.heel * PPM;
-  const r = SOLE.corner * PPM;
-  // The outline: the ball of the foot full width, narrowing to the heel, every corner rounded; y grows towards the heel.
+  // The measured outline (SOLE_OUTLINE), down one side from the toe and back up the other, smoothed through the
+  // middles of its segments; the toe is at the top of the canvas.
   const cx = canvas.width / 2;
-  const top = pad;
-  const bottom = pad + l;
+  const cy = canvas.height / 2;
+  const ring = [
+    ...SOLE_OUTLINE.map(([along, half]) => [cx + half * PPM, cy - along * PPM] as const),
+    ...[...SOLE_OUTLINE].reverse().slice(1, -1).map(([along, half]) => [cx - half * PPM, cy - along * PPM] as const),
+  ];
   const outline = new Path2D();
-  const at = (t: number) => {
-    // Half width t of the way from toe (0) to heel (1).
-    const k = Math.min(1, Math.max(0, (t - 0.55) / 0.4));
-    return (w + (heel - w) * k * k * (3 - 2 * k)) / 2;
-  };
-  outline.moveTo(cx, top);
-  outline.bezierCurveTo(cx + at(0) * 0.7, top, cx + at(0), top + r * 0.4, cx + at(0.12), top + l * 0.12);
-  for (let t = 0.16; t <= 0.9; t += 0.04) outline.lineTo(cx + at(t), top + l * t);
-  outline.bezierCurveTo(cx + at(1), bottom - r * 0.4, cx + at(1) * 0.7, bottom, cx, bottom);
-  outline.bezierCurveTo(cx - at(1) * 0.7, bottom, cx - at(1), bottom - r * 0.4, cx - at(0.9), top + l * 0.9);
-  for (let t = 0.86; t >= 0.12; t -= 0.04) outline.lineTo(cx - at(t), top + l * t);
-  outline.bezierCurveTo(cx - at(0), top + r * 0.4, cx - at(0) * 0.7, top, cx, top);
+  const mid = (a: readonly [number, number], b: readonly [number, number]) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] as const;
+  const first = mid(ring[ring.length - 1], ring[0]);
+  outline.moveTo(first[0], first[1]);
+  for (const [i, point] of ring.entries()) {
+    const next = mid(point, ring[(i + 1) % ring.length]);
+    outline.quadraticCurveTo(point[0], point[1], next[0], next[1]);
+  }
   outline.closePath();
   // Its edge a little soft, like pressed snow.
   ctx.filter = 'blur(3px)';

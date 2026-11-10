@@ -13,7 +13,7 @@ import { SPRAY_SYMBOLS, sprayGlyph } from '../src/scene/sprayFont.ts';
 import { GIFT, PropPhysics, SNOWMAN, type PieceBody } from '../src/world/PropPhysics.ts';
 import { HatTail, TAIL } from '../src/character/hatTail.ts';
 import { POMPOM, pompomAt, pompomStep } from '../src/character/pompom.ts';
-import { SNOW, SOLE, printLeft, printSpot, snowAt } from '../src/world/snowPrints.ts';
+import { SNOW, SOLE, SOLE_OUTLINE, printLeft, printSpot, snowAt } from '../src/world/snowPrints.ts';
 import { bulbOn } from '../src/scene/ChristmasLights.ts';
 import { countdownLines } from '../src/scene/CountdownBoard.ts';
 import { BOTTLE_UNITS, bottlePath } from '../src/ui/bottle.ts';
@@ -288,6 +288,11 @@ test('prints are left in the snow, not on the road, the room or the green, and f
   assert.ok(left.z > 0.1 && right.z > 0.1, 'the sole\'s middle ahead of the ankle');
   assert.ok(left.heading > 0 && right.heading < 0, 'toes turned out');
   assert.ok(SOLE.length > 0.5 && SOLE.width > 0.25, 'as big as the character\'s sneaker sole');
+  // The print's outline is the measured sole: as long and as wide, rounded at both ends.
+  const halves = SOLE_OUTLINE.map(([, half]) => half);
+  assert.ok(Math.abs(Math.max(...halves) * 2 - SOLE.width) < 0.005, 'its widest is the sole width');
+  assert.ok(Math.abs(SOLE_OUTLINE[0][0] - SOLE_OUTLINE[SOLE_OUTLINE.length - 1][0] - SOLE.length) < 0.005, 'toe to heel is its length');
+  assert.ok(SOLE_OUTLINE[0][1] === 0 && SOLE_OUTLINE[SOLE_OUTLINE.length - 1][1] === 0, 'closed at the toe and the heel');
   assert.equal(printLeft(0), 1);
   assert.ok(printLeft(SNOW.fade / 2) > 0.4 && printLeft(SNOW.fade / 2) < 0.6);
   assert.equal(printLeft(SNOW.fade + SNOW.tick), 0, 'gone and the snow whole again');
