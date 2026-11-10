@@ -53,7 +53,7 @@ import { RoomReveal } from '../scene/RoomReveal.ts';
 import { dressPieces, ghostBag, takeHalloween, wearMask, type HalloweenDress } from '../scene/halloweenDress.ts';
 import { Graffiti, paintGraffiti, type Paintings } from '../scene/Graffiti.ts';
 import { GRAFFITI, graffitiForChristmas, graffitiForHalloween, graffitiForTouch, type GraffitiSpot } from '../scene/graffitiData.ts';
-import { SNOWY, bulbPositions, christmasBag, dressChristmasPieces, hideCap, snowOnTop, takeChristmas, type ChristmasDress } from '../scene/christmasDress.ts';
+import { SNOWY, bulbPositions, christmasBag, dressChristmasPieces, hideCap, snowOnTop, takeChristmas, type ChristmasDress, dressBust } from '../scene/christmasDress.ts';
 import { ChristmasLights } from '../scene/ChristmasLights.ts';
 import { SNOWFALL, SnowFall } from '../scene/SnowFall.ts';
 import { SnowGround } from '../scene/SnowGround.ts';
@@ -943,6 +943,8 @@ export class CharacterViewer {
     // The targets rock when hit: they leave the static scene too, drawn by their own view.
     const targets = outside.getObjectByName('Targets');
     targets?.removeFromParent();
+    // Christmas: the bust in the about-me plaza swaps its stone cap for the Santa hat.
+    if (this.xmas?.hat) dressBust(outside, this.xmas.hat);
     outside.traverse((object) => {
       if (!(object instanceof Mesh)) return;
       object.receiveShadow = false;

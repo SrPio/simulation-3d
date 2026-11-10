@@ -86,6 +86,39 @@ export function hideCap(model: Object3D): number {
   return hidden;
 }
 
+/**
+ * How create_outside.py made the bust from the character's head (build_bust): the character's frame (feet at 0) moved
+ * down by `cut`, scaled by `scale` and set `pedestal` metres up on its holder. `tests/christmas.test.ts` keeps these
+ * equal to BUST_CUT_Z, BUST_SCALE and PEDESTAL there.
+ */
+export const BUST_FRAME = { cut: 1.62, scale: 0.85 * 2.5, pedestal: 1.0 } as const;
+
+/**
+ * Christmas: the about-me bust wears the Santa hat too, in its own red and white (not stone). Its stone cap
+ * (`BustCap`) comes off and a still copy of the hat, made in the character's frame, goes on the bust the same way the
+ * head was carved into it. Each mesh gets its own geometry: the worn hat's tail bends its geometry every frame.
+ * Returns whether it found the bust.
+ */
+export function dressBust(outside: Object3D, hat: Object3D): boolean {
+  const cap = outside.getObjectByName('BustCap');
+  const bust = outside.getObjectByName('Bust');
+  if (!cap || !bust) return false;
+  cap.removeFromParent();
+  const copy = new Group();
+  copy.name = 'BustSantaHat';
+  for (const child of hat.children) {
+    const part = child.clone(true);
+    part.traverse((object) => {
+      if (object instanceof Mesh) object.geometry = object.geometry.clone();
+    });
+    copy.add(part);
+  }
+  copy.scale.setScalar(BUST_FRAME.scale);
+  copy.position.set(0, BUST_FRAME.pedestal - BUST_FRAME.cut * BUST_FRAME.scale, 0);
+  bust.add(copy);
+  return true;
+}
+
 /** Where a punching bag's letters face (LETTERS turn in create_boxing.py): the prints face the same way. */
 const BAG_FACE_TURN = 0.35;
 

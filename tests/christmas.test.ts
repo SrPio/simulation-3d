@@ -6,7 +6,7 @@ import { Box3, Matrix4, Mesh, Texture, Vector3, type Object3D } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { christmasMode, daysToChristmas, isChristmasSeason, seasonOf } from '../src/core/christmas.ts';
 import { halloweenMode } from '../src/core/halloween.ts';
-import { dressChristmasPieces, takeChristmas, bulbPositions } from '../src/scene/christmasDress.ts';
+import { BUST_FRAME, dressBust, dressChristmasPieces, takeChristmas, bulbPositions } from '../src/scene/christmasDress.ts';
 import { readOutside } from '../src/scene/outsideData.ts';
 import { CHRISTMAS_GRAFFITI, GRAFFITI, GRAFFITI_SYMBOLS, graffitiForChristmas, surfaceFor, textFor } from '../src/scene/graffitiData.ts';
 import { SPRAY_SYMBOLS, sprayGlyph } from '../src/scene/sprayFont.ts';
@@ -223,6 +223,31 @@ test('the Santa hat red tail swings when the head moves, rests on the head and s
   at = tail.local(matrix);
   const fallen = at[at.length - 1].distanceTo(tipRest);
   assert.ok(fallen > 0.03, `bowed, it hangs another way (${fallen.toFixed(3)} m)`);
+});
+
+test('the about-me bust swaps its stone cap for the Santa hat, set on it as the head was carved into it', async () => {
+  // The bust's frame here equals the one create_outside.py carved it in.
+  const script = await readFile(new URL('../scripts/blender/create_outside.py', import.meta.url), 'utf8');
+  const [, cut, scale] = script.match(/BUST_CUT_Z, BUST_SCALE = ([\d.]+), ([\d.]+ \* [\d.]+)/)!;
+  const [, pedestal] = script.match(/^PEDESTAL = \([\d.]+, ([\d.]+)\)/m)!;
+  assert.equal(BUST_FRAME.cut, Number(cut));
+  assert.ok(Math.abs(BUST_FRAME.scale - scale.split('*').map(Number).reduce((a, b) => a * b)) < 1e-9);
+  assert.equal(BUST_FRAME.pedestal, Number(pedestal));
+  const outside = await parse('outside');
+  const dress = takeChristmas(await parse('christmas'));
+  assert.ok(dressBust(outside, dress.hat!), 'the bust is there');
+  assert.equal(outside.getObjectByName('BustCap'), undefined, 'its stone cap is off');
+  const hat = outside.getObjectByName('BustSantaHat')!;
+  outside.updateMatrixWorld(true);
+  const bust = outside.getObjectByName('BustStone')!;
+  const top = new Box3().setFromObject(bust).max.y;
+  const box = new Box3().setFromObject(hat);
+  assert.ok(box.min.y < top && box.max.y > top, `the hat sits on the bust's head (${box.min.y.toFixed(2)}…${box.max.y.toFixed(2)}, head top ${top.toFixed(2)})`);
+  // Its own geometry: bending the worn hat's tail leaves the bust's still.
+  const worn = dress.hat!.getObjectByName('ChristmasHat_Cap') as Mesh | undefined;
+  hat.traverse((object) => {
+    if (object instanceof Mesh && worn) worn.traverse((other) => { if (other instanceof Mesh) assert.notEqual(object.geometry, other.geometry); });
+  });
 });
 
 test('the bobble swings when the head moves and settles hanging down', () => {
