@@ -194,6 +194,8 @@ const XMAS = { every: 0.55, back: 1.6, up: 2.2 } as const;
  * runners and behind to the end of its thrusters (create_christmas.py SLEIGH and THRUSTER).
  */
 const SLEIGH_BOX = { across: 0.93, ahead: 1.1, behind: 0.92 } as const;
+/** Christmas: the top of the sleigh's floor above its origin (create_christmas.py build_sleigh: the floor box tops at 0.34). */
+const SLEIGH_FLOOR = 0.34;
 /** Christmas: the red of the arrow on the ground that points at the sleigh. */
 const SLEIGH_ARROW = 0xd8202c;
 /** Blob shadow slots: the character first, then the signs, then the loose pieces, then the thrown laptops. */
@@ -2046,6 +2048,9 @@ export class CharacterViewer {
     }
     this.sleigh = sleigh;
     this.chairBlock3 = { ...SLEIGH_BOX };
+    // The seated legs reach the ground, below the sleigh's floor: the rider is cut at the floor.
+    if (this.renderer) this.renderer.localClippingEnabled = true;
+    this.clipRider();
     this.chairPushReach = CHARACTER_RADIUS + 0.5;
     this.interaction!.instant.add('office');
     this.interaction!.onInstant = this.onCauldron;
@@ -2101,14 +2106,19 @@ export class CharacterViewer {
     this.host.dataset.cauldron = inside ? 'inside' : 'ready';
   };
 
-  /** The rider's materials are cut at the brew's plane (renderer clipping, set once before the shaders compile). */
+  /**
+   * The rider's materials are cut at a plane (renderer clipping): the cauldron's brew, or the sleigh's floor so the
+   * seated legs do not poke out under it. Set before the shaders compile, or they are rebuilt.
+   */
   private clipRider(): void {
-    if (!this.cauldron || !this.model) return;
+    if ((!this.cauldron && !this.sleigh) || !this.model) return;
     this.model.traverse((object) => {
       if (!(object instanceof Mesh)) return;
       for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+        if (material.clippingPlanes?.includes(this.brewPlane)) continue;
         material.clippingPlanes = [this.brewPlane];
         material.clipShadows = true;
+        material.needsUpdate = true;
       }
     });
   }
@@ -2128,11 +2138,12 @@ export class CharacterViewer {
       const lift = Math.min(state.y, 1.5);
       this.shadows.set(this.chairShadow, state.x, state.z, state.yaw, 1.2 - lift * 0.3, 1.2 - lift * 0.3, 0.5 * (1 - lift * 0.4));
     }
-    if (this.cauldron) {
-      // Only the trunk and head show out of the brew; nothing is cut while nobody rides.
+    const vessel = this.cauldron ?? this.sleigh;
+    if (vessel) {
+      // Only what shows out of the brew, or above the sleigh's floor; nothing is cut while nobody rides.
       if (this.riding) {
-        const surface = this.cauldron.localToWorld(new Vector3(0, this.dress!.brew.height, 0));
-        const up = new Vector3(0, 1, 0).applyQuaternion(this.cauldron.getWorldQuaternion(new Quaternion()));
+        const surface = vessel.localToWorld(new Vector3(0, this.cauldron ? this.dress!.brew.height : SLEIGH_FLOOR, 0));
+        const up = new Vector3(0, 1, 0).applyQuaternion(vessel.getWorldQuaternion(new Quaternion()));
         this.brewPlane.setFromNormalAndCoplanarPoint(up, surface);
       } else this.brewPlane.set(new Vector3(0, 1, 0), 1e4);
     }
