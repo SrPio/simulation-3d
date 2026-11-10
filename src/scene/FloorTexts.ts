@@ -1,5 +1,5 @@
 import {
-  BufferAttribute, BufferGeometry, CanvasTexture, DoubleSide, Mesh, MeshBasicMaterial, SRGBColorSpace,
+  BufferAttribute, BufferGeometry, CanvasTexture, Color, DoubleSide, Mesh, MeshBasicMaterial, SRGBColorSpace,
 } from 'three';
 import { MESSAGES, t, type MessageKey } from '../core/i18n.ts';
 import { FONT, drawArrow, drawKey } from './canvasText.ts';
@@ -109,8 +109,11 @@ export class FloorTexts {
     this.canvas.height = Math.max(1, height);
     const position: number[] = [];
     const uv: number[] = [];
+    const colour: number[] = [];
     const index: number[] = [];
     const y = groundY + 0.006;
+    // Every block in the ground ink at OPACITY, as vertex colours with alpha, so one block can be tinted on its own.
+    const ink = groundInk();
     for (const [i, block] of blocks.entries()) {
       const { x, z } = axes(block.yaw);
       const [w, d] = block.size;
@@ -124,21 +127,37 @@ export class FloorTexts {
       const v1 = 1 - (rect.y + rect.h) / this.canvas.height;
       // The far edge of the block (local -Z) is the top of its canvas region, so the text reads upright.
       uv.push(u0, v0, u1, v0, u0, v1, u1, v1);
+      for (let k = 0; k < 4; k++) colour.push(ink.r, ink.g, ink.b, OPACITY);
       const base = i * 4;
       index.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
     }
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', new BufferAttribute(new Float32Array(position), 3));
     geometry.setAttribute('uv', new BufferAttribute(new Float32Array(uv), 2));
+    geometry.setAttribute('color', new BufferAttribute(new Float32Array(colour), 4));
     geometry.setIndex(index);
     this.texture = new CanvasTexture(this.canvas);
     this.texture.colorSpace = SRGBColorSpace;
     this.texture.anisotropy = 8;
-    this.mesh = new Mesh(geometry, new MeshBasicMaterial({ map: this.texture, color: groundInk(), transparent: true, opacity: OPACITY, depthWrite: false, side: DoubleSide }));
+    this.mesh = new Mesh(geometry, new MeshBasicMaterial({ map: this.texture, vertexColors: true, transparent: true, depthWrite: false, side: DoubleSide }));
     this.mesh.name = 'FloorTexts';
     this.mesh.renderOrder = -4;
     this.mesh.matrixAutoUpdate = false;
     this.paint();
+  }
+
+  /**
+   * Paint the blocks of one kind in their own colour and opacity instead of the ground ink: Christmas draws the arrow
+   * to the sleigh (`chairhint`) in red, so it stands out on the snow and on the bare road alike.
+   */
+  tint(id: FloorBlock['id'], hex: number, opacity: number): void {
+    const colour = this.mesh.geometry.getAttribute('color') as BufferAttribute;
+    const tone = new Color(hex);
+    for (const [i, block] of this.blocks.entries()) {
+      if (block.id !== id) continue;
+      for (let k = 0; k < 4; k++) colour.setXYZW(i * 4 + k, tone.r, tone.g, tone.b, opacity);
+    }
+    colour.needsUpdate = true;
   }
 
   /** Repaint every block in the current language. */

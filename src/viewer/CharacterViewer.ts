@@ -194,6 +194,8 @@ const XMAS = { every: 0.55, back: 1.6, up: 2.2 } as const;
  * runners and behind to the end of its thrusters (create_christmas.py SLEIGH and THRUSTER).
  */
 const SLEIGH_BOX = { across: 0.93, ahead: 1.1, behind: 0.92 } as const;
+/** Christmas: the red of the arrow on the ground that points at the sleigh. */
+const SLEIGH_ARROW = 0xd8202c;
 /** Blob shadow slots: the character first, then the signs, then the loose pieces, then the thrown laptops. */
 const CHARACTER_SHADOW = 0;
 /** cannon-es sleepState of a sleeping body. */
@@ -1041,6 +1043,8 @@ export class CharacterViewer {
     // Christmas: the painted footprints give way to real ones in the snow.
     const floors = data.floors.filter((floor) => !(this.options.touch && floor.id === 'controls') && !(this.xmas && (floor.id === 'footprints' || floor.id === 'prints')));
     this.floorTexts = new FloorTexts(floors, data.groundY, !!this.options.touch);
+    // Christmas: the arrow to the sleigh in red, clear on the snow and on the bare road.
+    if (this.xmas) this.floorTexts.tint('chairhint', SLEIGH_ARROW, 0.95);
     await breathe();
     this.about = new AboutPlaza(data.plaques);
     if (flag) this.about.waveFlag(flag);
