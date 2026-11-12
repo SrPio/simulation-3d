@@ -179,7 +179,8 @@ export function bagTexture(design: BagDesign): CanvasTexture {
         ctx.stroke();
       }
     }
-    // The snowman on the front, its height most of the bag's (v grows up the bag; the canvas y grows down).
+    // The snowman on the front, its height most of the bag's (v grows up the bag; the canvas y grows down); its three
+    // balls overlap a little, bottom first, so each sits on the one below.
     const cx = FRONT_U * w;
     const body = (y: number, r: number) => {
       ctx.beginPath();
@@ -190,46 +191,46 @@ export function bagTexture(design: BagDesign): CanvasTexture {
       ctx.strokeStyle = '#8fb6dc';
       ctx.stroke();
     };
-    body(0.2, 0.085);
-    body(0.43, 0.065);
-    body(0.62, 0.05);
+    body(0.25, 0.095);
+    body(0.4, 0.07);
+    body(0.52, 0.052);
     const coal = (x: number, y: number, r: number) => {
       ctx.beginPath();
       ctx.arc(cx + x * w, h - y * h, r, 0, Math.PI * 2);
       ctx.fillStyle = '#1b1d24';
       ctx.fill();
     };
-    coal(-0.017, 0.645, 9);
-    coal(0.017, 0.645, 9);
-    for (const y of [0.47, 0.43, 0.39]) coal(0, y, 8);
-    for (let k = 0; k < 5; k++) coal(-0.022 + k * 0.011, 0.6 - Math.sin((k / 4) * Math.PI) * 0.012, 4.5);
+    coal(-0.017, 0.545, 9);
+    coal(0.017, 0.545, 9);
+    for (const y of [0.43, 0.395, 0.36]) coal(0, y, 8);
+    for (let k = 0; k < 5; k++) coal(-0.022 + k * 0.011, 0.5 - Math.sin((k / 4) * Math.PI) * 0.012, 4.5);
     // Carrot nose.
     ctx.beginPath();
-    ctx.moveTo(cx, h - 0.63 * h);
-    ctx.lineTo(cx + 0.045 * w, h - 0.622 * h);
-    ctx.lineTo(cx, h - 0.612 * h);
+    ctx.moveTo(cx, h - 0.53 * h);
+    ctx.lineTo(cx + 0.045 * w, h - 0.522 * h);
+    ctx.lineTo(cx, h - 0.512 * h);
     ctx.closePath();
     ctx.fillStyle = '#f07a1a';
     ctx.fill();
-    // Scarf and top hat.
+    // Scarf round the neck, where the head meets the middle ball, and top hat.
     ctx.fillStyle = '#d4202f';
-    ctx.fillRect(cx - 0.055 * w, h - 0.535 * h, 0.11 * w, 0.03 * h);
-    ctx.fillRect(cx + 0.02 * w, h - 0.535 * h, 0.025 * w, 0.1 * h);
+    ctx.fillRect(cx - 0.055 * w, h - 0.49 * h, 0.11 * w, 0.03 * h);
+    ctx.fillRect(cx + 0.02 * w, h - 0.49 * h, 0.025 * w, 0.1 * h);
     ctx.fillStyle = '#1b1d24';
-    ctx.fillRect(cx - 0.06 * w, h - 0.672 * h, 0.12 * w, 0.014 * h);
-    ctx.fillRect(cx - 0.035 * w, h - 0.75 * h, 0.07 * w, 0.08 * h);
+    ctx.fillRect(cx - 0.06 * w, h - 0.574 * h, 0.12 * w, 0.014 * h);
+    ctx.fillRect(cx - 0.035 * w, h - 0.652 * h, 0.07 * w, 0.08 * h);
     ctx.fillStyle = '#d4202f';
-    ctx.fillRect(cx - 0.035 * w, h - 0.69 * h, 0.07 * w, 0.014 * h);
+    ctx.fillRect(cx - 0.035 * w, h - 0.592 * h, 0.07 * w, 0.014 * h);
     // Twig arms.
     ctx.strokeStyle = '#6b4424';
     ctx.lineWidth = 7;
     for (const side of [-1, 1]) {
       ctx.beginPath();
-      ctx.moveTo(cx + side * 0.06 * w, h - 0.45 * h);
-      ctx.lineTo(cx + side * 0.13 * w, h - 0.53 * h);
-      ctx.lineTo(cx + side * 0.15 * w, h - 0.56 * h);
-      ctx.moveTo(cx + side * 0.13 * w, h - 0.53 * h);
-      ctx.lineTo(cx + side * 0.155 * w, h - 0.52 * h);
+      ctx.moveTo(cx + side * 0.065 * w, h - 0.42 * h);
+      ctx.lineTo(cx + side * 0.135 * w, h - 0.5 * h);
+      ctx.lineTo(cx + side * 0.155 * w, h - 0.53 * h);
+      ctx.moveTo(cx + side * 0.135 * w, h - 0.5 * h);
+      ctx.lineTo(cx + side * 0.16 * w, h - 0.49 * h);
       ctx.stroke();
     }
   }
