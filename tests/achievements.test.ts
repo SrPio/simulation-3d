@@ -7,7 +7,7 @@ import { MESSAGES } from '../src/core/i18n.ts';
 /** The host at the start: nothing done (the values the viewer sets on load). */
 const idle: Snapshot = {
   elevation: '0.00', desktop: 'closed', shout: 'none', rubik: 'scrambled', sign: 'none', pins: '0', bullseyes: undefined, bricks: '0', lap: 'none',
-  konami: undefined, bags: 'js:0,ts:0', strikePower: undefined, chairJumps: undefined, tapes: '0', broken: '0', halloween: 'off', christmas: 'off',
+  konami: undefined, bags: 'js:0,ts:0', strikePower: undefined, chairJumps: undefined, board: undefined, broken: '0', halloween: 'off', christmas: 'off',
 };
 
 test('every sticker has a rule and a name and a hint in both languages', () => {
@@ -39,13 +39,13 @@ test('each achievement shows in the page state', () => {
     ['konami', { konami: '1' }],
     ['heavyweight', { bags: 'js:31,ts:2', strikePower: '1.00' }],
     ['liftoff', { chairJumps: '1' }],
-    ['tape', { tapes: '1' }],
+    ['hoverboard', { board: 'ready' }],
     ['splinters', { broken: '2' }],
     ['festive', { christmas: 'on' }],
   ];
   for (const [id, change] of cases) assert.deepEqual(earned({ ...idle, ...change }, { signs: [] }, {}), [id], id);
   // Close but not quite.
-  for (const change of [{ lap: 'running' }, { pins: '9' }, { bags: 'js:31', strikePower: '0.40' }, { bags: 'js:8', strikePower: '1.00' }, { mgScore: '999' }, { elevation: '0.30' }]) {
+  for (const change of [{ lap: 'running' }, { pins: '9' }, { bags: 'js:31', strikePower: '0.40' }, { bags: 'js:8', strikePower: '1.00' }, { mgScore: '999' }, { elevation: '0.30' }, { board: 'locked' }]) {
     assert.deepEqual(earned({ ...idle, ...change }, { signs: [] }, {}), [], JSON.stringify(change));
   }
 });

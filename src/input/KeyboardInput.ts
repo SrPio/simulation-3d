@@ -1,8 +1,8 @@
 import type { MoveIntent } from '../character/CharacterController';
 
-export type PressAction = 'interact' | 'laptop' | 'jump' | 'open' | 'throw' | 'punch' | 'kick' | 'konami' | 'reset';
+export type PressAction = 'interact' | 'laptop' | 'jump' | 'open' | 'throw' | 'punch' | 'kick' | 'konami' | 'reset' | 'board';
 const PRESSES: Record<string, PressAction> = {
-  KeyE: 'interact', KeyL: 'laptop', Space: 'jump', Enter: 'open', NumpadEnter: 'open', KeyF: 'throw', KeyJ: 'punch', KeyK: 'kick', KeyR: 'reset',
+  KeyE: 'interact', KeyL: 'laptop', Space: 'jump', Enter: 'open', NumpadEnter: 'open', KeyF: 'throw', KeyJ: 'punch', KeyK: 'kick', KeyR: 'reset', KeyH: 'board',
 };
 /** Keys whose release matters too: holding them charges a strike or a throw, or keeps the office chair's nitro on (Space). */
 export type HoldAction = 'punch' | 'kick' | 'throw' | 'jump';

@@ -35,7 +35,7 @@ export const STAMPS: readonly Stamp[] = [
   { id: 'konami', section: 'secrets', art: 'jump' },
   { id: 'heavyweight', section: 'secrets', art: 'punch' },
   { id: 'liftoff', section: 'secrets', art: 'nitro' },
-  { id: 'tape', section: 'secrets', art: 'run' },
+  { id: 'hoverboard', section: 'secrets', art: 'jump' },
   { id: 'splinters', section: 'secrets', art: 'punch' },
   { id: 'festive', section: 'secrets', art: 'head' },
 ];

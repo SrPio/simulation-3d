@@ -101,7 +101,7 @@ export const EXPECTED_BYTES: Record<string, number> = {
   'models/univalle.glb': 29_000,
   'models/experience.glb': 25_000,
   'models/halloween.glb': 750_000,
-  'models/christmas.glb': 580_000,
+  'models/christmas.glb': 795_000,
 };
 
 export async function loadCharacter(modelId: ModelVersionId, signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {

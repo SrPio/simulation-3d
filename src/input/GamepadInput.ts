@@ -92,6 +92,8 @@ export const PAD_ACTIONS: Partial<Record<PadButton, { press?: PressAction; hold?
   r1: { hold: 'punch' },
   l1: { hold: 'kick' },
   select: { press: 'reset' },
+  // Christmas: the snow hoverboard, once unlocked (a click on the right stick).
+  r3: { press: 'board' },
 };
 /** The Konami code on a pad: the cross pad, then ○/B and ✕/A. */
 export const PAD_KONAMI: readonly PadButton[] = ['up', 'up', 'down', 'down', 'left', 'right', 'left', 'right', 'circle', 'cross'];

@@ -6,8 +6,8 @@ import { SOUND_FILES, type RecordedSound } from './soundFiles.ts';
  * sleigh's bells and footsteps crunching in the snow or tapping on the frozen pond. */
 export type SynthSound = 'whoosh' | 'chirp' | 'pop' | 'twist' | 'neon' | 'splat' | 'candy' | 'bubble' | 'jingle' | 'stepSnow';
 export type SoundName = RecordedSound | SynthSound;
-/** Continuous sounds whose level and pitch follow something: the office chair's casters, the soda fizzing. */
-export type LoopName = 'rolling' | 'fizz';
+/** Continuous sounds whose level and pitch follow something: the office chair's casters, the soda fizzing, the hoverboard's hum. */
+export type LoopName = 'rolling' | 'fizz' | 'hover';
 
 /**
  * How a sound plays. `velocity` is what the caller passes (an impact speed in m/s, a blow's power 0…1):
@@ -399,7 +399,9 @@ export class Sounds {
       source.buffer = buffer;
       source.loop = true;
       const filter = context.createBiquadFilter();
-      filter.type = name === 'fizz' ? 'highpass' : 'lowpass';
+      filter.type = name === 'fizz' ? 'highpass' : name === 'hover' ? 'bandpass' : 'lowpass';
+      // The hoverboard's hum is a narrow band of air: a soft, steady whirr.
+      if (name === 'hover') filter.Q.value = 6;
       const gain = context.createGain();
       gain.gain.value = 0;
       source.connect(filter).connect(gain).connect(this.master);
@@ -409,9 +411,9 @@ export class Sounds {
     }
     const t = context.currentTime;
     // The casters stay a soft, dark rumble: a low ceiling on the filter and a quiet level even at full speed.
-    const frequency = name === 'fizz' ? 2200 + brightness * 2600 : 120 + brightness * 480;
+    const frequency = name === 'fizz' ? 2200 + brightness * 2600 : name === 'hover' ? 240 + brightness * 520 : 120 + brightness * 480;
     loop.filter.frequency.setTargetAtTime(frequency, t, 0.05);
-    loop.gain.gain.setTargetAtTime(Math.max(0, level) * (name === 'fizz' ? 0.5 : 0.22), t, 0.06);
+    loop.gain.gain.setTargetAtTime(Math.max(0, level) * (name === 'fizz' ? 0.5 : name === 'hover' ? 0.5 : 0.22), t, 0.06);
   }
 
   dispose(): void {

@@ -23,6 +23,7 @@ const es = {
   'motion.reduced': 'Reducido',
   'motion.copy': 'Activado: cámara sin inercia, zonas del suelo y pantalla del portátil quietas, sin transiciones de la interfaz. Las animaciones del personaje se mantienen.',
   'touch.jump': 'Saltar',
+  'touch.board': 'Subir o bajar del hoverboard',
   'touch.run': 'Correr',
   'touch.punch': 'Puñetazo (mantén para cargar)',
   'touch.kick': 'Patada (mantén para cargar)',
@@ -253,8 +254,8 @@ const es = {
   'stamps.heavyweight.hint': "Algo cuelga en el parque de juegos",
   'stamps.liftoff.name': "Despegue",
   'stamps.liftoff.hint': "Las ruedas también vuelan",
-  'stamps.tape.name': "Corta la cinta",
-  'stamps.tape.hint': "No pasar",
+  'stamps.hoverboard.name': "Hoverboard de nieve",
+  'stamps.hoverboard.hint': "Ni un muñeco en pie",
   'stamps.splinters.name': "Astillas",
   'stamps.splinters.hint': "La madera no aguanta todo",
   'stamps.festive.name': "Espíritu festivo",
@@ -267,6 +268,8 @@ const es = {
   'toast.seat': '¿Una pausa? Siéntate aquí y saca tu portátil para descubrir lo que tiene dentro.',
   'toast.seated': 'Saca tu portátil con {key} y echa un vistazo a su escritorio.',
   'toast.keyTouch': 'el botón del portátil',
+  'toast.board': '¡Desbloqueaste el hoverboard de nieve! Súbete y bájate con {key}.',
+  'toast.boardKeyTouch': 'el botón de la tabla',
 } as const;
 
 export type MessageKey = keyof typeof es;
@@ -293,6 +296,7 @@ const en: Record<MessageKey, string> = {
   'motion.reduced': 'Reduced',
   'motion.copy': 'On: no camera inertia, still floor zones and laptop screen, no interface transitions. Character animations stay.',
   'touch.jump': 'Jump',
+  'touch.board': 'Get on or off the hoverboard',
   'touch.run': 'Run',
   'touch.punch': 'Punch (hold to charge)',
   'touch.kick': 'Kick (hold to charge)',
@@ -523,8 +527,8 @@ const en: Record<MessageKey, string> = {
   'stamps.heavyweight.hint': "Something hangs in the playground",
   'stamps.liftoff.name': "Lift-off",
   'stamps.liftoff.hint': "Wheels can fly too",
-  'stamps.tape.name': "Cut the tape",
-  'stamps.tape.hint': "Do not cross",
+  'stamps.hoverboard.name': "Snow hoverboard",
+  'stamps.hoverboard.hint': "Not one snowman standing",
   'stamps.splinters.name': "Splinters",
   'stamps.splinters.hint': "Wood can only take so much",
   'stamps.festive.name': "Festive spirit",
@@ -537,6 +541,8 @@ const en: Record<MessageKey, string> = {
   'toast.seat': 'Need a break? Sit here and take out your laptop to see what is inside.',
   'toast.seated': 'Take out your laptop with {key} and have a look at its desktop.',
   'toast.keyTouch': 'the laptop button',
+  'toast.board': 'You unlocked the snow hoverboard! Hop on and off with {key}.',
+  'toast.boardKeyTouch': 'the board button',
 };
 
 export const MESSAGES: Readonly<Record<Language, Readonly<Record<MessageKey, string>>>> = { es, en };

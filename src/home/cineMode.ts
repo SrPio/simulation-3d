@@ -62,11 +62,13 @@ export function setupCineMode(parent: HTMLElement, viewer: () => CharacterViewer
     } else if (event.code === 'KeyP') {
       frozen = current?.toggleCineFreeze() ?? frozen;
     } else if (event.code === 'KeyH') {
+      // H is the recording tools' here; the Christmas hoverboard's H does not see it.
+      event.stopPropagation();
       ui = (ui + 1) % UI_STEPS.length;
       root.dataset.cineUi = UI_STEPS[ui];
     } else {
       return;
     }
     render();
-  }, { signal });
+  }, { signal, capture: true });
 }

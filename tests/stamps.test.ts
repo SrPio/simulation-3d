@@ -44,7 +44,7 @@ test('bad stored values and blocked storage do not break the album', () => {
   const blocked = { getItem: (): string | null => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } };
   const state = readStamps(blocked);
   assert.deepEqual(state, {});
-  assert.equal(unlockStamp(blocked, state, 'tape', 42), true);
-  assert.deepEqual(state, { 'tape': 42 });
+  assert.equal(unlockStamp(blocked, state, 'hoverboard', 42), true);
+  assert.deepEqual(state, { 'hoverboard': 42 });
   assert.deepEqual(readStamps(undefined), {});
 });

@@ -16,6 +16,11 @@ export type ChristmasDress = {
   pompom?: Object3D;
   /** The sleigh that replaces the office chair: its origin on the ground under the rider's hips, facing +Z. */
   sleigh?: Object3D;
+  /**
+   * The snow hoverboard (unlocked by destroying every snowman): origin on the middle of the deck's top, nose towards +Z;
+   * `Hoverboard_Foot_front|back` mark where the soles stand, `Hoverboard_Pad_<i>` the pads under it.
+   */
+  hoverboard?: Object3D;
   /** Strings of bulbs (world positions after the outside is placed) and each string's bulb radius. */
   lights: { object: Object3D; points: Vector3[]; radius: number }[];
   /** Meshes used as they are: the dressed pin and ball, the snowball, a lump of snow and the falling gifts. */
@@ -27,6 +32,7 @@ export function takeChristmas(scene: Object3D): ChristmasDress {
   const world = scene.getObjectByName('ChristmasWorld') ?? new Group();
   const hat = scene.getObjectByName('ChristmasHat');
   const sleigh = scene.getObjectByName('ChristmasSleigh');
+  const hoverboard = scene.getObjectByName('ChristmasHoverboard');
   const library = new Map<string, Object3D>();
   for (const child of scene.getObjectByName('ChristmasLibrary')?.children ?? []) library.set(child.name, child);
   const lights: ChristmasDress['lights'] = [];
@@ -37,7 +43,7 @@ export function takeChristmas(scene: Object3D): ChristmasDress {
     lights.push({ object: child, points, radius: Number(child.userData.bulb ?? 0.04) });
   }
   world.removeFromParent();
-  return { world, hat, pompom: hat?.getObjectByName('ChristmasHat_Pompom'), sleigh, lights, library };
+  return { world, hat, pompom: hat?.getObjectByName('ChristmasHat_Pompom'), sleigh, hoverboard, lights, library };
 }
 
 /** The bulbs' world positions, once the light strings sit where the outside is (call after it is placed). */

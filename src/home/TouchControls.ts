@@ -68,6 +68,8 @@ export const PEDAL_ARROWS = {
   down: 'M50 88 L86 48 L63 48 L63 12 L37 12 L37 48 L14 48 Z',
   left: 'M12 50 L52 14 L52 37 L88 37 L88 63 L52 63 L52 86 Z',
   right: 'M88 50 L48 14 L48 37 L12 37 L12 63 L48 63 L48 86 Z',
+  /** The snow hoverboard seen from the side: the deck with its kicked-up ends and the two glowing pads under it. */
+  board: 'M6 40 Q10 52 22 54 L78 54 Q90 52 94 40 Q88 46 78 46 L22 46 Q12 46 6 40 Z M28 60 a8 6 0 1 0 0.1 0 Z M72 60 a8 6 0 1 0 0.1 0 Z',
 } as const;
 
 /**
@@ -86,6 +88,7 @@ const BUTTONS: Button[] = [
   { id: 'punch', icon: 'punch', label: 'touch.punch', hold: 'punch' },
   { id: 'run', icon: 'run', label: 'touch.run', run: true },
   { id: 'jump', icon: 'jump', label: 'touch.jump', hold: 'jump', konami: 'KeyA' },
+  { id: 'board', arrow: 'board', label: 'touch.board', press: 'board' },
 ];
 /** Riding, these take the joystick's place: left and right, like A and D (or the arrow keys). */
 const STEER: Button[] = [
@@ -162,7 +165,7 @@ export class TouchControls {
     this.stick.addEventListener('pointermove', this.onStickMove, { signal });
     for (const type of ['pointerup', 'pointercancel', 'lostpointercapture'] as const) this.stick.addEventListener(type, this.onStickUp, { signal });
     this.observer = new MutationObserver(() => this.sync(host));
-    this.observer.observe(host, { attributes: true, attributeFilter: ['data-interaction', 'data-prompt', 'data-sign', 'data-drive'] });
+    this.observer.observe(host, { attributes: true, attributeFilter: ['data-interaction', 'data-prompt', 'data-sign', 'data-drive', 'data-board'] });
     this.sync(host);
   }
 
@@ -223,13 +226,16 @@ export class TouchControls {
 
   /** Which buttons fit what the character is doing. */
   private sync(host: HTMLElement): void {
-    const { interaction = 'free', prompt = 'none', sign = 'none', drive = 'none' } = host.dataset;
+    const { interaction = 'free', prompt = 'none', sign = 'none', drive = 'none', board = 'locked' } = host.dataset;
+    // On the snow hoverboard: only the jump (a hop) and the board button (get off) make sense.
+    const onBoard = board !== 'locked' && board !== 'ready';
     const riding = drive !== 'none';
     const free = interaction === 'free';
     const seated = !free && !riding;
     const show: Record<string, boolean> = {
-      accelerate: riding, reverse: riding, nitro: riding, sit: (free && prompt !== 'none') || seated || riding,
-      laptop: seated, throw: free, kick: free, punch: free, run: free, jump: free, left: riding, right: riding,
+      accelerate: riding, reverse: riding, nitro: riding, sit: !onBoard && ((free && prompt !== 'none') || seated || riding),
+      laptop: seated, throw: free && !onBoard, kick: free && !onBoard, punch: free && !onBoard, run: free && !onBoard, jump: free,
+      left: riding, right: riding, board: free && board !== 'locked',
     };
     for (const [id, element] of this.buttons) element.hidden = !show[id];
     // Riding, the steering arrows replace the joystick; a finger still on it lets go so it never keeps steering.

@@ -246,6 +246,8 @@ function checkStamps(): void {
 }
 // Development only: `simulationStamps.unlock('konami')` in the console tries a sticker by hand.
 if (import.meta.env.DEV) (window as unknown as { simulationStamps: StampBook }).simulationStamps = stamps;
+// Development only: `simulationViewer()?.unlockBoardNow()` unlocks the Christmas hoverboard without hunting the snowmen.
+if (import.meta.env.DEV) (window as unknown as { simulationViewer: () => CharacterViewer | undefined }).simulationViewer = () => viewer;
 desktop.setApps(desktopApps({
   launch: (id) => desktop.launch(id),
   album: { stamps, host, reducedMotion: motionReduced, rustle: () => sounds.play('cloth') },
@@ -283,6 +285,14 @@ function laptopKey(): string {
   if (root.input === 'touch') return t('toast.keyTouch');
   if (root.input === 'gamepad') return root.gamepad === 'xbox' ? 'X' : '□';
   return 'L';
+}
+
+/** The key that calls the snow hoverboard: H, the pad's right stick (R3) or the touch button. */
+function boardKey(): string {
+  const root = document.documentElement.dataset;
+  if (root.input === 'touch') return t('toast.boardKeyTouch');
+  if (root.input === 'gamepad') return 'R3';
+  return 'H';
 }
 
 const HINT_TEXT: Record<HintId, () => string> = {
@@ -431,6 +441,7 @@ function mount(): void {
     movement: (state) => { if (live()) updateMovement(state); },
     run: (on) => { if (live()) touchControls.setRunning(on); },
     laptop: (open) => { if (live()) onLaptop(open); },
+    board: () => { if (live()) toasts.show({ id: 'board', text: t('toast.board', { key: boardKey() }), icon: 'jump', duration: 9 }); },
   }, {
     modelId: 'v4rig', view: 'three-quarter', light: LIGHT, wireframe: false, scene: 'room',
     quality: preferences.quality, reducedMotion: motionReduced(), cameraMode: camera, spawn: SPAWN, sounds, touch, halloween, christmas, likes,

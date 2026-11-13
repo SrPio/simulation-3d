@@ -146,6 +146,11 @@ export const CHRISTMAS_GRAFFITI: Readonly<Record<string, Partial<GraffitiSpot>>>
 export const CHRISTMAS_EXTRA: readonly GraffitiSpot[] = [
   { id: 'ground-christmas', text: { es: '¡FELIZ\nNAVIDAD!', en: 'MERRY\nCHRISTMAS!' }, style: 'spray', at: [8.4, 'ground', 4.6], face: 'up', width: 4.2, tilt: 5, color: C.red, seed: 753 },
   { id: 'ground-candycane', symbol: 'candycane', style: 'spray', at: [11.6, 'ground', 5.3], face: 'up', width: 0.9, tilt: -12, color: C.red, seed: 757 },
+  // The hint to the hoverboard, on the way from the start to the first snowman.
+  {
+    id: 'ground-snowmen', text: { es: '¿Y SI DESTRUYES TODOS\nLOS MUÑECOS DE NIEVE?', en: 'WHAT IF YOU SMASH\nEVERY SNOWMAN?' },
+    style: 'spray', at: [3.7, 'ground', 5.0], face: 'up', width: 3.6, tilt: -4, color: '#2f6fd6', seed: 761,
+  },
 ];
 
 /** The spots dressed for Christmas (see CHRISTMAS_GRAFFITI), and the ones only painted then (CHRISTMAS_EXTRA). */

@@ -80,6 +80,9 @@ SNOWBALL_RADIUS = 0.11
 SLEIGH = {'width': 1.16, 'side': 0.86, 'seat': 0.6}  # body width, where the hands rest, seat top
 # The two snow thrusters: how far out of the middle, their front end, height of their axis, length and radius.
 THRUSTER = {'out': 0.78, 'front': -0.2, 'height': 0.46, 'length': 1.05, 'radius': 0.13}
+# The snow hoverboard (unlocked by destroying every snowman): deck length and width, thickness, how high the nose and
+# tail kick up, how far each foot stands from the middle, and the hover pads' radius and distance from the middle.
+HOVERBOARD = {'length': 1.4, 'width': 0.5, 'thick': 0.055, 'kick': 0.09, 'feet': 0.33, 'pad': 0.11, 'pads': 0.4}
 
 
 def three(x, y, z):
@@ -226,6 +229,8 @@ def materials():
         'board': m('CountdownWood', (0.5, 0.03, 0.05), 0.6),
         'boardFace': m('CountdownFace', (0.05, 0.12, 0.08), 0.8),
         'plinth': m('XmasPlinth', (0.25, 0.1, 0.06), 0.8),
+        'hoverGrip': m('HoverGrip', (0.16, 0.42, 0.72), 0.85),
+        'hoverBelly': m('HoverBelly', (0.9, 0.93, 0.98), 0.4),
     }
 
 
@@ -1132,6 +1137,91 @@ def build_sleigh(root, m):
     return holder, fuel
 
 
+def build_hoverboard(root, m):
+    """The snow hoverboard in its own frame: origin on the middle of the deck's top, nose towards -Y (three.js +Z).
+    A deck rounded at both ends with the nose and tail kicked up, ice-blue grip with a white snowflake between the feet,
+    a red rim, and two glowing pads underneath. `Hoverboard_Foot_<front|back>` mark where the soles stand,
+    `Hoverboard_Pad_<i>` the pads' middles (where the snow sprays from)."""
+    b = HOVERBOARD
+    half, width, thick, kick = b['length'] / 2, b['width'] / 2, b['thick'], b['kick']
+    holder = room.anchor('ChristmasHoverboard', (0, 0, 0), root, 0.0, length=b['length'], width=b['width'])
+    flat = half - width  # the straight middle between the rounded ends
+
+    def top(y):
+        """Height of the deck's top: flat in the middle, curving up past the feet."""
+        past = max(0.0, abs(y) - (b['feet'] + 0.06)) / (half - b['feet'] - 0.06)
+        return kick * past ** 2
+
+    def side(y):
+        """Half width across at y: round at the ends."""
+        out = max(0.0, abs(y) - flat)
+        return width * math.sqrt(max(0.0, 1 - (out / width) ** 2))
+
+    rows = 12
+    cols = 2
+    ys = [-half + 2 * half * (0.5 - 0.5 * math.cos(math.pi * k / rows)) for k in range(rows + 1)]
+    bm = bmesh.new()
+    grid_top, grid_bottom = [], []
+    for y in ys:
+        w = max(side(y), 0.004)
+        grid_top.append([bm.verts.new((-w + 2 * w * c / cols, y, top(y))) for c in range(cols + 1)])
+        grid_bottom.append([bm.verts.new((-w + 2 * w * c / cols, y, top(y) - thick)) for c in range(cols + 1)])
+    for r in range(rows):
+        for c in range(cols):
+            bm.faces.new((grid_top[r][c], grid_top[r][c + 1], grid_top[r + 1][c + 1], grid_top[r + 1][c])).material_index = 0
+            bm.faces.new((grid_bottom[r][c], grid_bottom[r + 1][c], grid_bottom[r + 1][c + 1], grid_bottom[r][c + 1])).material_index = 1
+    # The rim round the edge.
+    edge_top = [row[0] for row in grid_top] + [grid_top[-1][c] for c in range(1, cols + 1)] + [row[-1] for row in reversed(grid_top[:-1])] + [grid_top[0][c] for c in range(cols - 1, 0, -1)]
+    edge_bottom = [row[0] for row in grid_bottom] + [grid_bottom[-1][c] for c in range(1, cols + 1)] + [row[-1] for row in reversed(grid_bottom[:-1])] + [grid_bottom[0][c] for c in range(cols - 1, 0, -1)]
+    for k in range(len(edge_top)):
+        n = (k + 1) % len(edge_top)
+        if edge_top[k] is edge_top[n]:
+            continue
+        try:
+            bm.faces.new((edge_top[k], edge_bottom[k], edge_bottom[n], edge_top[n])).material_index = 2
+        except ValueError:
+            pass
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
+    mesh_object('ChristmasHoverboard_Deck', finish('ChristmasHoverboard_Deck', bm, [m['hoverGrip'], m['hoverBelly'], m['sleighRed']], 35), holder)
+    # A snowflake on the grip between the feet: three crossed bars with little branches, flat quads facing up (kept out
+    # of `finish`, which could turn a lone flat face over).
+    bm = bmesh.new()
+    lift = 0.004
+
+    def flat_bar(a, b, half_width):
+        d = (b - a).normalized()
+        p = Vector((-d.y, d.x, 0)) * half_width
+        up = Vector((0, 0, lift))
+        bm.faces.new([bm.verts.new(c + up) for c in (a - p, b - p, b + p, a + p)])
+
+    arm = width * 0.78
+    for k in range(3):
+        a = k * math.pi / 3
+        d = Vector((math.cos(a), math.sin(a), 0))
+        p = Vector((-d.y, d.x, 0))
+        flat_bar(-d * arm, d * arm, 0.012)
+        for s in (-1, 1):
+            base = d * s * arm * 0.6
+            for t in (-1, 1):
+                flat_bar(base, base + (d * s + p * t).normalized() * arm * 0.28, 0.008)
+    mesh_object('ChristmasHoverboard_Flake', proto_mesh('ChristmasHoverboard_Flake', bm, [m['white']]), holder)
+    # The two hover pads under the deck: a metal cup with a glowing disc underneath.
+    bm = bmesh.new()
+    for i, y in enumerate((-b['pads'], b['pads'])):
+        z = top(y) - thick
+        rings = lathe(bm, [(0.0, 0.0), (0.0, b['pad'] * 1.15), (-0.035, b['pad']), (-0.045, b['pad'] * 0.85), (-0.045, 0.0)], 10, 0)
+        verts = {v for ring in rings for v in ring}
+        for face in {f for v in verts for f in v.link_faces}:
+            if face.calc_center_median().z < -0.04:
+                face.material_index = 1
+        bmesh.ops.translate(bm, verts=list(verts), vec=Vector((0, y, z)))
+        room.anchor(f'Hoverboard_Pad_{i}', (0, y, z - 0.045), holder, 0.0, pad=i)
+    mesh_object('ChristmasHoverboard_Pads', finish('ChristmasHoverboard_Pads', bm, [m['metal'], m['glow']], 40), holder)
+    for side_name, y in (('front', -b['feet']), ('back', b['feet'])):
+        room.anchor(f'Hoverboard_Foot_{side_name}', (0, y, top(y)), holder, 0.0, foot=side_name)
+    return holder
+
+
 # ------------------------------------------------------------------ build
 
 def build(root, head):
@@ -1186,6 +1276,7 @@ def build(root, head):
     tree, centre, crown = head
     build_hat(root, m, tree, centre, crown)
     build_sleigh(root, m)
+    build_hoverboard(root, m)
 
     # The library.
     mesh_object('Christmas_Pin', christmas_pin(m), library)

@@ -54,7 +54,8 @@ export const RULES: Record<string, (state: Snapshot, progress: AchievementProgre
   konami: (s) => count(s.konami) >= 1,
   heavyweight: (s) => bagSwing(s.bags) >= GOALS.bagSwing && count(s.strikePower) >= GOALS.strikePower,
   liftoff: (s) => count(s.chairJumps) >= 1,
-  tape: (s) => count(s.tapes) >= 1,
+  // Christmas: every snowman destroyed unlocks the snow hoverboard (data-board leaves 'locked').
+  hoverboard: (s) => s.board !== undefined && s.board !== 'locked',
   splinters: (s) => count(s.broken) >= 1,
   festive: (s) => s.halloween === 'on' || s.christmas === 'on',
 };

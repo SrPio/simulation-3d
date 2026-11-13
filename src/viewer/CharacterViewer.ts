@@ -10,7 +10,7 @@ import { QUALITY, defaultQuality, nextPixelRatio, ratioRange, type QualityId } f
 import { mergeSkinnedMeshes, mergeStaticMeshes } from '../scene/mergeStatic.ts';
 import {
   CHARACTER_RADIUS, CLIP_ALTERNATIVES, CharacterController, DEFAULT_GAIT_CLIPS, JUMP, RUN_CLIP_SPEED, STRIKE_CHARGE, STRIKE_MIN_POWER, STRIKES,
-  THROW_CLIP, THROW_HAND, THROW_RELEASE, WALK_CLIP_SPEED, throwDirection, throwSpeed, WALK_SPEED, strikeCharge, strikeLaunch, strikePower, type Gait, type Locomotion, type StrikeKind,
+  THROW_CLIP, THROW_HAND, THROW_RELEASE, WALK_CLIP_SPEED, RUN_SPEED, throwDirection, throwSpeed, WALK_SPEED, strikeCharge, strikeLaunch, strikePower, type Gait, type Locomotion, type StrikeKind,
 } from '../character/CharacterController';
 import { getLanguage, onLanguage, t } from '../core/i18n.ts';
 import { KeyboardInput, type HoldAction, type PressAction } from '../input/KeyboardInput';
@@ -59,6 +59,10 @@ import { SNOWFALL, SnowFall } from '../scene/SnowFall.ts';
 import { SnowGround } from '../scene/SnowGround.ts';
 import { SnowPlay } from '../scene/SnowPlay.ts';
 import { CountdownBoard } from '../scene/CountdownBoard.ts';
+import { BOARD, STANCE_TURN, boardAt, boardJump, boardSpeed, boardStep, deckHeight, hopFraction, type BoardState, type BoardWorld } from '../world/boardDrive.ts';
+import { BOARD_BONES, poseBoard } from '../character/boardPose.ts';
+import { SnowmenHunt } from '../world/snowmenHunt.ts';
+import { readBoardUnlocked, saveBoardUnlocked } from '../core/hoverboard.ts';
 import { printSpot, snowAt, type BareGround } from '../world/snowPrints.ts';
 import { pompomAt, pompomStep, type PompomState } from '../character/pompom.ts';
 import { HatTail, type TailBinding } from '../character/hatTail.ts';
@@ -150,6 +154,8 @@ type ViewerEvents = {
   progress?: (fraction: number) => void;
   /** The laptop in use finished opening (true) or closing (false). */
   laptop?: (open: boolean, place: LaptopPlace) => void;
+  /** Christmas: every snowman was destroyed and the snow hoverboard is unlocked (once, when it happens). */
+  board?: () => void;
 };
 
 const LOCOMOTION = new Set(['idle', 'walk', 'run', 'jump']);
@@ -185,6 +191,8 @@ function openLink(href: string): void {
  * off the sack.
  */
 const XMAS = { every: 0.55, back: 1.6, up: 2.2 } as const;
+const UP = new Vector3(0, 1, 0);
+type BoardPhase = 'locked' | 'ready' | 'mounting' | 'riding' | 'dismounting';
 /**
  * Christmas: the sleigh's footprint round its base (m): to each side (its thrusters included), ahead to the curl of its
  * runners and behind to the end of its thrusters (create_christmas.py SLEIGH and THRUSTER).
@@ -367,6 +375,25 @@ export class CharacterViewer {
   private countdownAt = 0;
   /** Christmas: snowman balls drawn hidden (crumbled into snow). */
   private crumbledShown = new Set<number>();
+  /**
+   * Christmas: the snow hoverboard. Locked until every snowman is destroyed (`hunt`), then H (the pad's R3, the touch
+   * button) jumps on it and off again. `boardTime` counts through the jump clip while getting on or off; `boardFrom` is
+   * the character's facing when it jumped; `boardWeight` how much of the stance pose holds.
+   */
+  private hunt?: SnowmenHunt;
+  private board?: { object: Object3D; front: Object3D; back: Object3D; pads: Object3D[] };
+  private boardPhase: BoardPhase = 'locked';
+  private boardPopped = false;
+  private boardState?: BoardState;
+  private boardTime = 0;
+  private boardFrom = 0;
+  private boardWeight = 0;
+  private boardLean: Lean = restLean();
+  private boardTrail?: Vector3[];
+  private boardWasAirborne = false;
+  /** Bones the stance pose turned (and the pelvis it moved) last frame, put back before posing again (like `riderBones`). */
+  private readonly boardBones = new Map<Object3D, { clip: Quaternion; posed: Quaternion }>();
+  private boardPelvis?: { bone: Object3D; clip: Vector3; posed: Vector3 };
   /** halloween.glb split up while the Halloween dress-up is on (its world joins the outside). */
   private dress?: HalloweenDress;
   /** Halloween: the thrown pumpkins, their shards and candies; the bats, ghosts and mist. */
@@ -1098,6 +1125,7 @@ export class CharacterViewer {
     }
     this.host.dataset.gifts = '0';
     this.host.dataset.snowmen = 'standing';
+    this.setupBoard();
   }
 
   /** How many flakes fall for the current quality and motion setting. */
@@ -1173,6 +1201,8 @@ export class CharacterViewer {
           this.pieces.setHidden(index, false);
         }
       }
+      // Every snowman destroyed (all three balls crumbled, over the whole visit) unlocks the hoverboard.
+      if (this.hunt && this.hunt.update((index) => physics.crumbled(index)).length) this.host.dataset.snowmenDown = `${this.hunt.count}/${this.hunt.total}`;
       const { loose } = physics.snowmen;
       const state = crumbled ? `crumbled:${crumbled}` : loose ? `broken:${loose}` : 'standing';
       if (this.host.dataset.snowmen !== state) this.host.dataset.snowmen = state;
@@ -1372,6 +1402,15 @@ export class CharacterViewer {
     }
     if (action === 'reset') {
       if (this.ready) this.resetPosition();
+      return;
+    }
+    if (action === 'board') {
+      if (this.ready) this.toggleBoard();
+      return;
+    }
+    if (this.onBoard) {
+      // On the hoverboard Space hops it; nothing else (seats, the laptop, throws, blows) until getting off.
+      if (action === 'jump' && this.boardPhase === 'riding' && this.boardState && boardJump(this.boardState)) this.sound('whoosh');
       return;
     }
     if (action === 'jump' && this.riding) {
@@ -1844,6 +1883,7 @@ export class CharacterViewer {
    */
   placeCharacter(x: number, z: number, yaw: number): void {
     if (!this.controller || this.disposed) return;
+    this.endBoard();
     this.throwing = false;
     this.cancelStrike();
     this.interaction?.reset();
@@ -1874,6 +1914,7 @@ export class CharacterViewer {
   /** Back to the spawn point, standing idle. */
   resetPosition(): void {
     if (!this.controller || this.disposed) return;
+    this.endBoard();
     this.throwing = false;
     this.cancelStrike();
     this.clearThrown();
@@ -2378,6 +2419,295 @@ export class CharacterViewer {
     for (const [bone, entry] of this.riderBones) entry.posed.copy(bone.quaternion);
   }
 
+  /** Christmas: the hoverboard from christmas.glb, the snowmen to destroy, and whether it is already unlocked this season. */
+  private setupBoard(): void {
+    const object = this.xmas?.hoverboard;
+    const front = object?.getObjectByName('Hoverboard_Foot_front');
+    const back = object?.getObjectByName('Hoverboard_Foot_back');
+    if (!object || !front || !back) return;
+    const pads = [0, 1].map((i) => object.getObjectByName(`Hoverboard_Pad_${i}`)).filter((pad): pad is Object3D => !!pad);
+    object.removeFromParent();
+    // Kept in the scene, tiny, so its shaders compile with the rest; it grows when it is called.
+    object.scale.setScalar(1e-4);
+    this.scene.add(object);
+    this.board = { object, front, back, pads };
+    this.hunt = new SnowmenHunt(this.pieceList.flatMap((piece, index) => piece.prop === 'snowman' && piece.joint ? [{ index, joint: piece.joint }] : []));
+    this.hunt.onAll = () => this.unlockBoard();
+    this.setBoardPhase(readBoardUnlocked(boardStorage()) ? 'ready' : 'locked');
+    this.host.dataset.snowmenDown = `0/${this.hunt.total}`;
+  }
+
+  private setBoardPhase(phase: BoardPhase): void {
+    this.boardPhase = phase;
+    if (this.host.dataset.board !== phase) this.host.dataset.board = phase;
+  }
+
+  /** On the board (getting on, riding or getting off): the board, not the keyboard controller, moves the character. */
+  private get onBoard(): boolean {
+    return this.boardPhase === 'mounting' || this.boardPhase === 'riding' || this.boardPhase === 'dismounting';
+  }
+
+  /** The last snowman crumbled: the board is the season's prize. */
+  private unlockBoard(): void {
+    if (this.boardPhase !== 'locked') return;
+    saveBoardUnlocked(boardStorage());
+    this.setBoardPhase('ready');
+    this.sound('jingle');
+    this.events.board?.();
+  }
+
+  /** Development and recording: unlock the board without hunting the snowmen. */
+  unlockBoardNow(): void {
+    this.unlockBoard();
+  }
+
+  /** H: jump onto the board (it appears under the feet in the air) or off it (it shrinks away). */
+  private toggleBoard(): void {
+    const controller = this.controller;
+    const interaction = this.interaction;
+    if (!this.board || !controller || !interaction || !this.outsideData) return;
+    const jumpClip = this.gaitClip('jump');
+    if (this.boardPhase === 'riding') {
+      const state = this.boardState!;
+      if (state.airborne) return;
+      this.boardTime = 0;
+      this.boardPopped = false;
+      this.setBoardPhase('dismounting');
+      this.selectClip(jumpClip, false);
+      this.placeOnBoard(1);
+      this.sound('whoosh');
+      return;
+    }
+    if (this.boardPhase !== 'ready' || interaction.phase !== 'free' || this.riding || controller.jumping || this.throwing || this.strike) return;
+    if (!this.isLocomotion(this.activeClip) || !this.actions.has(jumpClip)) return;
+    this.syncGait();
+    const data = this.outsideData;
+    const ground = groundAt(controller.position, data) - data.groundY;
+    this.boardState = boardAt(controller.position.x, controller.position.z, controller.yaw, controller.speed, ground);
+    this.boardTime = 0;
+    this.boardPopped = false;
+    this.boardFrom = controller.yaw;
+    this.boardLean = restLean();
+    this.boardTrail = undefined;
+    this.board.object.scale.setScalar(1e-4);
+    controller.speed = 0;
+    this.driving = true;
+    if (!this.playing) this.setPlaying(true);
+    this.setBoardPhase('mounting');
+    this.selectClip(jumpClip, false);
+    this.placeOnBoard(0);
+    this.sound('cloth');
+  }
+
+  /** Off the board at once (Restablecer, the recording mode placing the character): the board goes and the character stands. */
+  private endBoard(): void {
+    if (!this.onBoard) return;
+    this.setBoardPhase('ready');
+    this.board?.object.scale.setScalar(1e-4);
+    this.boardWeight = 0;
+    this.options.sounds?.loop('hover', 0);
+  }
+
+  /** What the board collides with (the character's own boxes) and the ground under it (ramps, the room's step). */
+  private boardWorld(): BoardWorld {
+    const data = this.outsideData!;
+    return {
+      boxes: [...(this.roomData?.boxes ?? []), ...data.boxes, this.chairBlock],
+      floor: data.bounds,
+      ground: (x: number, z: number) => groundAt({ x, z }, data) - data.groundY,
+    };
+  }
+
+  /**
+   * Every frame on the board. Getting on: the jump clip plays in place, the board grows under the feet at take-off and
+   * rises to its hover height, the character turns across it and lands on it. Riding: the camera-relative direction
+   * steers it (boardDrive.ts), Space hops. Getting off: the jump clip again, the board shrinks away and the character
+   * lands facing where it went, carrying some of the speed.
+   */
+  private driveBoard(delta: number): void {
+    const state = this.boardState;
+    const controller = this.controller;
+    const board = this.board;
+    if (!state || !controller || !board || !this.outsideData || !this.controls) return;
+    const world = this.boardWorld();
+    this.setMovement('ready', this.noticeText());
+    this.host.dataset.interaction = 'free';
+    this.host.dataset.prompt = 'none';
+    this.nearSeat = false;
+    if (this.boardPhase === 'riding') {
+      const intent = this.keyboard?.intent ?? { forward: 0, right: 0, run: false };
+      const direction = CharacterController.direction(intent, this.controls.getAzimuthalAngle());
+      const push = Math.min(Math.hypot(intent.forward, intent.right), 1);
+      const impact = boardStep(state, { x: direction.x * push, z: direction.z * push }, delta, world);
+      if (impact > 2) this.sound('crash', impact);
+      if (this.boardWasAirborne && !state.airborne) this.sound('stepSnow', 3);
+      this.boardWasAirborne = state.airborne;
+      this.placeOnBoard(1);
+      this.host.dataset.locomotion = 'board';
+    } else {
+      // Getting on or off: the board drifts on with what speed it had and slows down.
+      this.boardTime += delta;
+      boardStep(state, { x: 0, z: 0 }, delta, world);
+      const spec = controller.jumpSpec;
+      const hop = hopFraction(this.boardTime, spec.duration, spec.air);
+      const takeOff = spec.air[0] * spec.duration;
+      const landing = spec.air[1] * spec.duration;
+      if (this.boardPhase === 'mounting') {
+        const grow = Math.min(Math.max((this.boardTime - takeOff * 0.6) / 0.2, 0), 1);
+        board.object.scale.setScalar(Math.max(1e-4, grow * (2 - grow)));
+        if (grow > 0 && !this.boardPopped) {
+          this.boardPopped = true;
+          this.sound('whoosh');
+          this.boardPuff(10);
+        }
+        this.placeOnBoard(hop);
+        if (this.boardTime >= landing) {
+          this.setBoardPhase('riding');
+          this.boardWasAirborne = false;
+          this.selectClip('idle');
+          this.placeOnBoard(1);
+          this.sound('stepSnow', 3);
+        }
+      } else {
+        const shrink = Math.min(Math.max((this.boardTime - takeOff) / 0.25, 0), 1);
+        board.object.scale.setScalar(Math.max(1e-4, 1 - shrink * shrink));
+        if (shrink > 0 && !this.boardPopped) {
+          this.boardPopped = true;
+          this.boardPuff(12);
+        }
+        this.placeOnBoard(1 - hop);
+        if (this.boardTime >= landing) {
+          this.endBoard();
+          // Back on foot where the board was, facing where it went, keeping a little of its speed.
+          controller.position = { x: state.x, z: state.z };
+          controller.yaw = state.heading;
+          controller.speed = Math.min(boardSpeed(state) * 0.5, RUN_SPEED);
+          this.selectClip('idle');
+          this.applyController();
+          this.driving = true;
+          return;
+        }
+      }
+      this.host.dataset.locomotion = 'jump';
+    }
+    // The character's own controller follows, so signs, zones and getting off start from here.
+    controller.position = { x: state.x, z: state.z };
+    controller.yaw = state.heading;
+    const position = `${state.x.toFixed(2)},${state.z.toFixed(2)}`;
+    if (this.host.dataset.position !== position) this.host.dataset.position = position;
+    this.boardSnow(state);
+  }
+
+  /**
+   * Place the board and the character on it: `on` 0 has the feet on the ground and the character facing as it did
+   * on foot, 1 has them on the deck, standing across it (left foot towards the nose).
+   */
+  private placeOnBoard(on: number): void {
+    const state = this.boardState;
+    const board = this.board;
+    const model = this.model;
+    if (!state || !board || !model || !this.outsideData) return;
+    const ground = this.outsideData.groundY + state.y;
+    const deck = ground + deckHeight(state, this.reducedMotion);
+    board.object.position.set(state.x, deck, state.z);
+    // Heading about +Y, then the bank about the nose: the toe side (the rider's front) goes down in a turn to the right.
+    board.object.quaternion.setFromAxisAngle(UP, state.heading).multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), -state.bank));
+    // Getting on it turns from the facing on foot to across the board; getting off, from across it to the heading.
+    const foot = this.boardPhase === 'dismounting' ? state.heading : this.boardFrom;
+    const across = state.heading + STANCE_TURN;
+    let turn = across - foot;
+    turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+    model.position.set(state.x, ground + (deck - ground) * on, state.z);
+    model.quaternion.setFromAxisAngle(UP, foot + turn * on);
+    this.elevation = model.position.y;
+  }
+
+  /** A puff of snow round the board as it appears or goes. */
+  private boardPuff(count: number): void {
+    const state = this.boardState;
+    if (!state || !this.snowPlay || this.reducedMotion || !this.outsideData) return;
+    this.snowPlay.puff({ x: state.x, y: this.outsideData.groundY + state.y + 0.1, z: state.z }, count, 0.08, { x: state.vx * 0.3, y: 0, z: state.vz * 0.3 }, 1.8);
+  }
+
+  /** The board leaves one trail in the snow as wide as its deck, and blows a little snow back while it moves over it. */
+  private boardSnow(state: BoardState): void {
+    const board = this.board;
+    if (!board || !this.snowGround || !this.outsideData) return;
+    // The trail starts just inside the tail, so it is left behind the board rather than under it.
+    const ahead = -Math.max(0, (Number(board.object.userData.length) || 1.4) / 2 - 0.12);
+    const tip = new Vector3(state.x + Math.sin(state.heading) * ahead, 0, state.z + Math.cos(state.heading) * ahead);
+    const now = [tip];
+    const speed = boardSpeed(state);
+    if (this.boardPhase === 'riding' && !state.airborne && speed > 0.4 && this.boardTrail?.[0]) {
+      const last = this.boardTrail[0];
+      const dx = tip.x - last.x;
+      const dz = tip.z - last.z;
+      const length = Math.hypot(dx, dz);
+      const middle = { x: (tip.x + last.x) / 2, z: (tip.z + last.z) / 2 };
+      // The stamp's edge is soft over its outer quarter: a little wider than the deck so the solid part matches it.
+      const width = (Number(board.object.userData.width) || 0.5) * 1.1;
+      if (length >= 0.02 && length <= 3 && snowAt(middle, this.bare)) this.snowGround.stamp('stroke', middle.x, middle.z, Math.atan2(dx, dz), width, length + 0.08);
+      // A little snow blown up behind the board at speed.
+      if (this.snowPlay && !this.reducedMotion && speed > 3 && snowAt({ x: state.x, z: state.z }, this.bare) && Math.random() < speed / 40) {
+        const at = { x: state.x - state.vx * 0.08, y: this.outsideData.groundY + state.y + 0.05, z: state.z - state.vz * 0.08 };
+        this.snowPlay.puff(at, 3, 0.05, { x: -state.vx * 0.15, y: 0.6, z: -state.vz * 0.15 }, 1.2);
+      }
+    }
+    this.boardTrail = now;
+  }
+
+  /**
+   * The rider over the idle clip: standing across the board like a skateboarder (boardPose.ts), leaning over the toes or
+   * heels into the turns and towards the nose when speeding up, the knees taking the landings. It blends in once the
+   * character lands on the board and out as it jumps off.
+   */
+  private poseBoardRider(delta: number): void {
+    const model = this.model;
+    const state = this.boardState;
+    for (const [bone, { clip, posed }] of this.boardBones) if (bone.quaternion.equals(posed)) bone.quaternion.copy(clip);
+    this.boardBones.clear();
+    const pelvis = this.boardPelvis;
+    if (pelvis && pelvis.bone.position.equals(pelvis.posed)) pelvis.bone.position.copy(pelvis.clip);
+    this.boardPelvis = undefined;
+    const target = this.boardPhase === 'riding' ? 1 : 0;
+    this.boardWeight += (target - this.boardWeight) * (1 - Math.exp(-delta * (target ? 9 : 16)));
+    if (target === 0 && this.boardWeight < 0.01) this.boardWeight = 0;
+    if (!model || !state || !this.board || this.boardWeight <= 0) return;
+    const speed = boardSpeed(state);
+    const clamp = (value: number) => Math.max(-0.3, Math.min(0.3, value));
+    // Turning left (towards the rider's heels) leans back; speeding up leans towards the nose (the rider's left).
+    leanStep(this.boardLean, { pitch: clamp(-state.turn * speed * 0.05), roll: clamp(state.accel * 0.035) }, delta);
+    const touched = BOARD_BONES.map((name) => model.getObjectByName(name)).filter((bone): bone is Object3D => !!bone);
+    for (const bone of touched) this.boardBones.set(bone, { clip: bone.quaternion.clone(), posed: new Quaternion() });
+    const bone = model.getObjectByName('pelvis');
+    if (bone) this.boardPelvis = { bone, clip: bone.position.clone(), posed: new Vector3() };
+    this.board.object.updateMatrixWorld(true);
+    const forward = new Vector3(Math.sin(state.heading), 0, Math.cos(state.heading));
+    poseBoard(model, {
+      front: this.board.front.getWorldPosition(new Vector3()),
+      back: this.board.back.getWorldPosition(new Vector3()),
+      tilt: new Quaternion().setFromAxisAngle(forward, -state.bank),
+      lean: this.boardLean,
+      dip: Math.max(-0.03, Math.min(0.12, state.dip)),
+      weight: this.boardWeight,
+    });
+    for (const [part, entry] of this.boardBones) entry.posed.copy(part.quaternion);
+    if (this.boardPelvis) this.boardPelvis.posed.copy(this.boardPelvis.bone.position);
+  }
+
+  /** The hoverboard's hum: louder and higher with speed, quiet in the air. */
+  private updateBoardSound(): void {
+    const sounds = this.options.sounds;
+    const state = this.boardState;
+    if (!sounds) return;
+    if (!this.onBoard || !state) {
+      sounds.loop('hover', 0);
+      return;
+    }
+    const speed = Math.min(boardSpeed(state) / BOARD.maxSpeed, 1);
+    sounds.loop('hover', this.boardPhase === 'riding' ? 0.25 + speed * 0.5 : 0.15, state.airborne ? 0.8 : speed);
+  }
+
   /** Half the soda drops in low quality or with reduced motion. */
   private nitroDensity(): number {
     return this.quality === 'low' || this.reducedMotion ? 0.5 : 1;
@@ -2510,9 +2840,11 @@ export class CharacterViewer {
   /** Feet step down onto the outside ground or up onto the room floor over a few frames, not in one jump. */
   private updateElevation(delta: number): void {
     if (!this.model || !this.outsideData) return;
-    if (this.riding) {
-      // On the office chair the seat carries the character (over ramps and through the air).
+    if (this.riding || this.onBoard) {
+      // On the office chair the seat carries the character (over ramps and through the air), on the hoverboard the board.
       this.elevation = this.model.position.y;
+      const carried = this.elevation.toFixed(2);
+      if (this.host.dataset.elevation !== carried) this.host.dataset.elevation = carried;
       return;
     }
     const target = groundAt({ x: this.model.position.x, z: this.model.position.z }, this.outsideData);
@@ -2526,9 +2858,11 @@ export class CharacterViewer {
   /** Piece physics, thrown laptops, the character's blob shadow outside the room, and the ground that follows the view. */
   private updateOutside(delta: number): void {
     if (!this.model || !this.outsideData || !this.shadows) return;
-    const lift = this.controller?.lift ?? 0;
     const { x, z } = this.model.position;
-    if (this.physics && this.physics.step(delta, { x, y: this.elevation + lift, z }, this.chairPusher)) {
+    // On the hoverboard the character's pusher sweeps from the ground under the board, so it knocks snowmen over too.
+    const ground = this.onBoard && this.boardState ? this.outsideData.groundY + this.boardState.y : undefined;
+    const lift = ground === undefined ? this.controller?.lift ?? 0 : Math.max(0, this.elevation - ground);
+    if (this.physics && this.physics.step(delta, { x, y: ground ?? this.elevation + lift, z }, this.chairPusher)) {
       this.pieces?.sync(this.physics.bodies);
       this.syncFlaps();
       this.reportLetters();
@@ -3015,6 +3349,7 @@ export class CharacterViewer {
     if (paused) {
       this.options.sounds?.loop('rolling', 0);
       this.options.sounds?.loop('fizz', 0);
+      this.options.sounds?.loop('hover', 0);
     }
     this.resetDelta();
   }
@@ -3227,7 +3562,8 @@ export class CharacterViewer {
     }
     if (frame !== undefined) this.adaptResolution(frame);
     if (this.ready && this.room) {
-      if (this.interaction && this.interaction.phase !== 'free') this.driveInteraction(delta);
+      if (this.onBoard) this.driveBoard(delta);
+      else if (this.interaction && this.interaction.phase !== 'free') this.driveInteraction(delta);
       else this.drive(delta);
       this.updateCircuit(delta);
       // The chair moved after the rider was placed for this frame: put the rider back on its seat.
@@ -3245,6 +3581,7 @@ export class CharacterViewer {
       this.updateThrow();
       this.updateStrike(delta);
       this.poseRider(delta);
+      this.poseBoardRider(delta);
       if (this.fadeRemaining > 0) {
         this.fadeRemaining -= delta * this.speed;
         if (this.fadeRemaining <= 0) this.finishFade();
@@ -3256,6 +3593,7 @@ export class CharacterViewer {
       this.easeZoom(delta);
       if (this.cineOn && this.cine && this.model) this.cine.update(delta, this.model.position, this.facing(), this.reducedMotion);
       this.updateSounds(delta);
+      this.updateBoardSound();
     }
     this.controls?.update();
     this.areas?.update(delta);
@@ -3407,6 +3745,15 @@ function crosses(from: { x: number; z: number }, to: { x: number; z: number }, a
 
 /** The best lap is kept in this browser (blocked storage just forgets it). */
 const BEST_LAP_KEY = 'simulation-3d:best-lap';
+
+/** localStorage when it can be reached (the hoverboard's season mark). */
+function boardStorage(): Storage | undefined {
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
+}
 
 function readBestLap(): number | undefined {
   try {
