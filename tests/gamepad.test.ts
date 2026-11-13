@@ -26,6 +26,7 @@ test('pads are told apart by name and read through their layout', () => {
   assert.equal(ps.buttons.r2, 1, 'r2 from its axis');
   assert.equal(ps.buttons.l2, 0);
   assert.equal(ps.buttons.up, 1, 'up on the hat axis');
+  assert.equal(readPad({ ...firefox, buttons: buttons(14, [11]) }).buttons.r3, 1, 'R3 (the hoverboard) is its button 11');
 });
 
 /** A stand-in for the page input that records what the pad does. */
@@ -70,9 +71,11 @@ test('a plugged-in pad drives the page: presses, holds, the stick, the triggers 
   frame([1]);
   frame([10]);
   frame([8]);
+  frame([11]);
   frame();
-  // △/Y sits, □/X the laptop, R1 punches, L1 kicks, ○/B throws (held until let go), L3 switches running, Select resets.
-  assert.deepEqual(log.splice(0), ['press interact', 'press laptop', 'press punch', 'press kick', 'release punch', 'press throw', 'release kick', 'release throw', 'run', 'press reset']);
+  // △/Y sits, □/X the laptop, R1 punches, L1 kicks, ○/B throws (held until let go), L3 switches running, Select resets,
+  // R3 (a click on the right stick) gets on or off the Christmas hoverboard like H.
+  assert.deepEqual(log.splice(0), ['press interact', 'press laptop', 'press punch', 'press kick', 'release punch', 'press throw', 'release kick', 'release throw', 'run', 'press reset', 'press board']);
   frame([], [0.4, -1, 0, 0]);
   assert.ok(analog()!.forward > 0.9 && analog()!.right > 0 && analog()!.run, 'stick up is forward; full tilt runs');
   pad = { ...standard(), buttons: buttons(17).map((button, i) => (i === 7 ? { value: 0.6, pressed: true } : button)) };
