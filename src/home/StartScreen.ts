@@ -74,11 +74,21 @@ export function fillStep(shown: number, elapsed: number, dt: number, finish: num
 /** Width of the line round the head on screen (px): while it runs round loading, and once the head is hollow. */
 const LINE = { loading: 3, ready: 4 };
 
+/** Keys that never press START: modifiers on their own, Tab (moving the focus) and the browser's own keys. */
+const IGNORED_KEYS = new Set(['Shift', 'Control', 'Alt', 'AltGraph', 'Meta', 'OS', 'CapsLock', 'NumLock', 'ScrollLock', 'Tab', 'ContextMenu', 'Dead', 'Unidentified']);
+
+/** Whether a key press starts: any key except the ignored ones, F1–F12 and shortcuts held with Ctrl, Alt or Meta. */
+export function startsOnKey(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'altKey' | 'metaKey'>): boolean {
+  if (event.ctrlKey || event.altKey || event.metaKey) return false;
+  if (IGNORED_KEYS.has(event.key)) return false;
+  return !/^F\d{1,2}$/.test(event.key);
+}
+
 /**
  * The room page's loading screen: the character's head in profile (backwards cap and all) with a short bright line
  * running round its outline like a spinner while the scene loads. When everything is ready the whole outline lights up
- * and the head turns into a window of frosted, dark violet glass onto the room, with START inside (a click, Enter or
- * Space, or the gamepad); pressing it grows the hole until the outline leaves the screen while the glass clears.
+ * and the head turns into a window of frosted, dark violet glass onto the room, with START inside (a click, any key
+ * or the gamepad); pressing it grows the hole until the outline leaves the screen while the glass clears.
  */
 export class StartScreen {
   readonly root: HTMLDivElement;
@@ -163,12 +173,14 @@ export class StartScreen {
     parent.append(this.root);
     this.button.addEventListener('click', () => this.open(), { signal: this.abort.signal });
     window.addEventListener('resize', () => this.layout(this.grow), { signal: this.abort.signal });
-    // Enter or Space start too, wherever the focus is.
+    // Any key starts too, wherever the focus is (caught first and kept from the game, so the key that starts does not
+    // also walk, jump or open something).
     window.addEventListener('keydown', (event) => {
-      if (this.state !== 'ready' || event.repeat || (event.code !== 'Enter' && event.code !== 'NumpadEnter' && event.code !== 'Space')) return;
+      if (this.state !== 'ready' || event.repeat || !startsOnKey(event)) return;
       event.preventDefault();
+      event.stopImmediatePropagation();
       this.press();
-    }, { signal: this.abort.signal });
+    }, { signal: this.abort.signal, capture: true });
     this.layout();
     this.showProgress(0);
     const begin = performance.now();
@@ -264,7 +276,7 @@ export class StartScreen {
     this.line.style.strokeWidth = String(pixels / (this.placement().scale * grow));
   }
 
-  /** START: from the button, Enter or Space, or a gamepad button (the page calls this). */
+  /** START: from the button, any key, or a gamepad button (the page calls this). */
   press(): void {
     this.open();
   }

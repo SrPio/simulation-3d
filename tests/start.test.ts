@@ -3,7 +3,7 @@ import { statSync } from 'node:fs';
 import { test } from 'node:test';
 import { EXPECTED_BYTES } from '../src/core/loadAssets.ts';
 import { DOWNLOAD_SHARE, ProgressMeter } from '../src/core/loadProgress.ts';
-import { coverScale, easeIn, FILL, fillStep, finishSpeed, outlineCentre } from '../src/home/StartScreen.ts';
+import { coverScale, easeIn, FILL, fillStep, finishSpeed, outlineCentre, startsOnKey } from '../src/home/StartScreen.ts';
 import { ACTION_ICONS, HEAD_OUTLINE } from '../src/ui/silhouettes.ts';
 
 /** The points of an SVG path made of M/L/Z commands, one list per closed loop. */
@@ -110,4 +110,14 @@ test('the shown progress fills smoothly from 0 to 100 however fast the scene loa
   let shown = 0;
   for (let time = 0; time < 20000; time += 16) shown = fillStep(shown, time, 16, 0);
   assert.ok(shown > FILL.HOLD_AT && shown <= FILL.CREEP_MAX, 'never reaches 100 before the scene is ready');
+});
+
+test('any key presses START except modifiers, Tab, function keys and browser shortcuts', () => {
+  const key = (k: string, mods: Partial<Record<'ctrlKey' | 'altKey' | 'metaKey', boolean>> = {}) =>
+    startsOnKey({ key: k, ctrlKey: false, altKey: false, metaKey: false, ...mods });
+  for (const k of ['Enter', ' ', 'a', 'W', 'ArrowUp', 'Escape', '1', 'ñ', 'Backspace']) assert.ok(key(k), k);
+  for (const k of ['Shift', 'Control', 'Alt', 'Meta', 'Tab', 'CapsLock', 'F5', 'F12']) assert.ok(!key(k), k);
+  assert.ok(!key('r', { ctrlKey: true }), 'Ctrl+R reloads');
+  assert.ok(!key('i', { metaKey: true }));
+  assert.ok(!key('Tab', { altKey: true }));
 });
