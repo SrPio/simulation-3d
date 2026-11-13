@@ -1,0 +1,30 @@
+/* Friendly hints at the top of the page (src/home/Toasts.ts): one at a time, under the language bar. */
+.toasts {
+  position: fixed; z-index: 3; top: 64px; left: 50%; transform: translateX(-50%);
+  width: min(460px, calc(100vw - 32px)); pointer-events: none;
+  display: flex; flex-direction: column; align-items: center;
+}
+.toast {
+  pointer-events: auto; display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 10px 10px 10px 12px; border: 1px solid var(--edge); border-radius: 14px;
+  background: var(--panel); color: #f4eefa; backdrop-filter: blur(10px);
+  box-shadow: 0 10px 30px #00000066, 0 0 0 1px #ffffff08 inset;
+  animation: toast-in 0.34s cubic-bezier(0.2, 0.9, 0.3, 1.25) both;
+}
+.toast.is-leaving { animation: toast-out 0.28s ease-in both; }
+.toast-icon {
+  flex: none; display: grid; place-items: center; width: 48px; height: 48px; border-radius: 12px;
+  background: radial-gradient(circle at 50% 35%, #ffffff1f, transparent 70%), var(--key-top);
+  box-shadow: 0 3px 0 var(--key-shadow);
+}
+.toast-icon svg { width: 36px; height: 36px; fill: var(--accent); }
+.toast-text { flex: 1; margin: 0; font-size: 0.98rem; line-height: 1.3; }
+.toast-close {
+  flex: none; align-self: flex-start; width: 28px; height: 28px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--muted); font-size: 1.2rem; line-height: 1;
+}
+.toast-close:hover { background: #ffffff14; color: #fff; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-14px) scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(-10px) scale(0.97); } }
+html[data-reduced-motion='true'] .toast { animation: none; }
+:root[data-touch='true'] .toasts { top: 58px; }

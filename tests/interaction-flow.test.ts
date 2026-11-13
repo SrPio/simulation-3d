@@ -102,6 +102,8 @@ test('chair from the right: walk up, sit, open the desk laptop, type, and E clos
   const data = await room();
   const interaction = new InteractionController(data.seats, data.boxes, data.halfSize, CHARACTER_RADIUS);
   const chair = chairOf(data);
+  const events: string[] = [];
+  interaction.onLaptop = (open, place) => events.push(`${open ? 'open' : 'closed'}:${place}`);
   assert.ok(interaction.interact(near(data, 'right'), 0));
   assert.equal(interaction.phase, 'approaching');
   settle(interaction, 'seated', () => {
@@ -120,6 +122,7 @@ test('chair from the right: walk up, sit, open the desk laptop, type, and E clos
   assert.ok(frames / 60 <= LID_TIME + 0.05, `the lid just opens: ${frames / 60}s`);
   assert.equal(interaction.lid, 1);
   assert.equal(interaction.shown, 0, 'nothing appears on the lap at the chair');
+  assert.deepEqual(events, ['open:desk'], 'the desktop is told once the lid is fully open');
   assert.match(interaction.prompt(interaction.position), /L: cerrar/);
   assert.ok(interaction.interact(interaction.position, 0));
   assert.equal(interaction.state.stage, 'closing');
@@ -127,6 +130,7 @@ test('chair from the right: walk up, sit, open the desk laptop, type, and E clos
   assert.equal(interaction.laptop, 'none');
   assert.equal(interaction.lid, 0);
   assert.ok(same(interaction.position, sides(data).right), 'back out on the side used to sit down');
+  assert.deepEqual(events, ['open:desk', 'closed:desk'], 'and once it has closed again');
 });
 
 test('chair from the left: if that side gets blocked while seated, standing up leaves by the other one', async () => {

@@ -52,6 +52,8 @@ export class InteractionController {
   readonly instant = new Set<Seat>();
   /** Called when the character pops into an instant seat (true) or out of it (false). */
   onInstant?: (inside: boolean) => void;
+  /** Called when the laptop in use has finished opening (true) or closing (false). */
+  onLaptop?: (open: boolean, place: LaptopPlace) => void;
   private entry?: Point2;
   private stalled = 0;
   private moving = false;
@@ -221,13 +223,18 @@ export class InteractionController {
     if (stage === 'opening') {
       if (lap && this.shown < 1) this.shown = Math.min(1, this.shown + step / APPEAR_TIME);
       else this.lid = Math.min(1, this.lid + step / LID_TIME);
-      if (this.lid >= 1) this.state.laptopDone();
+      if (this.lid >= 1) {
+        this.state.laptopDone();
+        this.onLaptop?.(true, this.laptop);
+      }
     } else if (stage === 'closing') {
       if (this.lid > 0) this.lid = Math.max(0, this.lid - step / LID_TIME);
       else if (lap && this.shown > 0) this.shown = Math.max(0, this.shown - step / APPEAR_TIME);
       if (this.lid <= 0 && (!lap || this.shown <= 0)) {
+        const place = this.laptop;
         this.laptop = 'none';
         this.state.laptopDone();
+        this.onLaptop?.(false, place);
       }
     }
   }

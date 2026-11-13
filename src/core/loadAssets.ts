@@ -217,17 +217,34 @@ async function readBody(response: Response, file: string, progress?: LoadProgres
   return data.buffer;
 }
 
+/**
+ * Each file's bytes as downloaded, so a second scene (the laptop's minigame) parses its own copy without fetching it
+ * again. Kept for the page's life: the files are few and the minigame needs them again on every launch.
+ */
+const downloaded = new Map<string, ArrayBuffer>();
+
+/** A model file parsed again from its downloaded bytes (fetched only if the page has not loaded it yet). */
+export function loadModelFile(file: string, signal: AbortSignal): Promise<GLTF> {
+  return loadGlb(file, 'ROOM', signal);
+}
+
 async function loadGlb(file: string, kind: 'MODEL' | 'ROOM', signal: AbortSignal, progress?: LoadProgress): Promise<GLTF> {
   signal.throwIfAborted();
   const url = new URL(`${import.meta.env.BASE_URL}${file}`, window.location.href);
-  const response = await fetch(url, { signal });
-  if (!response.ok) throw new Error(`${kind}_HTTP_${response.status}`);
-  const data = await readBody(response, file, progress);
-  signal.throwIfAborted();
-  if (data.byteLength < 12 || new DataView(data).getUint32(0, true) !== 0x46546c67) {
-    throw new Error('MODEL_INVALID_GLB');
+  let data = downloaded.get(file);
+  if (data) progress?.(data.byteLength, data.byteLength);
+  else {
+    const response = await fetch(url, { signal });
+    if (!response.ok) throw new Error(`${kind}_HTTP_${response.status}`);
+    data = await readBody(response, file, progress);
+    signal.throwIfAborted();
+    if (data.byteLength < 12 || new DataView(data).getUint32(0, true) !== 0x46546c67) {
+      throw new Error('MODEL_INVALID_GLB');
+    }
+    downloaded.set(file, data);
   }
-  const gltf = await new GLTFLoader().parseAsync(data, new URL('.', url).href);
+  // The parser gets its own copy: the cached bytes stay whole for the next parse.
+  const gltf = await new GLTFLoader().parseAsync(data.slice(0), new URL('.', url).href);
   if (signal.aborted) {
     disposeObjects(gltf.scenes);
     signal.throwIfAborted();

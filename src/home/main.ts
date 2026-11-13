@@ -3,11 +3,19 @@ import './startScreen.css';
 import './touch.css';
 import './nitroGauge.css';
 import './cineMode.css';
+import './toasts.css';
+import './desktop/desktop.css';
 import { LANGUAGES, getLanguage, initialLanguage, isLanguage, setLanguage, t, type MessageKey } from '../core/i18n.ts';
 import { QUALITY, isQualityId, readPreferences, savePreferences } from '../core/quality.ts';
 import { StartScreen } from './StartScreen.ts';
 import { TouchControls } from './TouchControls.ts';
 import { NitroGauge } from './NitroGauge.ts';
+import { Toasts } from './Toasts.ts';
+import { StampBook, stampCount } from '../core/stamps.ts';
+import { earned, readProgress, saveProgress, trackProgress } from '../core/achievements.ts';
+import { HintRules, readLaptopFound, saveLaptopFound, type HintId } from './toastRules.ts';
+import { Desktop } from './desktop/Desktop.ts';
+import { desktopApps } from './desktop/apps.ts';
 import { setupCineMode } from './cineMode.ts';
 import { GamepadInput, type PadKind } from '../input/GamepadInput.ts';
 import { Sounds } from '../audio/Sounds.ts';
@@ -19,6 +27,8 @@ import { CharacterViewer, type CameraMode, type LightPreset, type MovementState,
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('#app not found');
 
+/** The toast's picture for a new sticker: a perforated stamp with a star. */
+const STAMP_ICON = '<svg viewBox="0 0 100 100"><rect x="18" y="12" width="64" height="76" rx="4" fill="none" stroke="currentColor" stroke-width="6" stroke-dasharray="7 5"/><path d="M50 30l6 12.5 13.5 2-9.8 9.5 2.3 13.5L50 61l-12 6.5 2.3-13.5-9.8-9.5 13.5-2z"/></svg>';
 const storage = (() => { try { return window.localStorage; } catch { return undefined; } })();
 // Quality and reduced motion are shared with the studio; light and camera start from their defaults on every visit.
 const preferences = readPreferences(storage);
@@ -205,12 +215,102 @@ const touchControls = new TouchControls(app.querySelector<HTMLDivElement>('.room
 // Halloween: the gauge is the cauldron's test tube instead of the soda bottle.
 // Christmas: one of the sleigh's snow thrusters.
 const nitroGauge = new NitroGauge(app.querySelector<HTMLDivElement>('.room-page')!, host, halloween ? 'tube' : christmas ? 'thruster' : 'bottle');
+const page = app.querySelector<HTMLDivElement>('.room-page')!;
+const toasts = new Toasts(page, host);
+const cine = new URLSearchParams(window.location.search).has('cine');
+/** The laptop's screen: opens when the lid has finished opening, pauses the world, and closes the laptop when shut down. */
+const desktop = new Desktop(page, host, {
+  links: () => viewer?.signLinks ?? [],
+  click: () => sounds.play('ui'),
+  onClose: () => {
+    viewer?.setPaused(false);
+    viewer?.closeLaptop();
+  },
+});
+/** The sticker album's stickers (what earns them: src/core/achievements.ts); each new one gets a toast. */
+const stamps = new StampBook(storage);
+host.dataset.stamps = String(stampCount(stamps.state).got);
+stamps.onUnlock((id) => {
+  host.dataset.stamps = String(stampCount(stamps.state).got);
+  const name = t(`stamps.${id}.name` as MessageKey);
+  toasts.show({ id: `stamp-${id}`, text: t('album.unlocked', { name }), art: STAMP_ICON, duration: 7 });
+  sounds.play('best');
+});
+const progress = readProgress(storage);
+let stampClock: number | undefined;
+/** A few times a second after START: the stickers whose achievement the page's state now shows. */
+function checkStamps(): void {
+  const state = host.dataset;
+  if (trackProgress(state, progress)) saveProgress(storage, progress);
+  for (const id of earned(state, progress, stamps.state)) stamps.unlock(id);
+}
+// Development only: `simulationStamps.unlock('konami')` in the console tries a sticker by hand.
+if (import.meta.env.DEV) (window as unknown as { simulationStamps: StampBook }).simulationStamps = stamps;
+desktop.setApps(desktopApps({
+  launch: (id) => desktop.launch(id),
+  album: { stamps, host, reducedMotion: motionReduced, rustle: () => sounds.play('cloth') },
+  sled: { host, season, quality: () => preferences.quality, reducedMotion: motionReduced, sounds },
+}));
+let laptopFound = readLaptopFound(storage);
+const hints = new HintRules();
+let hintClock: number | undefined;
+
+/** Seconds the character types at the open laptop before its screen fills the page (the lid and the typing show first). */
+const DESKTOP_DELAY = 1.6;
+let desktopTimer: number | undefined;
+
+function onLaptop(open: boolean): void {
+  window.clearTimeout(desktopTimer);
+  desktopTimer = undefined;
+  if (!open || !started || cine || desktop.isOpen) return;
+  toasts.dismiss(true);
+  desktopTimer = window.setTimeout(() => {
+    desktopTimer = undefined;
+    // Put away meanwhile (L again, standing up, a reset): no desktop.
+    if (desktop.isOpen || host.dataset.laptop === 'none' || host.dataset.interaction !== 'typing') return;
+    if (!laptopFound) {
+      laptopFound = true;
+      saveLaptopFound(storage);
+    }
+    viewer?.setPaused(true);
+    desktop.open();
+  }, DESKTOP_DELAY * 1000);
+}
+
+/** The key that takes out the laptop, for the hints: L, the pad's square (X on Xbox) or the touch button. */
+function laptopKey(): string {
+  const root = document.documentElement.dataset;
+  if (root.input === 'touch') return t('toast.keyTouch');
+  if (root.input === 'gamepad') return root.gamepad === 'xbox' ? 'X' : '□';
+  return 'L';
+}
+
+const HINT_TEXT: Record<HintId, () => string> = {
+  'laptop-intro': () => t('toast.intro', { key: laptopKey() }),
+  'laptop-seat': () => t('toast.seat'),
+  'laptop-seated': () => t('toast.seated', { key: laptopKey() }),
+};
+
+/** Every half second: whether to invite the player to the laptop. */
+function checkHints(): void {
+  const { interaction = 'free', prompt = 'none', drive = 'none', menu = 'closed' } = host.dataset;
+  const hint = hints.step(0.5, {
+    started,
+    blocked: menu === 'open' || desktop.isOpen || cine || document.hidden,
+    prompt: interaction === 'free' ? prompt : 'none',
+    seatedIdle: interaction === 'seated' && drive === 'none',
+    laptopFound,
+  });
+  if (hint) toasts.show({ id: hint, text: HINT_TEXT[hint](), icon: 'laptop', duration: 7 });
+}
+
 const gamepad = new GamepadInput(() => viewer?.input);
 gamepad.inZone = () => (host.dataset.sign ?? 'none') !== 'none';
 gamepad.onMenu = () => setMenu(tools.hidden !== false);
 gamepad.onUse = (kind) => setInputMode('gamepad', kind);
 // On the loading screen ✕/A or Start presses START.
 gamepad.onButton = (button) => {
+  if (desktop.pad(button)) return true;
   if (start.current !== 'ready' || (button !== 'cross' && button !== 'start')) return false;
   start.press();
   return true;
@@ -244,6 +344,8 @@ const start = new StartScreen(app.querySelector<HTMLDivElement>('.room-page')!, 
     sounds.unlock();
     applySound();
     viewer?.setInputEnabled(true);
+    hintClock ??= window.setInterval(checkHints, 500);
+    stampClock ??= window.setInterval(checkStamps, 250);
   },
 });
 
@@ -279,6 +381,7 @@ function applyTexts(): void {
   menuToggle.setAttribute('aria-label', t(tools.hidden ? 'menu.open' : 'menu.close'));
   start.setLabel(t('start.label'));
   touchControls.setLabels(t);
+  desktop.setLanguage();
   applySound();
   updateStatus(lastStatus);
 }
@@ -327,6 +430,7 @@ function mount(): void {
     animation: () => {},
     movement: (state) => { if (live()) updateMovement(state); },
     run: (on) => { if (live()) touchControls.setRunning(on); },
+    laptop: (open) => { if (live()) onLaptop(open); },
   }, {
     modelId: 'v4rig', view: 'three-quarter', light: LIGHT, wireframe: false, scene: 'room',
     quality: preferences.quality, reducedMotion: motionReduced(), cameraMode: camera, spawn: SPAWN, sounds, touch, halloween, christmas, likes,
@@ -401,7 +505,7 @@ reducedMotion.addEventListener('click', () => {
   viewer?.setReducedMotion(motionReduced());
 }, { signal: listeners.signal });
 // Recording mode for promotional videos: camera shots and a hideable interface, only with ?cine in the address.
-if (new URLSearchParams(window.location.search).has('cine')) setupCineMode(app.querySelector<HTMLDivElement>('.room-page')!, () => viewer, listeners.signal);
+if (cine) setupCineMode(app.querySelector<HTMLDivElement>('.room-page')!, () => viewer, listeners.signal);
 retry.addEventListener('click', mount, { signal: listeners.signal });
 reset.addEventListener('click', () => {
   viewer?.resetPosition();
@@ -417,6 +521,11 @@ function dispose(): void {
   disposed = true;
   listeners.abort();
   start.dispose();
+  window.clearInterval(hintClock);
+  window.clearInterval(stampClock);
+  window.clearTimeout(desktopTimer);
+  desktop.dispose();
+  toasts.dispose();
   touchControls.dispose();
   nitroGauge.dispose();
   gamepad.dispose();

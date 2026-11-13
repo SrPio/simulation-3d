@@ -294,6 +294,116 @@ test('near a seat a speech bubble shows the key to sit down; it leaves when the 
   await expect(host(page)).toHaveAttribute('data-interaction', 'seated', { timeout: 8000 });
 });
 
+test('sitting with the laptop closed shows a hint; L opens the DevOS desktop over a paused world and Escape shuts it and closes the laptop', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, ...spanish });
+  t.after(() => page.close());
+  await ready(page);
+  await walkTo(page, { x: 0.2, z: -0.6 }, async () => (await host(page).getAttribute('data-prompt')) === 'bed');
+  await page.keyboard.press('KeyE');
+  await expect(host(page)).toHaveAttribute('data-interaction', 'seated', { timeout: 8000 });
+  await expect(host(page)).toHaveAttribute('data-toast', 'laptop-seated', { timeout: 12000 });
+  await expect(page.locator('.toast')).toContainText('L');
+  await page.keyboard.press('KeyL');
+  await expect(host(page)).toHaveAttribute('data-desktop', 'open', { timeout: 5000 });
+  await expect(host(page)).toHaveAttribute('data-paused', 'true');
+  await expect(host(page)).toHaveAttribute('data-toast', 'none');
+  await expect(page.locator('.desktop')).toHaveAttribute('data-state', 'open');
+  await expect(page.locator('.desk-icon[data-app="github"]')).toBeVisible();
+  await page.locator('.desk-icon[data-app="games"]').click();
+  await expect(host(page)).toHaveAttribute('data-desktop', 'games');
+  await expect(page.locator('.desk-window[data-app="games"]')).toContainText('Bajada en silla');
+  await page.screenshot({ path: shot('home-desktop.png') });
+  // M must not toggle the sound while the desktop has the keys.
+  const sound = await host(page).getAttribute('data-sound');
+  await page.keyboard.press('KeyM');
+  await expect(host(page)).toHaveAttribute('data-sound', sound!);
+  await page.keyboard.press('Escape');
+  await expect(host(page)).toHaveAttribute('data-desktop', 'open');
+  await page.keyboard.press('Escape');
+  await expect(host(page)).toHaveAttribute('data-desktop', 'closed', { timeout: 5000 });
+  await expect(host(page)).toHaveAttribute('data-paused', 'false');
+  await expect(host(page)).toHaveAttribute('data-laptop', 'none', { timeout: 5000 });
+  await expect(host(page)).toHaveAttribute('data-interaction', 'seated');
+});
+
+test('the album opens on its cover, its pages turn with a click, a drag and the arrows, and got stickers show in colour', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, ...spanish });
+  t.after(() => page.close());
+  await page.addInitScript(() => localStorage.setItem('simulation-3d:stamps', JSON.stringify({ 'first-steps': 1762800000000 })));
+  await ready(page);
+  await walkTo(page, { x: 0.2, z: -0.6 }, async () => (await host(page).getAttribute('data-prompt')) === 'bed');
+  await page.keyboard.press('KeyE');
+  await expect(host(page)).toHaveAttribute('data-interaction', 'seated', { timeout: 8000 });
+  await page.keyboard.press('KeyL');
+  await expect(page.locator('.desktop')).toHaveAttribute('data-state', 'open', { timeout: 6000 });
+  await expect(host(page)).toHaveAttribute('data-stamps', '1');
+  await page.locator('.desk-icon[data-app="album"]').click();
+  await expect(host(page)).toHaveAttribute('data-album', '0');
+  await expect(page.locator('.album-cover-count')).toContainText('1');
+  const book = page.locator('.album-book');
+  let box = (await book.boundingBox())!;
+  await page.mouse.click(box.x + box.width * 0.8, box.y + box.height / 2);
+  await expect(page.locator('.album-leaf')).toHaveCount(1);
+  await expect(host(page)).toHaveAttribute('data-album', '1,2', { timeout: 3000 });
+  await expect(page.locator('.album-leaf')).toHaveCount(0);
+  await expect(page.locator('.album-stamp.is-got[data-stamp="first-steps"]')).toBeVisible();
+  // Dragged by its edge past the middle, the page goes over.
+  box = (await book.boundingBox())!;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(box.x + box.width - 10, y);
+  await page.mouse.down();
+  for (let i = 1; i <= 12; i++) await page.mouse.move(box.x + box.width - 10 - (box.width * 0.75 * i) / 12, y);
+  await page.mouse.up();
+  await expect(host(page)).toHaveAttribute('data-album', '3,4', { timeout: 3000 });
+  await page.keyboard.press('ArrowLeft');
+  await expect(host(page)).toHaveAttribute('data-album', '1,2', { timeout: 3000 });
+  await page.screenshot({ path: shot('home-album.png') });
+  await page.keyboard.press('Escape');
+  await expect(host(page)).toHaveAttribute('data-desktop', 'open');
+});
+
+test('the games folder opens the chair downhill: arrows change lanes, P pauses, crashes cost lives and the best score is kept', async (t) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, ...spanish });
+  t.after(() => page.close());
+  await ready(page);
+  await walkTo(page, { x: 0.2, z: -0.6 }, async () => (await host(page).getAttribute('data-prompt')) === 'bed');
+  await page.keyboard.press('KeyE');
+  await expect(host(page)).toHaveAttribute('data-interaction', 'seated', { timeout: 8000 });
+  await page.keyboard.press('KeyL');
+  await expect(page.locator('.desktop')).toHaveAttribute('data-state', 'open', { timeout: 6000 });
+  await page.locator('.desk-icon[data-app="games"]').click();
+  await page.locator('[data-game="sled"]').click();
+  await expect(host(page)).toHaveAttribute('data-minigame', 'ready', { timeout: 30000 });
+  await expect(host(page)).toHaveAttribute('data-mg-lives', '3');
+  await page.keyboard.press('Enter');
+  await expect(host(page)).toHaveAttribute('data-minigame', 'playing');
+  await page.keyboard.press('ArrowLeft');
+  await expect(host(page)).toHaveAttribute('data-mg-lane', '0');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await expect(host(page)).toHaveAttribute('data-mg-lane', '2');
+  await expect.poll(async () => Number(await host(page).getAttribute('data-mg-score'))).toBeGreaterThan(10);
+  await page.keyboard.press('KeyP');
+  await expect(host(page)).toHaveAttribute('data-minigame', 'paused');
+  const score = await host(page).getAttribute('data-mg-score');
+  await page.waitForTimeout(500);
+  await expect(host(page)).toHaveAttribute('data-mg-score', score!);
+  await page.screenshot({ path: shot('home-sled.png') });
+  // Left alone in one lane the chair crashes three times and the run ends; the score is stored.
+  await page.keyboard.press('Enter');
+  await expect(host(page)).toHaveAttribute('data-minigame', 'over', { timeout: 120000 });
+  await expect(host(page)).toHaveAttribute('data-mg-lives', '0');
+  const best = await page.evaluate(() => JSON.parse(localStorage.getItem('simulation-3d:sled-best') ?? '{}').best);
+  expect(best).toBeGreaterThan(0);
+  await expect(page.locator('.sled-screen')).toContainText('¡Nuevo récord!');
+  // Escape closes the game window, then the desktop.
+  await page.keyboard.press('Escape');
+  await expect(host(page)).toHaveAttribute('data-minigame', 'none');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await expect(host(page)).toHaveAttribute('data-desktop', 'closed', { timeout: 5000 });
+});
+
 test('the language switch turns the page and the floor texts to English or Spanish and remembers the choice', async (t) => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: 'en-US' });
   t.after(() => page.close());

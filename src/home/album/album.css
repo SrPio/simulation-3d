@@ -1,0 +1,131 @@
+/* The sticker album (Album.ts, PageFlip.ts). Paper in cream, the cover in the desktop's theme colours. */
+.desk-window-body.album-body { padding: 0; overflow: hidden; position: relative; }
+.album {
+  position: absolute; inset: 0; display: flex; flex-direction: column; outline: none;
+  background: radial-gradient(ellipse at 50% 40%, #ffffff0d, transparent 70%), var(--desk-bg-3);
+  --paper: #f6efe1; --paper-dark: #e7dcc6; --ink: #2a1f35; --ink-soft: #6b5e78;
+}
+.album-stage { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; overflow: hidden; perspective: 2400px; }
+.album-nav { flex: none; display: flex; align-items: center; justify-content: center; gap: 14px; padding: 8px 12px 12px; }
+.album-where { min-width: 14ch; text-align: center; color: var(--desk-muted); font-variant-numeric: tabular-nums; }
+.album-turn {
+  width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid var(--desk-line); border-radius: 50%;
+  background: var(--desk-glass); color: var(--desk-text);
+}
+.album-turn:hover:not(:disabled), .album-turn:focus-visible { background: var(--desk-accent-strong); outline: none; }
+.album-turn:disabled { opacity: 0.35; }
+.album-turn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+
+/* The book: two sheets side by side (one in single mode); a closed book slides to the middle. */
+.album-book {
+  --page-w: 300px; --page-h: 420px;
+  position: relative; width: calc(var(--page-w) * 2); height: var(--page-h); transform-style: preserve-3d;
+  touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab;
+  font-size: calc(var(--page-w) / 24); transition: transform 0.85s cubic-bezier(0.45, 0, 0.25, 1);
+}
+.album-book[data-mode='single'] { width: var(--page-w); }
+.album-book[data-mode='spread'][data-at='cover'] { transform: translateX(calc(var(--page-w) / -2)); }
+.album-book[data-mode='spread'][data-at='back'] { transform: translateX(calc(var(--page-w) / 2)); }
+.album-sheet { position: absolute; top: 0; width: var(--page-w); height: var(--page-h); }
+.album-sheet.is-left { left: 0; }
+.album-sheet.is-right { right: 0; }
+.album-sheet.is-empty .album-slot { display: none; }
+.album-sheet:not(.is-empty) { box-shadow: 0 18px 40px #0009; }
+.album-sheet.is-left:not(.is-empty) { border-radius: 6px 0 0 6px; }
+.album-sheet.is-right:not(.is-empty) { border-radius: 0 6px 6px 0; }
+.album-slot { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; }
+.album-cast { position: absolute; inset: 0; pointer-events: none; border-radius: inherit; opacity: 0; }
+
+/* The turning page: nested strips, each turned about its left edge; a front and a back face each. */
+.album-leaf { position: absolute; top: 0; left: var(--page-w); width: var(--page-w); height: var(--page-h); transform-style: preserve-3d; pointer-events: none; z-index: 2; }
+.album-book[data-mode='single'] .album-leaf { left: 0; }
+.album-strip { position: absolute; top: 0; height: 100%; transform-origin: 0 50%; transform-style: preserve-3d; }
+.album-face { position: absolute; inset: 0; overflow: hidden; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+.album-face.is-back { transform: rotateY(180deg); }
+.album-face::after { content: ''; position: absolute; inset: 0; background: #1a0d24; opacity: var(--shade, 0); pointer-events: none; }
+.album-face > .album-page { top: 0; }
+
+/* A page. */
+.album-page {
+  position: absolute; left: 0; top: 0; width: var(--page-w); height: var(--page-h); box-sizing: border-box; padding: 1.4em 1.5em 2em;
+  display: flex; flex-direction: column; gap: 0.8em; overflow: hidden; color: var(--ink); text-align: left; line-height: 1.25;
+  background:
+    radial-gradient(circle at 20% 15%, #ffffff66, transparent 40%),
+    repeating-linear-gradient(0deg, #00000006 0 1px, transparent 1px 4px),
+    var(--paper);
+}
+/* The fold: darker by the spine on each page. */
+.album-sheet.is-right .album-page, .album-face.is-front .album-page { background-image: linear-gradient(90deg, #0000002e, #00000008 6%, transparent 14%), radial-gradient(circle at 20% 15%, #ffffff66, transparent 40%), repeating-linear-gradient(0deg, #00000006 0 1px, transparent 1px 4px); }
+.album-sheet.is-left .album-page, .album-face.is-back .album-page { background-image: linear-gradient(270deg, #0000002e, #00000008 6%, transparent 14%), radial-gradient(circle at 80% 15%, #ffffff66, transparent 40%), repeating-linear-gradient(0deg, #00000006 0 1px, transparent 1px 4px); }
+.album-book[data-mode='single'] .album-page { background-image: linear-gradient(90deg, #00000024, transparent 8%), repeating-linear-gradient(0deg, #00000006 0 1px, transparent 1px 4px); }
+.album-page.is-blank { background-color: var(--paper-dark); }
+.album-number { position: absolute; bottom: 0.9em; left: 0; right: 0; text-align: center; font-size: 0.8em; color: var(--ink-soft); }
+
+/* Cover and back cover. */
+.album-page.is-cover, .album-page.is-back {
+  color: #fff; padding: 1.3em; align-items: center; justify-content: space-between; text-align: center;
+  background: radial-gradient(circle at 30% 20%, #ffffff30, transparent 45%), linear-gradient(160deg, var(--desk-accent-strong), var(--desk-bg-1) 60%, var(--desk-bg-2)) !important;
+}
+.album-masthead { align-self: stretch; display: flex; justify-content: space-between; font-size: 0.75em; letter-spacing: 0.18em; text-transform: uppercase; opacity: 0.85; border-bottom: 1px solid #ffffff55; padding-bottom: 0.5em; }
+.album-cover-title { margin: 0.2em 0 0; font-size: 2.6em; line-height: 0.95; letter-spacing: -0.01em; text-transform: uppercase; text-shadow: 0 0.08em 0 #0005; }
+.album-cover-art { flex: 1; min-height: 0; display: grid; place-items: center; }
+.album-cover-art svg { height: 82%; max-height: 9em; width: auto; fill: none; stroke: #fff; stroke-width: 1.1; filter: drop-shadow(0 0 0.5em var(--desk-glow)); }
+.album-cover-count { margin: 0; display: flex; flex-direction: column; align-items: center; font-size: 1.1em; }
+.album-cover-count strong { font-size: 2.2em; line-height: 1; }
+.album-cover-count small { font-size: 0.65em; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.8; }
+.album-barcode { align-self: flex-end; width: 4.5em; height: 1.8em; background: repeating-linear-gradient(90deg, #fff 0 2px, transparent 2px 3px, #fff 3px 4px, transparent 4px 7px); opacity: 0.85; }
+.album-back-art { flex: 1; display: grid; place-items: center; align-content: center; gap: 0.4em; font-size: 1.3em; letter-spacing: 0.3em; opacity: 0.85; }
+.album-back-art svg { width: 4em; height: auto; fill: none; stroke: #fff; stroke-width: 1.2; }
+
+/* Contents. */
+.album-heading { margin: 0; font-size: 1.9em; text-transform: uppercase; letter-spacing: 0.02em; border-bottom: 0.12em solid var(--ink); padding-bottom: 0.15em; }
+.album-contents { margin: 0.4em 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.5em; }
+.album-contents button {
+  width: 100%; display: flex; align-items: baseline; gap: 0.5em; padding: 0.35em 0; border: 0; background: none; color: var(--ink); font: inherit; font-size: 1.15em; cursor: pointer; text-align: left;
+}
+.album-contents button:hover span, .album-contents button:focus-visible span { color: var(--desk-accent-strong); text-decoration: underline; }
+.album-contents i { flex: 1; border-bottom: 0.12em dotted var(--ink-soft); transform: translateY(-0.2em); }
+.album-contents small { color: var(--ink-soft); font-size: 0.75em; }
+.album-contents b { min-width: 1.4em; text-align: right; }
+.album-intro { margin: 0; color: var(--ink-soft); font-size: 0.95em; }
+
+/* A section: its band and its slots. */
+.album-section { display: flex; align-items: center; gap: 0.6em; padding-bottom: 0.4em; border-bottom: 0.12em solid var(--ink); }
+.album-section-no { font-size: 2.1em; font-weight: 700; line-height: 1; color: var(--desk-accent-strong); }
+.album-section h3 { margin: 0; font-size: 1.35em; text-transform: uppercase; }
+.album-section small { color: var(--ink-soft); font-size: 0.8em; }
+.album-section em { margin-left: auto; font-style: normal; font-weight: 700; padding: 0.15em 0.5em; border-radius: 1em; background: var(--ink); color: var(--paper); }
+.album-stamps { flex: 1; margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(2, 1fr); grid-auto-rows: 1fr; gap: 0.7em 0.9em; min-height: 0; }
+.album-stamp { display: flex; flex-direction: column; align-items: center; gap: 0.2em; min-height: 0; text-align: center; }
+.album-stamp-face {
+  flex: 1; min-height: 0; aspect-ratio: 0.82; display: grid; place-items: center; position: relative;
+  /* Perforated edge: paper-coloured notches on the tile corners all round (tiles fitted whole, so they meet the edges). */
+  --hole: var(--paper) 0.17em, transparent 0.185em;
+  background:
+    radial-gradient(circle at 0 0, var(--hole)) 0 0 / 0.6em 0.6em round,
+    radial-gradient(circle at 100% 0, var(--hole)) 0 0 / 0.6em 0.6em round,
+    radial-gradient(circle at 0 100%, var(--hole)) 0 0 / 0.6em 0.6em round,
+    radial-gradient(circle at 100% 100%, var(--hole)) 0 0 / 0.6em 0.6em round,
+    var(--stamp-edge);
+  filter: drop-shadow(0 0.06em 0.08em #0003);
+}
+.album-stamp-face::before { content: ''; position: absolute; inset: 0.32em; border-radius: 0.1em; background: var(--stamp-inner); }
+.album-stamp-face > * { position: relative; }
+.album-stamp.is-locked .album-stamp-face { --stamp-edge: #ddd1b9; --stamp-inner: repeating-linear-gradient(135deg, #d4c7ac 0 0.3em, #d9cdb4 0.3em 0.6em); }
+.album-unknown { font-size: 2.4em; font-weight: 700; color: #a8987a; }
+.album-stamp.is-got .album-stamp-face {
+  --stamp-edge: #fffaf0; --stamp-inner: radial-gradient(circle at 30% 25%, #ffffff55, transparent 50%), linear-gradient(150deg, var(--desk-accent), var(--desk-accent-strong));
+  transform: rotate(-2deg);
+}
+.album-stamp.is-got:nth-child(even) .album-stamp-face { transform: rotate(2.5deg); }
+.album-art { width: 70%; height: 70%; fill: #fff; stroke: none; filter: drop-shadow(0 0.08em 0 #0004); }
+.album-stamp .album-art[viewBox^='0 0 94'] { fill: none; stroke: #fff; stroke-width: 2; }
+.album-stamp strong { font-size: 0.8em; }
+.album-stamp small { font-size: 0.68em; color: var(--ink-soft); line-height: 1.2; }
+/* A locked sticker's clue keeps two lines' room, as a got one's name and date do, so every stamp is the same size. */
+.album-stamp.is-locked small { min-height: 2.4em; }
+
+/* Coming soon and the inside back cover. */
+.album-ghosts { flex: 1; display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9em; padding: 0.6em 0 1.6em; }
+.album-ghosts span { border: 0.12em dashed #b9ab90; border-radius: 0.3em; }
+.album-colophon { margin: auto 0 1.4em; color: var(--ink-soft); font-size: 0.8em; text-align: center; }

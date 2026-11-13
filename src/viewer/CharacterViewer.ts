@@ -44,10 +44,10 @@ import { experienceYears } from '../core/experience.ts';
 import { TargetsView } from '../scene/TargetsView.ts';
 import { CircuitView } from '../scene/CircuitView.ts';
 import { DRIVE, NITRO, PUSH, chairAt, driveStep, forwardSpeed, pushChair, strikeChair, type ChairState } from '../world/chairDrive.ts';
-import { applyLean, leanStep, leanTarget, restHand, restLean, solveArm, type Lean } from '../character/riderPose.ts';
+import { leanStep, leanTarget, restLean, type Lean } from '../character/riderPose.ts';
 import { BREW, SODA, SNOW_JET, SodaSpray } from '../scene/SodaSpray.ts';
-import type { ChairRig } from '../scene/CircuitView.ts';
-import type { SeatSpot } from '../interactions/InteractionController.ts';
+import { RIDER_BONES, SLEIGH_FLOOR, clipModel, hangVessel, mountRider, poseRider, type ChairRig } from '../character/riderSeat.ts';
+import type { LaptopPlace, SeatSpot } from '../interactions/InteractionController.ts';
 import type { FloorBlock } from '../scene/outsideData.ts';
 import { RoomReveal } from '../scene/RoomReveal.ts';
 import { dressPieces, ghostBag, takeHalloween, wearMask, type HalloweenDress } from '../scene/halloweenDress.ts';
@@ -148,6 +148,8 @@ type ViewerEvents = {
   sign?: (sign: SignLink | null) => void;
   /** How much of the scene has loaded, 0…1 (downloads, then building it); 1 when it is ready. */
   progress?: (fraction: number) => void;
+  /** The laptop in use finished opening (true) or closing (false). */
+  laptop?: (open: boolean, place: LaptopPlace) => void;
 };
 
 const LOCOMOTION = new Set(['idle', 'walk', 'run', 'jump']);
@@ -178,12 +180,6 @@ function openLink(href: string): void {
   anchor.click();
 }
 
-/** Where the rider's wrists rest on the office chair's arm pads: ahead of the pad's middle and above its top (m). */
-const RIDER_WRIST = { ahead: 0.02, up: 0.045 };
-/** How far ahead of the office chair's seat centre the rider sits (m). */
-const RIDER_FORWARD = 0.15;
-/** Halloween: how far behind the cauldron's middle the rider's hips are (m), leaving room for the legs in front. */
-const RIDER_BACK = 0.16;
 /**
  * Christmas: gifts fall off the sleigh's sack every `every` seconds while its thrusters blow, thrown back (m/s) and up
  * off the sack.
@@ -194,8 +190,6 @@ const XMAS = { every: 0.55, back: 1.6, up: 2.2 } as const;
  * runners and behind to the end of its thrusters (create_christmas.py SLEIGH and THRUSTER).
  */
 const SLEIGH_BOX = { across: 0.93, ahead: 1.1, behind: 0.92 } as const;
-/** Christmas: the top of the sleigh's floor above its origin (create_christmas.py build_sleigh: the floor box tops at 0.34). */
-const SLEIGH_FLOOR = 0.34;
 /** Christmas: the red of the arrow on the ground that points at the sleigh. */
 const SLEIGH_ARROW = 0xd8202c;
 /** Blob shadow slots: the character first, then the signs, then the loose pieces, then the thrown laptops. */
@@ -438,6 +432,7 @@ export class CharacterViewer {
   private cameraDistance = 7;
   private disposed = false;
   private contextLost = false;
+  private paused = false;
   private ready = false;
   /**
    * The scene is being put together and warmed up behind the loading screen (see load and warmUp): frames are skipped
@@ -842,6 +837,7 @@ export class CharacterViewer {
     this.controller = new CharacterController(spawn, boxes, floor);
     // The park benches outside are seats too (the bed's clips, the laptop on the lap).
     this.interaction = new InteractionController([...data.seats, ...(this.outsideData?.benches ?? [])], boxes, floor, CHARACTER_RADIUS);
+    this.interaction.onLaptop = (open, place) => this.events.laptop?.(open, place);
     this.setupChair();
     if (this.keyboard) {
       this.keyboard.onPress = this.onPress;
@@ -1769,6 +1765,8 @@ export class CharacterViewer {
     for (const [index, radius] of target.rings.entries()) if (hit.distance <= radius) ring = index;
     if (this.countedThrows.has(hit.laptop)) this.targetGame.hit(hit.distance, target.rings, target.points);
     this.targetsView?.hit(hit.target, ring);
+    // The album's bullseye sticker: hits in the ring worth the most (data-bullseyes counts them).
+    if (ring >= 0 && target.points[ring] === Math.max(...target.points)) this.host.dataset.bullseyes = String(Number(this.host.dataset.bullseyes ?? 0) + 1);
     // The rings ring brighter towards the centre.
     if (ring >= 0) this.sound('bell', (ring + 1) / target.rings.length, target.position);
     this.reportTargets();
@@ -1954,13 +1952,7 @@ export class CharacterViewer {
     this.chairRest = { x: position.x, z: position.z, yaw };
     this.chairDrive = chairAt(position.x, position.z, yaw);
     // The seat clips start from the stand point: on the ground, stand_offset in front of the seat.
-    const rider = new Group();
-    rider.name = 'OfficeChair_Rider';
-    const offset = Number(rig.seat.userData.stand_offset ?? 0.2);
-    // A little forward of the seat's middle: on the larger chair the legs would otherwise sink into the cushion and arms.
-    rider.position.set(rig.seat.position.x, -rig.upper.position.y, rig.seat.position.z + offset + RIDER_FORWARD);
-    rider.quaternion.copy(rig.seat.quaternion);
-    rig.upper.add(rider);
+    const { rider, offset } = mountRider(rig);
     this.chairRider = rider;
     this.chairSpot = { seat: 'office', approaches: [], stand: { x: 0, z: 0 }, yaw };
     this.lap = { best: readBestLap() };
@@ -1989,27 +1981,7 @@ export class CharacterViewer {
    * (the sitting clips would show the legs going over the rim), and the rider shows only above the brew.
    */
   private dressChair(rig: ChairRig, rider: Group, offset: number, cauldron: Object3D): void {
-    rig.root.traverse((object) => {
-      if (object instanceof Mesh) object.visible = false;
-    });
-    cauldron.removeFromParent();
-    // Its middle RIDER_BACK ahead of the rider's hips (the seated clip puts them stand_offset behind its origin), on the
-    // ground, facing ahead.
-    cauldron.position.set(rider.position.x, rider.position.y, rider.position.z - offset + RIDER_BACK);
-    cauldron.quaternion.copy(rider.quaternion);
-    rig.upper.add(cauldron);
-    cauldron.traverse((object) => {
-      if (!(object instanceof Mesh)) return;
-      object.castShadow = !/Tube|Brew/.test(object.name);
-      object.receiveShadow = true;
-    });
-    rig.bottles.length = 0;
-    for (const side of ['right', 'left'] as const) {
-      const nozzle = cauldron.getObjectByName(`CauldronNozzle_${side}`);
-      if (nozzle) rig.bottles.push({ side, nozzle, liquid: cauldron.getObjectByName(`CauldronTubeLiquid_${side}`), cap: cauldron.getObjectByName(`CauldronTubeCork_${side}`) });
-      const grip = cauldron.getObjectByName(`CauldronGrip_${side}`);
-      if (grip) rig.armrests[side] = grip;
-    }
+    hangVessel(rig, rider, offset, cauldron, 'cauldron');
     this.cauldron = cauldron;
     this.chairBlock3 = { across: 0.5, ahead: 0.5, behind: 0.5 };
     this.chairPushReach = CHARACTER_RADIUS + 0.22;
@@ -2026,26 +1998,7 @@ export class CharacterViewer {
    * and out of in a blink (the sitting clips would take the legs through its sides).
    */
   private dressSleigh(rig: ChairRig, rider: Group, offset: number, sleigh: Object3D): void {
-    rig.root.traverse((object) => {
-      if (object instanceof Mesh) object.visible = false;
-    });
-    sleigh.removeFromParent();
-    // Its origin under the rider's hips (the seated clip puts them stand_offset behind its origin), facing ahead.
-    sleigh.position.set(rider.position.x, rider.position.y, rider.position.z - offset);
-    sleigh.quaternion.copy(rider.quaternion);
-    rig.upper.add(sleigh);
-    sleigh.traverse((object) => {
-      if (!(object instanceof Mesh)) return;
-      object.castShadow = !/Glass|Fuel/.test(object.name);
-      object.receiveShadow = true;
-    });
-    rig.bottles.length = 0;
-    for (const side of ['right', 'left'] as const) {
-      const nozzle = sleigh.getObjectByName(`SleighNozzle_${side}`);
-      if (nozzle) rig.bottles.push({ side, nozzle, liquid: sleigh.getObjectByName(`SleighFuel_${side}`) });
-      const grip = sleigh.getObjectByName(`SleighGrip_${side}`);
-      if (grip) rig.armrests[side] = grip;
-    }
+    hangVessel(rig, rider, offset, sleigh, 'sleigh');
     this.sleigh = sleigh;
     this.chairBlock3 = { ...SLEIGH_BOX };
     // The seated legs reach the ground, below the sleigh's floor: the rider is cut at the floor.
@@ -2112,15 +2065,7 @@ export class CharacterViewer {
    */
   private clipRider(): void {
     if ((!this.cauldron && !this.sleigh) || !this.model) return;
-    this.model.traverse((object) => {
-      if (!(object instanceof Mesh)) return;
-      for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
-        if (material.clippingPlanes?.includes(this.brewPlane)) continue;
-        material.clippingPlanes = [this.brewPlane];
-        material.clipShadows = true;
-        material.needsUpdate = true;
-      }
-    });
+    clipModel(this.model, this.brewPlane);
   }
 
   /** Put the chair's parts where its state says, and keep its seat spot and the rider's stand point up to date. */
@@ -2392,6 +2337,8 @@ export class CharacterViewer {
       const away = distanceGain(Math.hypot(chair.x - this.model.position.x, chair.z - this.model.position.z));
       sounds.loop('rolling', this.rolling < 0.02 ? 0 : this.rolling * away, this.rolling);
       if (this.chairAirborne && !chair.airborne) this.sound('crash', 2.5, chair);
+      // Take-offs with someone riding (data-chair-jumps, the album's lift-off sticker).
+      if (!this.chairAirborne && chair.airborne && this.riding) this.host.dataset.chairJumps = String(Number(this.host.dataset.chairJumps ?? 0) + 1);
       this.chairAirborne = chair.airborne;
     }
   }
@@ -2425,30 +2372,9 @@ export class CharacterViewer {
     this.riderBones.clear();
     const weight = this.riderWeight;
     if (weight <= 0) return;
-    const names = ['spine', 'chest', 'neck', 'upper_arm_L', 'forearm_L', 'hand_L', 'upper_arm_R', 'forearm_R', 'hand_R'];
-    const touched = names.map((name) => model.getObjectByName(name)).filter((bone): bone is Object3D => !!bone);
+    const touched = RIDER_BONES.map((name) => model.getObjectByName(name)).filter((bone): bone is Object3D => !!bone);
     for (const bone of touched) this.riderBones.set(bone, { clip: bone.quaternion.clone(), posed: new Quaternion() });
-    model.updateMatrixWorld(true);
-    const ahead = new Vector3(0, 0, 1).transformDirection(model.matrixWorld);
-    const right = new Vector3(-1, 0, 0).transformDirection(model.matrixWorld);
-    const bone = (name: string) => model.getObjectByName(name);
-    const lean = this.riderLean;
-    applyLean({ spine: bone('spine'), chest: bone('chest'), neck: bone('neck') },
-      { ...lean, pitch: lean.pitch * weight, roll: lean.roll * weight }, right, ahead);
-    // The rig's side names are mirrored: _L is the rider's right arm.
-    for (const [side, suffix, out] of [['right', 'L', 1], ['left', 'R', -1]] as const) {
-      const pad = rig.armrests[side];
-      const upper = bone(`upper_arm_${suffix}`);
-      const fore = bone(`forearm_${suffix}`);
-      const hand = bone(`hand_${suffix}`);
-      if (!pad || !upper || !fore || !hand) continue;
-      // The wrist just above the pad, a little ahead of its middle.
-      const wrist = pad.getWorldPosition(new Vector3()).addScaledVector(ahead, RIDER_WRIST.ahead).add(new Vector3(0, RIDER_WRIST.up, 0));
-      // The elbow bends outwards and back.
-      const pole = upper.getWorldPosition(new Vector3()).addScaledVector(right, 0.4 * out).addScaledVector(ahead, -0.5).add(new Vector3(0, -0.3, 0));
-      solveArm(upper, fore, hand, wrist, pole, weight);
-      restHand(hand, ahead, weight);
-    }
+    poseRider(model, rig, this.riderLean, weight);
     for (const [bone, entry] of this.riderBones) entry.posed.copy(bone.quaternion);
   }
 
@@ -2728,6 +2654,9 @@ export class CharacterViewer {
     const fallen = this.physics?.fallen(['name', 'tag']) ?? 0;
     const pins = String(this.physics?.fallen(['bowling']) ?? 0);
     if (this.host.dataset.pins !== pins && this.outside) this.host.dataset.pins = pins;
+    // Bricks down in the playground and the circuit's end wall (the album's demolition sticker).
+    const bricks = String(this.physics?.fallen(['bricks', 'wall']) ?? 0);
+    if (this.host.dataset.bricks !== bricks && this.outside) this.host.dataset.bricks = bricks;
     if (fallen === this.fallenLetters) return;
     this.fallenLetters = fallen;
     this.host.dataset.letters = String(fallen);
@@ -3074,6 +3003,40 @@ export class CharacterViewer {
     if (!enabled) this.keyboard.clear();
   }
 
+  /**
+   * Freeze the world (no simulation, no drawing, no keys) while something covers the whole screen, such as the laptop's
+   * desktop; the looping sounds fall silent.
+   */
+  setPaused(paused: boolean): void {
+    if (this.disposed || this.paused === paused) return;
+    this.paused = paused;
+    this.host.dataset.paused = String(paused);
+    this.setInputEnabled(!paused);
+    if (paused) {
+      this.options.sounds?.loop('rolling', 0);
+      this.options.sounds?.loop('fizz', 0);
+    }
+    this.resetDelta();
+  }
+
+  get isPaused(): boolean {
+    return this.paused;
+  }
+
+  /** The outside signs' links (portfolio, GitHub, LinkedIn), for the laptop's desktop shortcuts; empty until loaded. */
+  get signLinks(): SignLink[] {
+    return (this.outsideData?.signs ?? []).filter((sign) => sign.kind === 'link').map(({ id, link, label }) => ({ id, link, label }));
+  }
+
+  /** Close the laptop the character is using (the desktop was shut down); false when there is none open. */
+  closeLaptop(): boolean {
+    const interaction = this.interaction;
+    if (!interaction || interaction.phase !== 'seated' || interaction.state.stage !== 'typing') return false;
+    const done = interaction.laptopPress();
+    this.host.dataset.interaction = interaction.state.stage;
+    return done;
+  }
+
   setReducedMotion(enabled: boolean): void {
     if (this.disposed) return;
     this.reducedMotion = enabled;
@@ -3251,7 +3214,7 @@ export class CharacterViewer {
   };
 
   private readonly animate = (time: number): void => {
-    if (this.disposed || this.contextLost || !this.renderer || document.hidden) {
+    if (this.disposed || this.contextLost || !this.renderer || document.hidden || this.paused) {
       this.resetDelta();
       return;
     }

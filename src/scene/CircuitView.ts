@@ -1,10 +1,11 @@
 import {
-  BufferAttribute, BufferGeometry, CanvasTexture, DoubleSide, Group, Mesh, MeshStandardMaterial, RepeatWrapping, SRGBColorSpace, type Object3D,
+  BufferAttribute, BufferGeometry, CanvasTexture, DoubleSide, Group, Mesh, MeshStandardMaterial, RepeatWrapping, SRGBColorSpace,
 } from 'three';
 import { TapeRope, type Point3 } from '../world/tapeRope.ts';
 import { t } from '../core/i18n.ts';
 import { FONT } from './canvasText.ts';
 import type { OfficeChair, OutsideData, Scoreboard, Tape } from './outsideData.ts';
+import { takeChairRig, type ChairRig } from '../character/riderSeat.ts';
 
 const BOARD_PPM = 160;
 
@@ -21,23 +22,7 @@ export const TAPE = { height: 0.85, band: 0.12, stripe: 0.18 } as const;
 /** Lens colours when lit (red, amber, green). */
 const LIT = [0xff3b30, 0xffc21a, 0x2ee86b] as const;
 
-/** The office chair's moving parts: base and casters on the ground, the upper part on the gas lift. */
-export type ChairRig = {
-  root: Object3D;
-  base: Object3D;
-  upper: Object3D;
-  /** Where the hips go, a child of the upper part. */
-  seat: Object3D;
-  casters: Object3D[];
-  wheels: Object3D[];
-  /** Tops of the arm pads, by the rider's side: the hands rest there. */
-  armrests: Partial<Record<Side, Object3D>>;
-  /** The nitro's soda bottles: the liquid (scaled along its local Y as it empties), the cap that pops off, the mouth. */
-  bottles: ChairBottle[];
-};
-
-export type Side = 'right' | 'left';
-export type ChairBottle = { side: Side; liquid?: Object3D; cap?: Object3D; nozzle: Object3D };
+export type { ChairBottle, ChairRig, Side } from '../character/riderSeat.ts';
 
 type TapeState = Tape & { rope: TapeRope; geometry: BufferGeometry; cut: number | undefined };
 
@@ -95,31 +80,9 @@ export class CircuitView {
   }
 
   private takeChair(chair: OfficeChair): ChairRig | undefined {
-    const { object } = chair;
-    const base = object.getObjectByName('ChairBase');
-    const upper = object.getObjectByName('ChairUpper');
-    const seat = object.getObjectByName('OfficeChair_Seat');
-    if (!base || !upper || !seat) return undefined;
-    this.root.attach(object);
-    const casters: Object3D[] = [];
-    const wheels: Object3D[] = [];
-    for (let k = 0; k < 5; k++) {
-      const caster = object.getObjectByName(`ChairCaster_${k}`);
-      const wheel = object.getObjectByName(`ChairWheel_${k}`);
-      if (caster && wheel) {
-        casters.push(caster);
-        wheels.push(wheel);
-      }
-    }
-    const armrests: Partial<Record<Side, Object3D>> = {};
-    const bottles: ChairBottle[] = [];
-    for (const side of ['right', 'left'] as const) {
-      const armrest = object.getObjectByName(`ChairArmrest_${side}`);
-      if (armrest) armrests[side] = armrest;
-      const nozzle = object.getObjectByName(`ChairNozzle_${side}`);
-      if (nozzle) bottles.push({ side, nozzle, liquid: object.getObjectByName(`ChairBottleLiquid_${side}`), cap: object.getObjectByName(`ChairBottleCap_${side}`) });
-    }
-    return { root: object, base, upper, seat, casters, wheels, armrests, bottles };
+    const rig = takeChairRig(chair.object);
+    if (rig) this.root.attach(chair.object);
+    return rig;
   }
 
   /** The lap board: the running (or last) lap time and the best one. */

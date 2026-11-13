@@ -1,0 +1,183 @@
+/* The laptop's desktop, «DevOS» (src/home/desktop/Desktop.ts): over the whole page while the laptop is open. */
+.desktop {
+  --desk-bg-1: #3a2357; --desk-bg-2: #1c1329; --desk-bg-3: #0e0a15;
+  --desk-glow: #b98cff; --desk-accent: #c4a2ed; --desk-accent-strong: #8e5bd6;
+  --desk-glass: #1d1529d9; --desk-glass-strong: #241a33f2; --desk-line: #ffffff1a; --desk-text: #f3ecfb; --desk-muted: #b8aac8;
+  --desk-folder: #b98cff; --desk-folder-back: #7d52b8; --desk-mark: #241638;
+  position: fixed; inset: 0; z-index: 4; overflow: hidden; color: var(--desk-text); font-family: var(--font);
+  background: var(--desk-bg-3);
+}
+.desktop[hidden] { display: none; }
+:root[data-halloween='on'] .desktop {
+  --desk-bg-1: #4a2410; --desk-bg-2: #1e0f08; --desk-bg-3: #0c0604;
+  --desk-glow: #ff9a3a; --desk-accent: #ffb15c; --desk-accent-strong: #d26a14;
+  --desk-glass: #24140bd9; --desk-glass-strong: #2e190df2; --desk-muted: #dcb48a;
+  --desk-folder: #ff9a3a; --desk-folder-back: #b35a14; --desk-mark: #2a1306;
+}
+:root[data-christmas='on'] .desktop {
+  --desk-bg-1: #5a1620; --desk-bg-2: #1f0a10; --desk-bg-3: #0b0508;
+  --desk-glow: #ff6b6b; --desk-accent: #ff8a8a; --desk-accent-strong: #c41e2a;
+  --desk-glass: #2a0d12d9; --desk-glass-strong: #34101af2; --desk-muted: #e8bcbc;
+  --desk-folder: #ff6b6b; --desk-folder-back: #1f7a46; --desk-mark: #2a0a10;
+}
+
+/* Boot: the head lights up over a progress line, then the desktop fades in. */
+.desk-boot {
+  position: absolute; inset: 0; z-index: 3; display: grid; place-content: center; justify-items: center; gap: 14px;
+  background: radial-gradient(circle at 50% 45%, var(--desk-bg-2), var(--desk-bg-3) 70%);
+  opacity: 0; pointer-events: none; transition: opacity 0.25s ease;
+}
+.desktop[data-state='booting'] .desk-boot { opacity: 1; }
+.desk-boot-head { width: 84px; height: 88px; fill: none; stroke: var(--desk-glow); stroke-width: 1.6; filter: drop-shadow(0 0 10px var(--desk-glow)); }
+.desk-boot-name { font-size: 1.6rem; font-weight: 600; letter-spacing: 0.08em; }
+.desk-boot-bar { width: 140px; height: 4px; border-radius: 4px; background: #ffffff1a; overflow: hidden; }
+.desk-boot-bar span { display: block; height: 100%; width: 40%; border-radius: inherit; background: var(--desk-accent); animation: desk-boot 0.9s ease-in-out infinite; }
+@keyframes desk-boot { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+
+.desk-screen {
+  position: absolute; inset: 0; display: grid; grid-template-rows: 1fr auto;
+  background:
+    radial-gradient(circle at 1px 1px, #ffffff12 1px, transparent 1.5px) 0 0 / 28px 28px,
+    radial-gradient(ellipse at 70% 30%, var(--desk-bg-1), var(--desk-bg-2) 55%, var(--desk-bg-3));
+  animation: desk-on 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.desktop[data-state='closing'] .desk-screen { animation: desk-off 0.32s ease-in both; }
+@keyframes desk-on { from { opacity: 0; transform: scale(0.96); filter: brightness(2); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes desk-off { 60% { transform: scaleY(0.02); filter: brightness(3); opacity: 1; } to { transform: scale(0, 0.01); opacity: 0; } }
+:root[data-christmas='on'] .desk-screen {
+  background:
+    radial-gradient(circle, #ffffff40 1.2px, transparent 2px) 0 0 / 46px 52px,
+    radial-gradient(circle, #ffffff26 1px, transparent 1.6px) 23px 26px / 46px 52px,
+    radial-gradient(ellipse at 70% 30%, var(--desk-bg-1), var(--desk-bg-2) 55%, var(--desk-bg-3));
+}
+
+.desk-wallpaper { position: absolute; inset: 0 0 56px; display: grid; place-content: center; justify-items: center; gap: 8px; pointer-events: none; opacity: 0.5; }
+.desk-wallpaper-head { width: min(30vmin, 260px); height: auto; overflow: visible; fill: none; stroke: var(--desk-glow); stroke-width: 0.9; filter: drop-shadow(0 0 18px var(--desk-glow)); opacity: 0.55; }
+.desk-wallpaper span { font-size: clamp(1.4rem, 4vmin, 2.4rem); font-weight: 600; letter-spacing: 0.25em; padding-left: 0.25em; color: var(--desk-accent); opacity: 0.6; }
+
+/* Icons in a column from the top left, like a desktop. */
+.desk-icons {
+  position: relative; z-index: 1; margin: 0; padding: 16px; list-style: none; align-self: start;
+  display: grid; grid-auto-flow: column; grid-template-rows: repeat(auto-fill, 104px); grid-auto-columns: 96px; gap: 6px;
+  max-height: calc(100vh - 72px); width: max-content;
+}
+.desk-icon, .desk-menu-app {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; width: 96px; padding: 8px 4px; border: 1px solid transparent;
+  border-radius: 10px; background: transparent; color: inherit; text-align: center;
+}
+.desk-icon:hover { background: #ffffff12; border-color: #ffffff1c; }
+.desk-icon:focus-visible, .desk-menu-app:focus-visible { outline: 2px solid var(--desk-accent); outline-offset: 1px; background: #ffffff18; }
+.desk-icon-art svg { width: 54px; height: 54px; display: block; filter: drop-shadow(0 3px 4px #0008); }
+.desk-icon-name { font-size: 0.86rem; line-height: 1.15; text-shadow: 0 1px 3px #000c; }
+
+/* Icon colours (DESKTOP_ICONS in Desktop.ts). */
+.desk-screen svg .i-back { fill: var(--desk-folder-back); }
+.desk-screen svg .i-front { fill: var(--desk-folder); }
+.desk-screen svg .i-spine { fill: var(--desk-folder-back); filter: brightness(0.8); }
+.desk-screen svg .i-mark, .desk-screen svg .i-mark path { fill: var(--desk-mark); }
+.desk-screen svg .i-mark-line { fill: none; stroke: var(--desk-mark); stroke-width: 3; stroke-linecap: round; }
+.desk-screen svg .i-stamp { fill: #f6efe1; stroke: var(--desk-mark); stroke-width: 1.4; }
+.desk-screen svg .i-dot { fill: var(--desk-mark); }
+.desk-screen [data-app='github'] svg .i-back { fill: #181622; }
+.desk-screen [data-app='github'] svg .i-mark path { fill: #f3ecfb; }
+.desk-screen [data-app='linkedin'] svg .i-back { fill: #0a66c2; }
+.desk-screen [data-app='linkedin'] svg .i-mark { fill: #fff; }
+
+/* Windows. */
+.desk-windows { position: absolute; inset: 0 0 56px; z-index: 2; pointer-events: none; }
+.desk-window {
+  position: absolute; display: flex; flex-direction: column; pointer-events: auto; min-width: 260px; min-height: 160px;
+  border: 1px solid var(--desk-line); border-radius: 12px; overflow: hidden;
+  background: var(--desk-glass-strong); backdrop-filter: blur(18px);
+  box-shadow: 0 24px 60px #000a, 0 0 0 1px #00000060;
+  animation: desk-window-in 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+}
+.desk-window.is-active { border-color: color-mix(in srgb, var(--desk-accent) 45%, transparent); }
+.desk-window.is-maximized { left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; border-radius: 0; }
+@keyframes desk-window-in { from { opacity: 0; transform: translateY(10px) scale(0.97); } }
+.desk-titlebar { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 4px 0 12px; flex: none; background: #ffffff0a; border-bottom: 1px solid var(--desk-line); cursor: default; user-select: none; touch-action: none; }
+.desk-title-icon svg { width: 20px; height: 20px; display: block; }
+.desk-title { flex: 1; margin: 0; font-size: 0.92rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.desk-window-button { width: 40px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--desk-muted); display: grid; place-items: center; }
+.desk-window-button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.desk-window-button:hover { background: #ffffff16; color: var(--desk-text); }
+.desk-window-button.is-close:hover { background: #d93a4a; color: #fff; }
+.desk-window-button:focus-visible { outline: 2px solid var(--desk-accent); outline-offset: -2px; }
+.desk-window-body { flex: 1; min-height: 0; overflow: auto; padding: 16px; }
+
+/* The games folder. */
+.desk-path { display: flex; gap: 8px; margin: -4px 0 14px; padding: 8px 12px; border-radius: 8px; background: #00000030; color: var(--desk-muted); font-size: 0.86rem; }
+.desk-games { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.desk-game {
+  position: relative; display: flex; align-items: center; gap: 14px; width: 100%; min-height: 96px; padding: 12px;
+  border: 1px solid var(--desk-line); border-radius: 12px; background: #ffffff08; color: inherit; text-align: left;
+}
+button.desk-game:hover { background: #ffffff12; border-color: color-mix(in srgb, var(--desk-accent) 40%, transparent); }
+button.desk-game:focus-visible { outline: 2px solid var(--desk-accent); outline-offset: 2px; }
+.desk-game.is-placeholder { border-style: dashed; opacity: 0.6; }
+.desk-game.is-nudged { animation: desk-nudge 0.35s ease; }
+@keyframes desk-nudge { 25% { transform: translateX(-5px); } 50% { transform: translateX(5px); } 75% { transform: translateX(-3px); } }
+.desk-game-art {
+  flex: none; display: grid; place-items: center; width: 72px; height: 72px; border-radius: 12px; font-size: 2rem; font-weight: 600;
+  background: radial-gradient(circle at 50% 30%, #ffffff22, transparent 70%), var(--desk-accent-strong); color: #fff;
+}
+.desk-game-art svg { width: 58px; height: 58px; fill: #fff; }
+.desk-game-text { display: flex; flex-direction: column; gap: 4px; }
+.desk-game-text strong { font-size: 1.05rem; }
+.desk-game-text small { color: var(--desk-muted); font-size: 0.86rem; line-height: 1.3; }
+.desk-badge { align-self: flex-start; padding: 2px 8px; border-radius: 99px; background: var(--desk-accent); color: var(--desk-mark); font-size: 0.72rem; font-weight: 600; }
+
+/* Short notes (the album for now, the bin). */
+.desk-note { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; }
+.desk-note-art svg { width: 72px; height: 72px; }
+.desk-note p { margin: 0; max-width: 34ch; color: var(--desk-muted); line-height: 1.4; }
+
+/* Start menu. */
+.desk-menu {
+  position: absolute; left: 10px; bottom: 64px; z-index: 5; width: min(320px, calc(100vw - 20px)); padding: 14px;
+  border: 1px solid var(--desk-line); border-radius: 14px; background: var(--desk-glass-strong); backdrop-filter: blur(20px);
+  box-shadow: 0 20px 50px #000a; animation: desk-window-in 0.18s ease both;
+}
+.desk-menu[hidden] { display: none; }
+.desk-menu-user { display: flex; align-items: center; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--desk-line); }
+.desk-menu-user strong { display: block; }
+.desk-menu-user small { color: var(--desk-muted); }
+.desk-avatar { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--desk-accent-strong); }
+.desk-avatar svg, .desk-start svg { width: 26px; height: 27px; fill: #fff; }
+.desk-menu-label { margin: 12px 0 6px; color: var(--desk-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.desk-menu-apps { list-style: none; margin: 0 0 10px; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.desk-menu-app { width: 100%; }
+.desk-menu-app:hover { background: #ffffff12; }
+.desk-menu-app .desk-icon-art svg { width: 40px; height: 40px; }
+.desk-menu-app .desk-icon-name { text-shadow: none; font-size: 0.8rem; }
+
+/* Taskbar. */
+.desk-taskbar {
+  grid-row: 2; position: relative; z-index: 4; display: flex; align-items: center; gap: 6px; height: 56px; padding: 0 8px;
+  background: var(--desk-glass); backdrop-filter: blur(20px); border-top: 1px solid var(--desk-line);
+}
+.desk-start, .desk-power, .desk-task {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 44px; min-width: 44px; padding: 0 10px;
+  border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--desk-text);
+}
+.desk-start { background: var(--desk-accent-strong); }
+.desk-start:hover, .desk-start[aria-expanded='true'] { filter: brightness(1.15); }
+.desk-tasks { flex: 1; min-width: 0; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.desk-task { max-width: 180px; background: #ffffff0a; }
+.desk-task > span:first-child svg { width: 24px; height: 24px; display: block; }
+.desk-task > span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.86rem; }
+.desk-task[aria-pressed='true'] { background: #ffffff1c; border-bottom: 2px solid var(--desk-accent); }
+.desk-task:hover, .desk-power:hover { background: #ffffff16; }
+.desk-power svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.desk-power.is-wide { width: 100%; justify-content: flex-start; background: #ffffff0a; }
+.desk-clock { display: flex; flex-direction: column; align-items: flex-end; padding: 0 8px; line-height: 1.15; font-size: 0.86rem; white-space: nowrap; }
+.desk-clock small { color: var(--desk-muted); font-size: 0.74rem; }
+.desk-taskbar button:focus-visible { outline: 2px solid var(--desk-accent); outline-offset: 1px; }
+
+@media (max-width: 720px) {
+  .desk-icons { grid-auto-flow: row; grid-template-columns: repeat(auto-fill, 88px); grid-template-rows: none; grid-auto-columns: auto; width: auto; justify-content: start; }
+  .desk-icon { width: 88px; }
+  .desk-task > span:last-child { display: none; }
+  .desk-clock small { display: none; }
+}
+html[data-reduced-motion='true'] .desktop * { animation: none !important; transition: none !important; }
