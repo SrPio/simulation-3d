@@ -12,6 +12,7 @@ import { TouchControls } from './TouchControls.ts';
 import { NitroGauge } from './NitroGauge.ts';
 import { Toasts } from './Toasts.ts';
 import { StampBook, stampCount } from '../core/stamps.ts';
+import { PINS, PinBook, pinsOnMap } from '../core/pins.ts';
 import { earned, readProgress, saveProgress, trackProgress } from '../core/achievements.ts';
 import { HintRules, readLaptopFound, saveLaptopFound, type HintId } from './toastRules.ts';
 import { Desktop } from './desktop/Desktop.ts';
@@ -236,6 +237,17 @@ stamps.onUnlock((id) => {
   toasts.show({ id: `stamp-${id}`, text: t('album.unlocked', { name }), art: STAMP_ICON, duration: 7 });
   sounds.play('best');
 });
+/** Season pins (src/core/pins.ts): picked up on the map while their event lasts, kept for good, stuck on the album's cover. */
+const pins = new PinBook(storage);
+host.dataset.seasonPinsGot = String(Object.keys(pins.state.got).length);
+function pickPin(id: string): void {
+  if (!pins.collect(id)) return;
+  host.dataset.seasonPinsGot = String(Object.keys(pins.state.got).length);
+  const pin = PINS.find((item) => item.id === id);
+  const picture = pin ? `<img src="${import.meta.env.BASE_URL}${pin.image}" alt="">` : STAMP_ICON;
+  toasts.show({ id: `pin-${id}`, text: t('pins.got', { name: t(`pins.${id}.name` as MessageKey) }), art: picture, duration: 8 });
+  sounds.play('best');
+}
 const progress = readProgress(storage);
 let stampClock: number | undefined;
 /** A few times a second after START: the stickers whose achievement the page's state now shows. */
@@ -250,7 +262,7 @@ if (import.meta.env.DEV) (window as unknown as { simulationStamps: StampBook }).
 if (import.meta.env.DEV) (window as unknown as { simulationViewer: () => CharacterViewer | undefined }).simulationViewer = () => viewer;
 desktop.setApps(desktopApps({
   launch: (id) => desktop.launch(id),
-  album: { stamps, host, reducedMotion: motionReduced, rustle: () => sounds.play('cloth') },
+  album: { stamps, pins, season, host, reducedMotion: motionReduced, rustle: () => sounds.play('cloth'), stick: () => sounds.play('pop') },
   sled: { host, season, quality: () => preferences.quality, reducedMotion: motionReduced, sounds },
 }));
 let laptopFound = readLaptopFound(storage);
@@ -442,9 +454,11 @@ function mount(): void {
     run: (on) => { if (live()) touchControls.setRunning(on); },
     laptop: (open) => { if (live()) onLaptop(open); },
     board: () => { if (live()) toasts.show({ id: 'board', text: t('toast.board', { key: boardKey() }), icon: 'jump', duration: 9 }); },
+    pin: (id) => { if (live()) pickPin(id); },
   }, {
     modelId: 'v4rig', view: 'three-quarter', light: LIGHT, wireframe: false, scene: 'room',
     quality: preferences.quality, reducedMotion: motionReduced(), cameraMode: camera, spawn: SPAWN, sounds, touch, halloween, christmas, likes,
+    pins: pinsOnMap(pins.state, season),
   });
   viewer.setInputEnabled(started);
   const mode = inputMode;

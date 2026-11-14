@@ -140,3 +140,64 @@
 .album-ghosts { flex: 1; display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9em; padding: 0.6em 0 1.6em; }
 .album-ghosts span { border: 0.12em dashed #b9ab90; border-radius: 0.3em; }
 .album-colophon { margin: auto 0 1.4em; color: var(--ink-soft); font-size: 0.8em; text-align: center; }
+
+/* Season pins (src/core/pins.ts). A pin is a die-cut sticker: the picture with a thin white edge and a soft shadow. */
+.album {
+  --pin-cut: drop-shadow(0.09em 0 0 #fff) drop-shadow(-0.09em 0 0 #fff) drop-shadow(0 0.09em 0 #fff) drop-shadow(0 -0.09em 0 #fff);
+}
+.album-pins { flex: 1; min-height: 0; margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(2, 1fr); grid-auto-rows: minmax(0, 13em); gap: 0.8em 1em; align-content: start; }
+.album-pin { display: flex; flex-direction: column; align-items: center; gap: 0.2em; min-height: 0; text-align: center; }
+.album-pin-face {
+  flex: 1; min-height: 0; width: 100%; display: grid; place-items: center; border-radius: 0.6em;
+  background: radial-gradient(circle at 50% 40%, #ffffffaa, transparent 70%), repeating-linear-gradient(135deg, #efe5d1 0 0.3em, #f3ead8 0.3em 0.6em);
+  box-shadow: inset 0 0 0 0.1em #e2d5bb;
+}
+.album-pin-face img { max-width: 78%; max-height: 86%; object-fit: contain; filter: var(--pin-cut) drop-shadow(0 0.12em 0.14em #0005); transform: rotate(-4deg); }
+.album-pin.is-locked .album-pin-face img { filter: brightness(0) opacity(0.16); transform: none; }
+.album-pin strong { font-size: 0.85em; }
+.album-pin small { font-size: 0.68em; color: var(--ink-soft); line-height: 1.2; }
+.album-pins-soon { margin: auto 0 0.6em; color: var(--ink-soft); font-size: 0.78em; text-align: center; }
+
+/* On the cover: where the visitor stuck them; moved by dragging, dragged off to take them away. */
+.album-cover-pins { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.album-cover-pin {
+  position: absolute; padding: 0; border: 0; background: none; pointer-events: auto; cursor: grab; touch-action: none;
+  transform: translate(-50%, -50%) rotate(var(--turn, 0deg)); font-size: inherit;
+}
+.album-cover-pin img { display: block; width: 100%; height: auto; filter: var(--pin-cut) drop-shadow(0 0.15em 0.2em #0007); pointer-events: none; }
+.album-cover-pin:focus-visible { outline: 0.12em dashed #fff; outline-offset: 0.2em; border-radius: 0.4em; }
+.album-cover-pin.is-lifted, .album-tray-pin.is-lifted { opacity: 0.25; }
+.album-page.is-cover.is-target { box-shadow: inset 0 0 0 0.25em #ffffffb0; }
+
+/* The tray beside the closed book (only while the cover shows): the pins not on the cover yet. */
+.album-tray {
+  position: absolute; z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 10px;
+  border: 1px solid var(--desk-line); border-radius: 14px; background: var(--desk-glass); color: var(--desk-text);
+  backdrop-filter: blur(8px); max-width: 150px; text-align: center;
+  left: 16px; top: 50%; transform: translateY(-50%);
+  --pin-cut: drop-shadow(1.5px 0 0 #fff) drop-shadow(-1.5px 0 0 #fff) drop-shadow(0 1.5px 0 #fff) drop-shadow(0 -1.5px 0 #fff);
+}
+.album-tray[hidden] { display: none; }
+.album-tray-title { margin: 0; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.85rem; }
+.album-tray-pins { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.album-tray-pins:empty { display: none; }
+.album-tray-pin {
+  width: 86px; height: 96px; padding: 4px; border: 1px dashed transparent; border-radius: 10px; background: none;
+  cursor: grab; touch-action: none; animation: album-pin-wiggle 2.8s ease-in-out infinite;
+}
+.album-tray-pin:hover, .album-tray-pin:focus-visible { border-color: var(--desk-line); background: #ffffff12; outline: none; }
+.album-tray-pin img { width: 100%; height: 100%; object-fit: contain; filter: var(--pin-cut) drop-shadow(0 3px 4px #0007); pointer-events: none; }
+.album-tray-hint { color: var(--desk-muted); font-size: 0.78rem; line-height: 1.25; }
+@keyframes album-pin-wiggle { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(4deg) translateY(-2px); } }
+html[data-reduced-motion='true'] .album-tray-pin { animation: none; }
+/* One page at a time: the tray lies along the bottom, over the stage. */
+.album[data-mode='single'] .album-tray { flex-direction: row; top: auto; bottom: 64px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 8px 12px; }
+.album[data-mode='single'] .album-tray-pins { flex-direction: row; }
+.album[data-mode='single'] .album-tray-pin { width: 60px; height: 66px; }
+.album[data-mode='single'] .album-tray-hint { max-width: 12ch; }
+
+/* The pin in the hand while dragged, as large as it will be on the cover. */
+.album-pin-ghost {
+  position: fixed; z-index: 100; pointer-events: none; height: auto; transform: translate(-50%, -50%) rotate(var(--turn, 0deg)) scale(1.06);
+  filter: drop-shadow(1.5px 0 0 #fff) drop-shadow(-1.5px 0 0 #fff) drop-shadow(0 1.5px 0 #fff) drop-shadow(0 -1.5px 0 #fff) drop-shadow(0 10px 12px #0008);
+}

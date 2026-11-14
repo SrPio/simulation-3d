@@ -28,3 +28,5 @@
 @keyframes toast-out { to { opacity: 0; transform: translateY(-10px) scale(0.97); } }
 html[data-reduced-motion='true'] .toast { animation: none; }
 :root[data-touch='true'] .toasts { top: 58px; }
+/* A season pin's picture instead of a silhouette. */
+.toast-icon img { width: 42px; height: 42px; object-fit: contain; filter: drop-shadow(0 2px 2px #0006); }

@@ -77,6 +77,8 @@ import { HalloweenSky } from '../scene/HalloweenSky.ts';
 import type { Box2 } from '../world/collisions.ts';
 import { fontsReady } from '../core/fonts.ts';
 import { LIKE_KEY, LikeKey } from '../scene/LikeKey.ts';
+import { SeasonPins } from '../scene/SeasonPins.ts';
+import { pinReached, type Pin } from '../core/pins.ts';
 import type { LikeCounter } from '../core/likes.ts';
 
 export type ViewPreset = 'front' | 'left' | 'right' | 'back' | 'three-quarter';
@@ -129,6 +131,8 @@ type ViewerOptions = {
   christmas?: boolean;
   /** Room only: the shared like counter, shown on the like key on the ground (stepping on it likes the project). */
   likes?: LikeCounter;
+  /** Room only: the season pins lying on the map to be picked up (src/core/pins.ts pinsOnMap). */
+  pins?: readonly Pin[];
 };
 
 /** Where the like key stands on the outside ground (three.js x, z), past the end of the intro sentence. */
@@ -156,6 +160,8 @@ type ViewerEvents = {
   laptop?: (open: boolean, place: LaptopPlace) => void;
   /** Christmas: every snowman was destroyed and the snow hoverboard is unlocked (once, when it happens). */
   board?: () => void;
+  /** A season pin was walked over and picked up (once each). */
+  pin?: (id: string) => void;
 };
 
 const LOCOMOTION = new Set(['idle', 'walk', 'run', 'jump']);
@@ -289,6 +295,7 @@ export class CharacterViewer {
   private pressedKeys = '';
   /** The like key: how far it is pressed, and whether this press already liked. */
   private likeKey?: { view: LikeKey; depth: number; counted: boolean };
+  private seasonPins?: SeasonPins;
   private likeShadow = -1;
   private floorTexts?: FloorTexts;
   private signpost?: Signpost;
@@ -722,7 +729,7 @@ export class CharacterViewer {
       this.scene.add(this.model);
       if (this.room) this.scene.add(this.room);
       if (this.outside) this.scene.add(this.outside);
-      for (const object of [this.bags.length ? this.bagRoot : undefined, this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.rubik?.root, this.targetsView?.root, this.circuit?.root, this.graffiti?.root, this.candyBurst?.root, this.sky?.root, this.likeKey?.view.root,
+      for (const object of [this.bags.length ? this.bagRoot : undefined, this.ground?.mesh, this.shadows?.mesh, this.areas?.root, this.floorTexts?.mesh, this.signpost?.root, this.pieces?.root, this.about?.root, this.rubik?.root, this.targetsView?.root, this.circuit?.root, this.graffiti?.root, this.candyBurst?.root, this.sky?.root, this.likeKey?.view.root, this.seasonPins?.root,
         this.lights?.mesh, this.snowFall?.points, this.snowPlay?.root, this.snowPrints?.mesh, this.countdown?.mesh]) if (object) this.scene.add(object);
       if (!this.ground) this.createFloor(this.mixer ? 0 : box.min.y);
       this.frameLights();
@@ -1065,6 +1072,8 @@ export class CharacterViewer {
       counter.onChange = show;
       show();
     }
+    if (this.options.pins?.length) this.seasonPins = new SeasonPins(this.options.pins, data.groundY, import.meta.env.BASE_URL);
+    this.reportPins();
     // Christmas: the painted footprints give way to real ones in the snow.
     const floors = data.floors.filter((floor) => !(this.options.touch && floor.id === 'controls') && !(this.xmas && (floor.id === 'footprints' || floor.id === 'prints')));
     this.floorTexts = new FloorTexts(floors, data.groundY, !!this.options.touch);
@@ -2983,6 +2992,29 @@ export class CharacterViewer {
     if (this.host.dataset.likeKey !== pressed) this.host.dataset.likeKey = pressed;
   }
 
+  /**
+   * Season pins: they bob and turn on the map, and one is picked up when the character (walking, riding or on the
+   * board) passes over it, once the keys work (after START). `data-season-pins` lists those still lying there.
+   */
+  private updatePins(delta: number): void {
+    const pins = this.seasonPins;
+    if (!pins || !this.model) return;
+    pins.update(delta);
+    if (!this.keyboard?.enabled) return;
+    const { x, z } = this.model.position;
+    for (const pin of pins.waiting) {
+      if (!pinReached(pin, x, z)) continue;
+      pins.take(pin.id, this.reducedMotion);
+      this.reportPins();
+      this.events.pin?.(pin.id);
+    }
+  }
+
+  private reportPins(): void {
+    const value = this.seasonPins?.waiting.map((pin) => pin.id).join(',') || 'none';
+    if (this.host.dataset.seasonPins !== value) this.host.dataset.seasonPins = value;
+  }
+
   /** Toppled name letters and bowling pins (data-letters, data-pins). */
   private reportLetters(): void {
     const fallen = this.physics?.fallen(['name', 'tag']) ?? 0;
@@ -3574,6 +3606,7 @@ export class CharacterViewer {
       this.updateChristmas(delta);
       this.updateKeys(delta);
       this.updateLikeKey(delta);
+      this.updatePins(delta);
       this.checkSign();
     }
     if (this.ready && this.mixer && this.playing) {
@@ -3702,6 +3735,7 @@ export class CharacterViewer {
     this.about?.dispose();
     this.rubik?.dispose();
     this.likeKey?.view.dispose();
+    this.seasonPins?.dispose();
     if (this.options.likes) this.options.likes.onChange = undefined;
     this.graffiti?.dispose();
     this.targetsView?.dispose();
