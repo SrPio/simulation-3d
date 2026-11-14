@@ -1,5 +1,6 @@
 import {
-  AnimationMixer, Box3, CanvasTexture, Color, ConeGeometry, CylinderGeometry, DirectionalLight, DodecahedronGeometry, DoubleSide, Group,
+  AnimationMixer, Box3, CanvasTexture, CircleGeometry, Color, ConeGeometry, CylinderGeometry, DirectionalLight, DodecahedronGeometry, DoubleSide,
+  ExtrudeGeometry, Group, Shape,
   HemisphereLight, InstancedMesh, LoopRepeat, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, Plane,
   PlaneGeometry, Quaternion, RepeatWrapping, SRGBColorSpace, Scene, SkinnedMesh, TorusGeometry, Vector3, type BufferGeometry, type WebGLRenderer,
 } from 'three';
@@ -17,7 +18,7 @@ import {
 } from '../../character/riderSeat.ts';
 import { leanStep, leanTarget, restLean } from '../../character/riderPose.ts';
 import type { Sounds } from '../../audio/Sounds.ts';
-import { SLED, type ObstacleKind, type SledEvent, type SledRun } from './sledRun.ts';
+import { SLED, type ObstacleKind, type RampKind, type SledEvent, type SledRun, type TrickKind } from './sledRun.ts';
 
 export type Season = 'none' | 'halloween' | 'christmas';
 export type SledAssets = { character: GLTF; circuit: GLTF; halloween?: GLTF; christmas?: GLTF };
@@ -45,6 +46,24 @@ const TRACK_HALF = SLED.laneWidth * 1.5;
 const SCENERY = { trees: 34, rocks: 16, from: -30, span: 110 } as const;
 /** How far the pickup bottles are scaled up to read at this distance, and how high they float. */
 const BOTTLE = { scale: 2.5, height: 0.7 } as const;
+/** The heart that gives a life back: its size (m), how high it floats, its colour and its ring's. */
+const HEART = { size: 0.95, height: 0.75, color: 0xe8344a, ring: 0xff6b81 } as const;
+/**
+ * The circuit's ramps used as they are (`ramp`, `jump`), and the long one: the jump's ramp stretched to SLED.ramps.long
+ * (longer and steeper) and a little narrower, to fit its lane.
+ */
+const RAMP_SOURCES: Record<RampKind, { name: string; width?: number }> = {
+  ramp: { name: 'Circuit_ramp_01' },
+  jump: { name: 'Circuit_ramp_03' },
+  long: { name: 'Circuit_ramp_03', width: 2.3 },
+};
+/**
+ * Tricks turn the chair round `pivot` (m above its base, about the middle of chair and rider) rather than its casters;
+ * a trick landed nearly round finishes its turn in `finish` seconds.
+ */
+const TRICK_TURN = { pivot: 1.0, finish: 0.12 } as const;
+/** How quickly the chair's nose follows the slope it climbs or the arc it flies (1/s). */
+const PITCH_RATE = 12;
 
 type Palette = {
   background: number; track: string; off: string; speck: string; line: string; edge: string;
@@ -110,10 +129,20 @@ export class SledRunView {
   private readonly templates = new Map<string, Object3D>();
   private readonly obstacles = new Map<number, Object3D>();
   private readonly bottles = new Map<number, Object3D>();
+  private readonly hearts = new Map<number, Object3D>();
+  private readonly ramps = new Map<number, Object3D>();
+  private readonly rampTemplates = new Map<RampKind, Object3D>();
+  private readonly heartTemplate: Object3D;
+  private readonly heartParts: { geometry: BufferGeometry; material: MeshStandardMaterial | MeshBasicMaterial }[] = [];
+  /** A dark disc under the chair while it is off the ground, on low quality only (no shadow maps there). */
+  private readonly airShadow: Mesh<CircleGeometry, MeshBasicMaterial>;
+  private pitch = 0;
+  /** The trick being drawn and how far round it is (rad); it keeps turning to a whole turn after the run's ends. */
+  private trickKind: TrickKind | null = null;
+  private trickAngle = 0;
   private readonly flying: Flying[] = [];
   private readonly popping: { object: Object3D; age: number }[] = [];
   private readonly bottleTemplate: Object3D;
-  private readonly bottleMaterials: MeshStandardMaterial[] = [];
   private readonly scenery: { mesh: InstancedMesh; spots: { x: number; z: number; scale: number; turn: number }[] }[] = [];
   private readonly sceneryParts: { geometry: BufferGeometry; material: MeshStandardMaterial }[] = [];
   private readonly model: Object3D;
@@ -165,6 +194,12 @@ export class SledRunView {
     this.slope.add(this.ground);
     this.buildScenery();
     this.takeTemplates(assets.circuit.scene);
+    this.takeRamps(assets.circuit.scene);
+    this.heartTemplate = this.makeHeart();
+    this.airShadow = new Mesh(new CircleGeometry(0.9, 24), new MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false }));
+    this.airShadow.rotation.x = -Math.PI / 2;
+    this.airShadow.position.y = 0.02;
+    this.slope.add(this.airShadow);
 
     // The chair, its rider's root and, for a season, the vessel in its place.
     const chairObject = assets.circuit.scene.getObjectByName('OfficeChair');
@@ -174,7 +209,8 @@ export class SledRunView {
     chairObject.position.set(0, 0, 0);
     chairObject.rotation.set(0, 0, 0);
     this.chair.add(chairObject);
-    // Facing down the slope (+X).
+    // Facing down the slope (+X); the nose is pitched about the slope's Z after the turn.
+    this.chair.rotation.order = 'ZYX';
     this.chair.rotation.y = Math.PI / 2;
     this.slope.add(this.chair);
     this.rig = rig;
@@ -272,6 +308,24 @@ export class SledRunView {
           this.popping.push({ object: bottle, age: 0 });
         }
         sounds?.play('pop', 1);
+      } else if (event.type === 'heart') {
+        const heart = this.hearts.get(event.id);
+        if (heart) {
+          this.hearts.delete(event.id);
+          this.popping.push({ object: heart, age: 0 });
+        }
+        sounds?.play('best');
+      } else if (event.type === 'launch' && event.kind) {
+        sounds?.play('whoosh', 1);
+      } else if (event.type === 'trick-done') {
+        sounds?.play('chirp');
+      } else if (event.type === 'bail') {
+        this.trickKind = null;
+        this.trickAngle = 0;
+      } else if (event.type === 'land') {
+        sounds?.play('woodHeavy', event.kind === 'long' ? 4 : 2.5);
+        if (event.tricks.length) sounds?.play('best');
+        if (event.kind === 'long' && !this.options.reducedMotion) this.shake = Math.max(this.shake, 0.2);
       }
     }
 
@@ -280,14 +334,47 @@ export class SledRunView {
     this.placeScenery(run.distance);
     this.placeObstacles(run, dt);
     this.placeBottles(run, dt);
+    this.placeHearts(run);
+    this.placeRamps(run);
 
     // The chair: across the lanes, turned a little into a lane change, rocking on the bumps.
     const z = (1 - run.x) * SLED.laneWidth;
     const lateral = dt > 0 ? (run.x - this.lastX) / dt : 0;
     this.lastX = run.x;
     const turn = Math.max(-0.35, Math.min(0.35, lateral * 0.09));
-    this.chair.position.set(0, run.phase === 'playing' && !this.options.reducedMotion ? Math.abs(Math.sin(this.time * 17)) * 0.015 : 0, z);
+    const rolling = run.phase === 'playing' && !this.options.reducedMotion && run.height === 0;
+    this.chair.position.set(0, run.height + (rolling ? Math.abs(Math.sin(this.time * 17)) * 0.015 : 0), z);
     this.chair.rotation.y = Math.PI / 2 + turn;
+    // Nose up the ramp it climbs, along the arc it flies (a little less, so it reads as a jump, not a rocket).
+    const climbed = run.climbing ? run.ramps.find((ramp) => ramp.id === run.climbing) : undefined;
+    const slopeOf = (kind: RampKind) => Math.atan2(SLED.ramps[kind].height, SLED.ramps[kind].length);
+    const aim = climbed ? slopeOf(climbed.kind) : run.air ? Math.atan2(run.vy, Math.max(4, run.speed)) * 0.7 : 0;
+    this.pitch += (aim - this.pitch) * (1 - Math.exp(-dt * PITCH_RATE));
+    this.chair.rotation.z = this.pitch;
+    // A trick: a whole turn round (spin) or over backwards (flip), eased in and out, round the chair's middle.
+    const full = Math.PI * 2;
+    if (run.trick) {
+      this.trickKind = run.trick.kind;
+      this.trickAngle = full * (1 - Math.cos(Math.PI * Math.min(1, run.trick.turn))) / 2;
+    } else if (this.trickKind) {
+      this.trickAngle += (full / TRICK_TURN.finish) * dt;
+      if (this.trickAngle >= full || dt === 0) {
+        this.trickKind = null;
+        this.trickAngle = 0;
+      }
+    }
+    const base = this.chair.position.clone();
+    const pivot = new Vector3(0, TRICK_TURN.pivot, 0);
+    const before = pivot.clone().applyQuaternion(this.chair.quaternion);
+    if (this.trickKind === 'spin') this.chair.rotation.y += this.trickAngle;
+    else if (this.trickKind === 'flip') this.chair.rotation.z += this.trickAngle;
+    this.chair.position.copy(base).add(before).sub(pivot.applyQuaternion(this.chair.quaternion));
+    this.airShadow.position.z = z;
+    this.airShadow.visible = !this.renderer.shadowMap.enabled && run.height > 0.05;
+    this.airShadow.material.opacity = Math.max(0.08, 0.32 - run.height * 0.07);
+    this.airShadow.scale.setScalar(1 + run.height * 0.12);
+    // On a ramp the shadow lies on its boards, not under them.
+    this.airShadow.position.y = (climbed ? run.height : 0) + 0.02;
     const rig = this.rig;
     for (const caster of rig.casters) caster.rotation.y = turn * 2;
     for (const wheel of rig.wheels) wheel.rotation.x = run.distance / 0.05;
@@ -324,7 +411,7 @@ export class SledRunView {
     sounds?.loop('rolling', run.phase === 'playing' ? Math.min(1, run.speed / SLED.speed.max) * 0.8 : 0, Math.min(1, run.speed / SLED.speed.max));
 
     // The camera: the same isometric angle, looking ahead of the chair.
-    const target = this.slope.localToWorld(new Vector3(LOOK_AHEAD * this.half, 0, z * 0.35));
+    const target = this.slope.localToWorld(new Vector3(LOOK_AHEAD * this.half, run.height * 0.85, z * 0.35));
     if (this.shake > 0) {
       target.x += (Math.random() - 0.5) * this.shake;
       target.y += (Math.random() - 0.5) * this.shake;
@@ -347,9 +434,14 @@ export class SledRunView {
 
   /** Back to the start: no flying pieces or bottles, the nitro off. */
   reset(): void {
-    for (const object of [...this.obstacles.values(), ...this.bottles.values(), ...this.flying.map((entry) => entry.object), ...this.popping.map((entry) => entry.object)]) object.removeFromParent();
+    for (const object of [...this.obstacles.values(), ...this.bottles.values(), ...this.hearts.values(), ...this.ramps.values(), ...this.flying.map((entry) => entry.object), ...this.popping.map((entry) => entry.object)]) object.removeFromParent();
     this.obstacles.clear();
     this.bottles.clear();
+    this.hearts.clear();
+    this.ramps.clear();
+    this.pitch = 0;
+    this.trickKind = null;
+    this.trickAngle = 0;
     this.flying.length = 0;
     this.popping.length = 0;
     this.shake = 0;
@@ -368,13 +460,18 @@ export class SledRunView {
     this.reset();
     disposeObjects([...this.roots, this.slope, this.spray.mesh]);
     this.groundTexture.dispose();
-    for (const material of this.bottleMaterials) material.dispose();
     this.bottleTemplate.traverse((object) => {
       if (object.name === 'BottleRing' && object instanceof Mesh) {
         object.geometry.dispose();
         (object.material as MeshBasicMaterial).dispose();
       }
     });
+    for (const part of this.heartParts) {
+      part.geometry.dispose();
+      part.material.dispose();
+    }
+    this.airShadow.geometry.dispose();
+    this.airShadow.material.dispose();
     for (const part of this.sceneryParts) {
       part.geometry.dispose();
       part.material.dispose();
@@ -504,6 +601,116 @@ export class SledRunView {
     }
   }
 
+  /**
+   * The ramps as the run uses them: their length down the slope (+X) rising to the lip at x 0, standing on the ground,
+   * centred across the lane; the long one stretched from the circuit's jump.
+   */
+  private takeRamps(circuit: Object3D): void {
+    for (const [kind, source] of Object.entries(RAMP_SOURCES) as [RampKind, (typeof RAMP_SOURCES)[RampKind]][]) {
+      const original = circuit.getObjectByName(source.name);
+      if (!original) continue;
+      const copy = original.clone();
+      copy.position.set(0, 0, 0);
+      copy.rotation.set(0, 0, 0);
+      copy.scale.set(1, 1, 1);
+      const holder = new Group();
+      holder.add(copy);
+      holder.updateMatrixWorld(true);
+      // Modelled rising along its local +Z: measure it, stretch it to the run's size, then turn +Z down the slope.
+      const size = new Box3().setFromObject(holder).getSize(new Vector3());
+      const spec = SLED.ramps[kind];
+      copy.scale.set((source.width ?? size.x) / size.x, spec.height / size.y, spec.length / size.z);
+      copy.rotation.y = Math.PI / 2;
+      holder.updateMatrixWorld(true);
+      const box = new Box3().setFromObject(holder);
+      copy.position.sub(new Vector3(box.max.x, box.min.y, (box.min.z + box.max.z) / 2));
+      copy.traverse((object) => {
+        if (!(object instanceof Mesh)) return;
+        object.castShadow = true;
+        object.receiveShadow = true;
+      });
+      this.rampTemplates.set(kind, holder);
+    }
+  }
+
+  private placeRamps(run: SledRun): void {
+    const alive = new Set<number>();
+    for (const ramp of run.ramps) {
+      const template = this.rampTemplates.get(ramp.kind);
+      if (!template) continue;
+      alive.add(ramp.id);
+      let object = this.ramps.get(ramp.id);
+      if (!object) {
+        object = template.clone();
+        this.ramps.set(ramp.id, object);
+        this.slope.add(object);
+      }
+      object.position.set(ramp.at - run.distance, 0, (1 - ramp.lane) * SLED.laneWidth);
+    }
+    for (const [id, object] of this.ramps) {
+      if (alive.has(id)) continue;
+      object.removeFromParent();
+      this.ramps.delete(id);
+    }
+  }
+
+  /** The heart pickup: a puffy red heart standing up over a glowing ring. */
+  private makeHeart(): Object3D {
+    const shape = new Shape();
+    // A heart 1 unit tall, its tip at the bottom (y 0).
+    shape.moveTo(0, 0);
+    shape.bezierCurveTo(-0.08, 0.12, -0.55, 0.38, -0.55, 0.7);
+    shape.bezierCurveTo(-0.55, 0.92, -0.38, 1.02, -0.26, 1.02);
+    shape.bezierCurveTo(-0.12, 1.02, -0.03, 0.94, 0, 0.84);
+    shape.bezierCurveTo(0.03, 0.94, 0.12, 1.02, 0.26, 1.02);
+    shape.bezierCurveTo(0.38, 1.02, 0.55, 0.92, 0.55, 0.7);
+    shape.bezierCurveTo(0.55, 0.38, 0.08, 0.12, 0, 0);
+    const geometry = new ExtrudeGeometry(shape, { depth: 0.16, bevelEnabled: true, bevelThickness: 0.12, bevelSize: 0.08, bevelSegments: 4, curveSegments: 16 });
+    geometry.translate(0, 0, -0.08);
+    geometry.scale(HEART.size, HEART.size, HEART.size);
+    const material = new MeshStandardMaterial({ color: HEART.color, emissive: HEART.color, emissiveIntensity: 0.25, roughness: 0.35, metalness: 0.05 });
+    const heart = new Mesh(geometry, material);
+    heart.castShadow = true;
+    const holder = new Group();
+    const turner = new Group();
+    turner.add(heart);
+    holder.add(turner);
+    const ringGeometry = new TorusGeometry(0.55, 0.06, 8, 32);
+    const ringMaterial = new MeshBasicMaterial({ color: HEART.ring, transparent: true, opacity: 0.85 });
+    const ring = new Mesh(ringGeometry, ringMaterial);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.04;
+    holder.add(ring);
+    this.heartParts.push({ geometry, material }, { geometry: ringGeometry, material: ringMaterial });
+    return holder;
+  }
+
+  private placeHearts(run: SledRun): void {
+    const alive = new Set<number>();
+    for (const heart of run.hearts) {
+      if (heart.taken) continue;
+      alive.add(heart.id);
+      let object = this.hearts.get(heart.id);
+      if (!object) {
+        object = this.heartTemplate.clone();
+        this.hearts.set(heart.id, object);
+        this.slope.add(object);
+      }
+      const still = this.options.reducedMotion;
+      object.position.set(heart.at - run.distance, 0, (1 - heart.lane) * SLED.laneWidth);
+      const turner = object.children[0];
+      turner.position.y = HEART.height + (still ? 0 : Math.sin(this.time * 3 + heart.id) * 0.12);
+      // Facing the camera half the time: a slow swing, never edge-on for long; a beat now and then.
+      turner.rotation.y = still ? Math.PI / 4 : Math.PI / 4 + Math.sin(this.time * 1.6 + heart.id) * 0.9;
+      turner.scale.setScalar(still ? 1 : 1 + Math.max(0, Math.sin(this.time * 7)) ** 8 * 0.12);
+    }
+    for (const [id, object] of this.hearts) {
+      if (alive.has(id)) continue;
+      object.removeFromParent();
+      this.hearts.delete(id);
+    }
+  }
+
   private makeObstacle(kind: ObstacleKind): Object3D {
     const part = OBSTACLE_PARTS[kind];
     const group = new Group();
@@ -569,7 +776,8 @@ export class SledRunView {
 
   /** The pickup: the vessel's own bottle (a soda bottle, a test tube, a thruster) standing up, larger, over a glowing ring. */
   private makeBottle(root: Object3D, parts: RegExp, nozzleName: string): Object3D {
-    root.updateMatrixWorld(true);
+    // With its parents too: getWorldPosition below updates them, and the root's frame must be the same in both.
+    root.updateWorldMatrix(true, true);
     // In the vessel's own frame, so the slope and the chair's turn do not tilt it.
     const toRoot = root.matrixWorld.clone().invert();
     const relative = new Matrix4();
@@ -599,19 +807,9 @@ export class SledRunView {
     ring.position.y = 0.04;
     ring.name = 'BottleRing';
     holder.add(ring);
-    // Its own materials: the glass less clear than on the chair and everything faintly lit, so it reads from afar.
-    const glow = new Color(this.palette.glow);
+    // The same materials as the bottles on the chair (the cola is the chair's own colour, nothing tinted).
     inner.traverse((object) => {
-      if (!(object instanceof Mesh)) return;
-      object.castShadow = true;
-      const material = (object.material as MeshStandardMaterial).clone();
-      if (material.transparent) material.opacity = Math.max(material.opacity, 0.62);
-      if (material.emissive) {
-        material.emissive.copy(glow);
-        material.emissiveIntensity = 0.22;
-      }
-      object.material = material;
-      this.bottleMaterials.push(material);
+      if (object instanceof Mesh) object.castShadow = true;
     });
     return holder;
   }

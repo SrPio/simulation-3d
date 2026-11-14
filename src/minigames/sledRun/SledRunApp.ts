@@ -6,8 +6,9 @@ import type { Sounds } from '../../audio/Sounds.ts';
 import { ACTION_ICONS } from '../../ui/silhouettes.ts';
 import type { AppHandle, DesktopApp } from '../../home/desktop/WindowManager.ts';
 import {
-  SLED, multiplier, newRun, points, readSledRecord, saveSledScore, startRun, steer, stepRun, type SledRun,
+  SLED, multiplier, newRun, points, readSledRecord, saveSledScore, startRun, steer, stepRun, trick, type SledRun, type TrickKind,
 } from './sledRun.ts';
+import { howToSheet } from './howTo.ts';
 import { SledRunView, type Season, type SledAssets } from './SledRunView.ts';
 
 export type SledHooks = {
@@ -29,6 +30,19 @@ const ARROW = (points: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><
 const LEFT_KEYS = new Set(['ArrowLeft', 'KeyA', 'ArrowDown', 'KeyS']);
 const RIGHT_KEYS = new Set(['ArrowRight', 'KeyD', 'ArrowUp', 'KeyW']);
 const GO_KEYS = new Set(['Enter', 'Space', 'NumpadEnter']);
+/** Tricks in the air: a spin round, a flip over backwards. */
+const TRICK_KEYS: Record<string, TrickKind> = { Space: 'spin', KeyZ: 'spin', KeyJ: 'spin', KeyX: 'flip', KeyK: 'flip' };
+
+/** The tricks of a jump as words: «Vuelta ×2 + Mortal». */
+function trickNames(tricks: readonly TrickKind[]): string {
+  const groups: { kind: TrickKind; count: number }[] = [];
+  for (const kind of tricks) {
+    const last = groups[groups.length - 1];
+    if (last?.kind === kind) last.count += 1;
+    else groups.push({ kind, count: 1 });
+  }
+  return groups.map(({ kind, count }) => `${t(`sled.trick.${kind}`)}${count > 1 ? ` ×${count}` : ''}`).join(' + ');
+}
 /** Below this horizontal movement (px) a touch is a tap, not a swipe. */
 const SWIPE = 28;
 
@@ -67,6 +81,7 @@ class SledRunGame {
   private readonly multi: HTMLElement;
   private readonly best: HTMLElement;
   private readonly nitro: HTMLDivElement;
+  private readonly pop: HTMLParagraphElement;
   private readonly abort = new AbortController();
   private readonly resizer: ResizeObserver;
   private view?: SledRunView;
@@ -78,6 +93,7 @@ class SledRunGame {
   private shown = { lives: -1, score: -1, multi: -1, nitro: -1 };
   private touchStart?: { x: number; y: number; id: number };
   private disposed = false;
+  private popTimer = 0;
 
   constructor(body: HTMLElement, hooks: SledHooks) {
     this.hooks = hooks;
@@ -90,6 +106,7 @@ class SledRunGame {
           <div class="sled-score"><span data-i18n="sled.score"></span><strong>0</strong><em>×1</em></div>
           <div class="sled-best"><span data-i18n="sled.best"></span><strong>0</strong></div>
         </div>
+        <p class="sled-pop" aria-hidden="true"></p>
         <div class="sled-nitro" hidden><span data-i18n="sled.nitro"></span><i></i></div>
         <div class="sled-touch">
           <button type="button" class="sled-steer" data-steer="-1" data-i18n-label="sled.left">${ARROW('M15 5l-7 7 7 7')}</button>
@@ -105,6 +122,7 @@ class SledRunGame {
     this.multi = body.querySelector('.sled-score em')!;
     this.best = body.querySelector('.sled-best strong')!;
     this.nitro = body.querySelector('.sled-nitro')!;
+    this.pop = body.querySelector('.sled-pop')!;
     this.best.textContent = String(this.record.best);
     this.handle = {
       dispose: () => this.dispose(),
@@ -112,6 +130,10 @@ class SledRunGame {
       pad: (button) => this.pad(button),
       front: (front) => {
         if (!front) this.pause();
+      },
+      // The instructions are drawn with their words in them: draw them again in the new language.
+      language: () => {
+        if (this.state === 'ready') this.show('ready');
       },
     };
     const signal = this.abort.signal;
@@ -135,7 +157,11 @@ class SledRunGame {
       this.touchStart = undefined;
       if (!from || from.id !== event.pointerId) return;
       const dx = event.clientX - from.x;
-      if (Math.abs(dx) >= SWIPE && Math.abs(dx) > Math.abs(event.clientY - from.y)) this.steer(dx > 0 ? 1 : -1);
+      const dy = event.clientY - from.y;
+      if (Math.abs(dx) >= SWIPE && Math.abs(dx) > Math.abs(dy)) this.steer(dx > 0 ? 1 : -1);
+      // In the air: a swipe up flips, a tap spins.
+      else if (dy <= -SWIPE) this.trick('flip');
+      else if (Math.abs(dx) < SWIPE && Math.abs(dy) < SWIPE) this.trick('spin');
     }, { signal });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) this.pause();
@@ -187,6 +213,15 @@ class SledRunGame {
       view.update(this.run, dt, events);
       for (const event of events) {
         if (event.type === 'crash') this.flashLives();
+        if (event.type === 'heart') {
+          this.flashLives('is-gain');
+          this.popText(t('sled.heart'), 'heart');
+        }
+        if (event.type === 'bail') this.popText(t('sled.bail'), 'bail');
+        else if (event.type === 'land' && event.points > 0) {
+          const value = String(Math.round(event.points));
+          this.popText(event.tricks.length ? t('sled.tricks', { names: trickNames(event.tricks), points: value }) : t('sled.jump', { points: value }), event.tricks.length ? 'trick' : 'jump');
+        }
         if (event.type === 'over') this.finish();
       }
     } else if (this.state !== 'paused') {
@@ -233,6 +268,10 @@ class SledRunGame {
     this.hooks.host.dataset.mgLane = String(this.run.lane);
   }
 
+  private trick(kind: TrickKind): void {
+    if (this.state === 'playing' && trick(this.run, kind)) this.hooks.sounds?.play('whoosh', 0.7);
+  }
+
   private finish(): void {
     this.view?.silence();
     const score = points(this.run);
@@ -245,7 +284,7 @@ class SledRunGame {
 
   private key(event: KeyboardEvent, down: boolean): boolean {
     const code = event.code;
-    const ours = LEFT_KEYS.has(code) || RIGHT_KEYS.has(code) || GO_KEYS.has(code) || code === 'KeyP';
+    const ours = LEFT_KEYS.has(code) || RIGHT_KEYS.has(code) || GO_KEYS.has(code) || code in TRICK_KEYS || code === 'KeyP';
     if (!down) return ours && this.state === 'playing';
     if (this.state === 'playing') {
       if (code === 'Escape' || code === 'KeyP') {
@@ -254,6 +293,7 @@ class SledRunGame {
       }
       if (!event.repeat && LEFT_KEYS.has(code)) this.steer(-1);
       else if (!event.repeat && RIGHT_KEYS.has(code)) this.steer(1);
+      else if (!event.repeat && code in TRICK_KEYS) this.trick(TRICK_KEYS[code]);
       return ours;
     }
     if (this.state === 'paused' && (GO_KEYS.has(code) || code === 'KeyP')) {
@@ -271,6 +311,8 @@ class SledRunGame {
     if (this.state === 'playing') {
       if (button === 'left' || button === 'down') this.steer(-1);
       else if (button === 'right' || button === 'up') this.steer(1);
+      else if (button === 'cross') this.trick('spin');
+      else if (button === 'triangle') this.trick('flip');
       else if (button === 'start' || button === 'circle') this.pause();
       return button !== 'square';
     }
@@ -302,7 +344,7 @@ class SledRunGame {
     screen.innerHTML = {
       loading: `<div class="sled-card"><span class="sled-spinner" aria-hidden="true"></span><p data-i18n="sled.loading"></p></div>`,
       error: `<div class="sled-card"><p data-i18n="sled.error"></p></div>`,
-      ready: `<div class="sled-card">${title}<p class="sled-how" data-i18n="sled.howTo"></p><p class="sled-how is-touch" data-i18n="sled.howToTouch"></p>${button('start', 'sled.start')}</div>`,
+      ready: `<div class="sled-card is-how">${title}${howToSheet(this.hooks.season)}${button('start', 'sled.start')}</div>`,
       paused: `<div class="sled-card"><h3 data-i18n="sled.paused"></h3>${button('resume', 'sled.resume')}<p class="sled-hint" data-i18n="sled.quitHint"></p></div>`,
       over: `<div class="sled-card"><h3 data-i18n="sled.over"></h3>
         <p class="sled-final"><strong>${result?.score ?? 0}</strong><span data-i18n="sled.score"></span></p>
@@ -313,11 +355,23 @@ class SledRunGame {
     screen.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
   }
 
-  /** The lives lost blink once. */
-  private flashLives(): void {
-    this.lives.classList.remove('is-hit');
+  /** The lives blink once: shaken when one is lost, swelling when one comes back. */
+  private flashLives(kind: 'is-hit' | 'is-gain' = 'is-hit'): void {
+    this.lives.classList.remove('is-hit', 'is-gain');
     void this.lives.offsetWidth;
-    this.lives.classList.add('is-hit');
+    this.lives.classList.add(kind);
+  }
+
+  /** A short word over the slope (a landed jump's points, a life back) that rises and fades. */
+  private popText(text: string, kind: 'jump' | 'trick' | 'bail' | 'heart'): void {
+    this.pop.textContent = text;
+    this.pop.dataset.kind = kind;
+    this.pop.classList.remove('is-on');
+    void this.pop.offsetWidth;
+    this.pop.classList.add('is-on');
+    // With reduced motion there is no animation to fade it: it just goes after a moment.
+    window.clearTimeout(this.popTimer);
+    this.popTimer = window.setTimeout(() => this.pop.classList.remove('is-on'), 1100);
   }
 
   private updateHud(): void {
@@ -333,6 +387,8 @@ class SledRunGame {
       this.shown.score = score;
       this.score.textContent = String(score);
       host.dataset.mgScore = String(score);
+      host.dataset.mgJumps = String(run.jumps);
+      host.dataset.mgTricks = String(run.tricks);
     }
     const multi = multiplier(run);
     if (this.shown.multi !== multi) {
@@ -353,11 +409,12 @@ class SledRunGame {
     if (this.disposed) return;
     this.disposed = true;
     cancelAnimationFrame(this.frame);
+    window.clearTimeout(this.popTimer);
     this.abort.abort();
     this.resizer.disconnect();
     this.view?.dispose();
     const host = this.hooks.host;
     host.dataset.minigame = 'none';
-    for (const key of ['mgLives', 'mgScore', 'mgLane', 'mgNitro']) delete host.dataset[key];
+    for (const key of ['mgLives', 'mgScore', 'mgLane', 'mgNitro', 'mgJumps', 'mgTricks']) delete host.dataset[key];
   }
 }
