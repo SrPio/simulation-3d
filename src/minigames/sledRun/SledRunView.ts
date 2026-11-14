@@ -44,8 +44,11 @@ const GROUND = { span: 150, back: 40, width: 60, tile: 10 } as const;
 const TRACK_HALF = SLED.laneWidth * 1.5;
 /** Trees and rocks along both sides, recycled down the slope between `from` and `from + span` (m from the chair). */
 const SCENERY = { trees: 34, rocks: 16, from: -30, span: 110 } as const;
-/** How far the pickup bottles are scaled up to read at this distance, and how high they float. */
-const BOTTLE = { scale: 2.5, height: 0.7 } as const;
+/**
+ * The pickup, whatever the season's vessel: `size` m tall (the soda bottle 2.5 times its size on the chair, so it reads
+ * at this distance; the test tube and the thruster scaled to the same height) floating `lift` m over its ring.
+ */
+const BOTTLE = { size: 1.15, lift: 0.18 } as const;
 /** The heart that gives a life back: its size (m), how high it floats, its colour and its ring's. */
 const HEART = { size: 0.95, height: 0.75, color: 0xe8344a, ring: 0xff6b81 } as const;
 /**
@@ -219,6 +222,8 @@ export class SledRunView {
     let bottleParts = /^ChairBottle(Liquid|Cap)?_right$/;
     let bottleRoot: Object3D = chairObject;
     let nozzle = 'ChairNozzle_right';
+    // Bottle and test tube stand mouth up; the thruster stands on its exhaust like on the nitro gauge.
+    let nozzleUp = true;
     const dress = assets.halloween ? takeHalloween(assets.halloween.scene) : undefined;
     const xmas = assets.christmas ? takeChristmas(assets.christmas.scene) : undefined;
     if (dress?.cauldron) {
@@ -233,8 +238,9 @@ export class SledRunView {
       bottleRoot = xmas.sleigh;
       bottleParts = /^(SleighThruster|SleighFuelGlass|SleighFuel)_right$/;
       nozzle = 'SleighNozzle_right';
+      nozzleUp = false;
     }
-    this.bottleTemplate = this.makeBottle(bottleRoot, bottleParts, nozzle);
+    this.bottleTemplate = this.makeBottle(bottleRoot, bottleParts, nozzle, nozzleUp);
     if (this.vessel) hangVessel(rig, rider, offset, this.vessel, dress?.cauldron ? 'cauldron' : 'sleigh');
     chairObject.traverse((object) => {
       if (!(object instanceof Mesh)) return;
@@ -774,8 +780,11 @@ export class SledRunView {
     this.flying.push({ object, velocity, spin, age: 0 });
   }
 
-  /** The pickup: the vessel's own bottle (a soda bottle, a test tube, a thruster) standing up, larger, over a glowing ring. */
-  private makeBottle(root: Object3D, parts: RegExp, nozzleName: string): Object3D {
+  /**
+   * The pickup: the vessel's own bottle (a soda bottle, a test tube, a thruster) standing up, BOTTLE.size tall, over a
+   * glowing ring; its nozzle at the top (`nozzleUp`) or at the bottom.
+   */
+  private makeBottle(root: Object3D, parts: RegExp, nozzleName: string, nozzleUp: boolean): Object3D {
     // With its parents too: getWorldPosition below updates them, and the root's frame must be the same in both.
     root.updateWorldMatrix(true, true);
     // In the vessel's own frame, so the slope and the chair's turn do not tilt it.
@@ -792,15 +801,15 @@ export class SledRunView {
     const centre = box.getCenter(new Vector3());
     const size = box.getSize(new Vector3());
     for (const child of inner.children) child.position.sub(centre);
-    // Standing up along its longest side, the mouth (the nozzle's end) at the top.
+    // Standing up along its longest side, the nozzle's end up or down.
     const axis = size.x >= size.y && size.x >= size.z ? new Vector3(1, 0, 0) : size.z >= size.y ? new Vector3(0, 0, 1) : new Vector3(0, 1, 0);
     const nozzle = root.getObjectByName(nozzleName)?.getWorldPosition(new Vector3()).applyMatrix4(toRoot).sub(centre);
-    if (nozzle && nozzle.dot(axis) < 0) axis.negate();
+    if (nozzle && nozzle.dot(axis) < 0 === nozzleUp) axis.negate();
     const holder = new Group();
     const turner = new Group();
     turner.add(inner);
     turner.quaternion.setFromUnitVectors(axis, new Vector3(0, 1, 0));
-    turner.scale.setScalar(BOTTLE.scale);
+    turner.scale.setScalar(BOTTLE.size / Math.max(size.x, size.y, size.z));
     holder.add(turner);
     const ring = new Mesh(new TorusGeometry(0.55, 0.06, 8, 32), new MeshBasicMaterial({ color: this.palette.glow, transparent: true, opacity: 0.85 }));
     ring.rotation.x = Math.PI / 2;
@@ -828,7 +837,7 @@ export class SledRunView {
       const bob = this.options.reducedMotion ? 0 : Math.sin(this.time * 3 + bottle.id) * 0.12;
       object.position.set(bottle.at - run.distance, 0, (1 - bottle.lane) * SLED.laneWidth);
       const turner = object.children[0];
-      turner.position.y = BOTTLE.height + bob;
+      turner.position.y = BOTTLE.lift + BOTTLE.size / 2 + bob;
       if (!this.options.reducedMotion) object.rotation.y = this.time * 1.8 + bottle.id;
     }
     for (const [id, object] of this.bottles) {
