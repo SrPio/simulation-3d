@@ -270,7 +270,7 @@ const hints = new HintRules();
 let hintClock: number | undefined;
 
 /** Seconds the character types at the open laptop before its screen fills the page (the lid and the typing show first). */
-const DESKTOP_DELAY = 1.6;
+const DESKTOP_DELAY = 0.6;
 let desktopTimer: number | undefined;
 
 function onLaptop(open: boolean): void {
