@@ -4,6 +4,7 @@ import { STAMPS, STAMP_SECTIONS, stampCount, type Stamp, type StampBook, type St
 import { ACTION_ICONS, HEAD_OUTLINE } from '../../ui/silhouettes.ts';
 import type { AppHandle, DesktopApp } from '../desktop/WindowManager.ts';
 import { PageFlip, type FlipMode } from './PageFlip.ts';
+import { stampIcon } from './stampIcons.ts';
 
 export type AlbumHooks = {
   stamps: StampBook;
@@ -28,11 +29,12 @@ const ARROW = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path 
 
 const head = (className = '') => `<svg class="${className}" viewBox="0 0 ${HEAD_OUTLINE.width} ${HEAD_OUTLINE.height}" aria-hidden="true"><path d="${HEAD_OUTLINE.d}"/></svg>`;
 
-/** A sticker's picture: the head or one of the action figures. */
+/** A sticker's picture: the head or one of the action figures, and its own small icon on a badge in the corner. */
 function art(stamp: Stamp): string {
-  if (stamp.art === 'head') return head('album-art');
+  const icon = stampIcon(stamp.id);
+  if (stamp.art === 'head') return head('album-art') + icon;
   const d = ACTION_ICONS[stamp.art as keyof typeof ACTION_ICONS] ?? ACTION_ICONS.laptop;
-  return `<svg class="album-art" viewBox="0 0 100 100" aria-hidden="true"><path fill-rule="evenodd" d="${d}"/></svg>`;
+  return `<svg class="album-art" viewBox="0 0 100 100" aria-hidden="true"><path fill-rule="evenodd" d="${d}"/></svg>${icon}`;
 }
 
 /** The album in a desktop window. */

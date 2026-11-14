@@ -120,6 +120,17 @@
 .album-stamp.is-got:nth-child(even) .album-stamp-face { transform: rotate(2.5deg); }
 .album-art { width: 70%; height: 70%; fill: #fff; stroke: none; filter: drop-shadow(0 0.08em 0 #0004); }
 .album-stamp .album-art[viewBox^='0 0 94'] { fill: none; stroke: #fff; stroke-width: 2; }
+/* With a badge the figure steps down and left, out of its way. */
+.album-stamp.is-got .album-art { width: 60%; height: 60%; transform: translate(-12%, 10%); }
+/* The head outline fills its box: a little smaller, so its cap keeps clear of the badge. */
+.album-stamp.is-got .album-art[viewBox^='0 0 94'] { width: 54%; height: 54%; transform: translate(-14%, 13%); }
+/* The sticker's own icon: white lines on a disc of the theme's deep accent, ringed in white, in the top right corner. */
+.album-stamp-face > .album-badge {
+  position: absolute; top: 10%; right: 9%; width: 33%; height: auto; aspect-ratio: 1; box-sizing: border-box; padding: 6%;
+  border-radius: 50%; background: var(--desk-accent-strong); box-shadow: 0 0 0 0.12em #fff, 0 0.08em 0.12em #0003; transform: rotate(6deg);
+}
+.album-badge .i-s { fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.album-badge .i-f { fill: #fff; }
 .album-stamp strong { font-size: 0.8em; }
 .album-stamp small { font-size: 0.68em; color: var(--ink-soft); line-height: 1.2; }
 /* A locked sticker's clue keeps two lines' room, as a got one's name and date do, so every stamp is the same size. */
