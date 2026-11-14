@@ -37,6 +37,9 @@ const COVER_PIN = { width: 0.26, margin: 0.06 };
 const PIN_DRAG = 5;
 /** Where pins put on the cover without dragging go, one after another round the head (fractions of the cover). */
 const COVER_SPOTS = [[0.2, 0.62], [0.8, 0.6], [0.24, 0.3], [0.78, 0.32], [0.5, 0.8], [0.5, 0.45]] as const;
+/** The sticker bubble's distance from its sticker and from the window's edges (px). */
+const TIP_GAP = 10;
+const TIP_EDGE = 8;
 
 const pinImage = (image: string) => `${import.meta.env.BASE_URL}${image}`;
 
@@ -82,6 +85,9 @@ class Album {
   private readonly stopListening: () => void;
   private readonly abort = new AbortController();
   private readonly tray: HTMLDivElement;
+  private readonly tip: HTMLDivElement;
+  private readonly frame: HTMLElement;
+  private tipFor?: HTMLElement;
   private readonly stopPins: () => void;
   private drag?: { id: string; from: 'tray' | 'cover'; pointer: number; x: number; y: number; moved: boolean; source: HTMLElement; ghost?: HTMLImageElement; turn: number };
   private onCover = false;
@@ -93,6 +99,7 @@ class Album {
       <div class="album" data-owns-keys tabindex="0" data-i18n-label="album.title">
         <div class="album-stage"></div>
         <div class="album-tray" hidden><p class="album-tray-title"></p><div class="album-tray-pins"></div><small class="album-tray-hint"></small></div>
+        <div class="album-tip" role="tooltip" hidden><strong class="album-tip-title"></strong><p class="album-tip-text"></p><small class="album-tip-note"></small></div>
         <nav class="album-nav">
           <button type="button" class="album-turn" data-turn="-1" data-i18n-label="album.prev">${ARROW('M15 5l-7 7 7 7')}</button>
           <span class="album-where" aria-live="polite"></span>
@@ -109,7 +116,10 @@ class Album {
       render: (face) => this.page(FACES[face], face),
       reducedMotion: hooks.reducedMotion,
       onChange: (shown) => this.changed(shown),
-      onTurn: () => hooks.rustle?.(),
+      onTurn: () => {
+        this.hideTip();
+        hooks.rustle?.();
+      },
     });
     const signal = this.abort.signal;
     this.prevButton.addEventListener('click', () => this.flip.prev(), { signal });
@@ -119,6 +129,31 @@ class Album {
       const go = (event.target as Element).closest<HTMLElement>('[data-go]')?.dataset.go;
       if (go !== undefined) this.flip.goToFace(Number(go));
     }, { signal });
+    this.tip = body.querySelector('.album-tip')!;
+    this.frame = body.querySelector('.album')!;
+    // How to get a sticker: a speech bubble over it while the mouse is on it, it has the keyboard focus or it was tapped.
+    const tipOf = (event: Event) => (event.target as Element | null)?.closest?.<HTMLElement>('[data-tip]') ?? undefined;
+    this.stage.addEventListener('pointerover', (event) => {
+      const button = tipOf(event);
+      if (button && event.pointerType === 'mouse') this.showTip(button);
+    }, { signal });
+    this.stage.addEventListener('pointerout', (event) => {
+      const button = tipOf(event);
+      if (button && event.pointerType === 'mouse' && !button.contains(event.relatedTarget as Node | null)) this.hideTip();
+    }, { signal });
+    this.stage.addEventListener('focusin', (event) => {
+      const button = tipOf(event);
+      if (button?.matches(':focus-visible')) this.showTip(button);
+    }, { signal });
+    this.stage.addEventListener('focusout', () => this.hideTip(), { signal });
+    this.stage.addEventListener('click', (event) => {
+      const button = tipOf(event);
+      if (button) this.showTip(button);
+    }, { signal });
+    // A press anywhere else puts the bubble away.
+    window.addEventListener('pointerdown', (event) => {
+      if (!tipOf(event)) this.hideTip();
+    }, { signal, capture: true });
     this.stopListening = hooks.stamps.onUnlock(() => this.flip.refresh());
     this.stopPins = hooks.pins.onChange(() => {
       this.flip.refresh();
@@ -151,6 +186,7 @@ class Album {
       key: (event, down) => this.key(event, down),
       pad: (button) => this.pad(button),
       language: () => {
+        this.hideTip();
         this.flip.refresh();
         this.changed(this.flip.shown);
       },
@@ -159,6 +195,7 @@ class Album {
 
   /** Pick one or two pages and their size from the room the window gives. */
   private layout(): void {
+    this.hideTip();
     const box = this.stage.getBoundingClientRect();
     const width = Math.max(0, box.width - STAGE_PADDING * 2);
     const height = Math.max(0, box.height - STAGE_PADDING * 2);
@@ -175,6 +212,7 @@ class Album {
 
   /** After a turn: the page counter, the arrows, and `data-album`. */
   private changed(shown: number[]): void {
+    this.hideTip();
     const inside = shown.filter((face) => FACES[face] !== 'cover' && FACES[face] !== 'back');
     this.label.textContent = inside.length === 2 ? t('album.pages', { from: String(inside[0]), to: String(inside[1]) }) : shown.map((face) => this.faceName(face)).join(' · ');
     const first = shown[0] ?? 0;
@@ -392,12 +430,15 @@ class Album {
     const slots = STAMPS.filter((stamp) => stamp.section === section).map((stamp) => {
       const got = state[stamp.id];
       const name = t(`stamps.${stamp.id}.name` as MessageKey);
+      // The face is a button: hovering, focusing or tapping it shows how the sticker is got (`showTip`), and a press on
+      // it never turns the page.
+      const face = (inner: string) => `<button type="button" class="album-stamp-face" data-tip="${stamp.id}" aria-label="${got || stamp.section !== 'secrets' ? name : t('album.secret')}">${inner}</button>`;
       if (!got) {
         // Locked: a «?» and the clue (vague for the secrets).
         const hint = t(`stamps.${stamp.id}.hint` as MessageKey);
-        return `<li class="album-stamp is-locked" data-stamp="${stamp.id}"><span class="album-stamp-face"><span class="album-unknown">?</span></span><small>${hint}</small></li>`;
+        return `<li class="album-stamp is-locked" data-stamp="${stamp.id}">${face('<span class="album-unknown">?</span>')}<small>${hint}</small></li>`;
       }
-      return `<li class="album-stamp is-got" data-stamp="${stamp.id}"><span class="album-stamp-face">${art(stamp)}</span><strong>${name}</strong><small>${t('album.got', { date: date.format(got) })}</small></li>`;
+      return `<li class="album-stamp is-got" data-stamp="${stamp.id}">${face(art(stamp))}<strong>${name}</strong><small>${t('album.got', { date: date.format(got) })}</small></li>`;
     }).join('');
     return `
       <header class="album-section">
@@ -406,6 +447,46 @@ class Album {
         <em>${count.got}/${count.total}</em>
       </header>
       <ul class="album-stamps" data-face="${face}">${slots}</ul>`;
+  }
+
+  /**
+   * The bubble over a sticker: its name and how it is got. A secret not got yet keeps its name and gives only its clue.
+   * It points at the sticker from above, or from below when there is no room above, and stays inside the window.
+   */
+  private showTip(button: HTMLElement): void {
+    const id = button.dataset.tip!;
+    const stamp = STAMPS.find((entry) => entry.id === id);
+    if (!stamp) return;
+    const got = this.hooks.stamps.state[id];
+    const secret = !got && stamp.section === 'secrets';
+    this.tip.querySelector('.album-tip-title')!.textContent = secret ? t('album.secret') : t(`stamps.${id}.name` as MessageKey);
+    this.tip.querySelector('.album-tip-text')!.textContent = t(`stamps.${id}.${secret ? 'hint' : 'how'}` as MessageKey);
+    const note = this.tip.querySelector<HTMLElement>('.album-tip-note')!;
+    note.textContent = secret ? t('album.secretTip') : '';
+    note.hidden = !secret;
+    this.tip.classList.toggle('is-got', Boolean(got));
+    this.tip.hidden = false;
+    this.tipFor = button;
+    const frame = this.frame.getBoundingClientRect();
+    const face = button.getBoundingClientRect();
+    const width = this.tip.offsetWidth;
+    const height = this.tip.offsetHeight;
+    const centre = face.left + face.width / 2 - frame.left;
+    const below = face.top - frame.top - height - TIP_GAP < TIP_EDGE;
+    const left = Math.min(Math.max(centre - width / 2, TIP_EDGE), Math.max(TIP_EDGE, frame.width - width - TIP_EDGE));
+    const top = below ? face.bottom - frame.top + TIP_GAP : face.top - frame.top - height - TIP_GAP;
+    this.tip.classList.toggle('is-below', below);
+    this.tip.style.left = `${left}px`;
+    this.tip.style.top = `${top}px`;
+    this.tip.style.setProperty('--tail', `${Math.min(Math.max(centre - left, 18), width - 18)}px`);
+    this.hooks.host.dataset.albumTip = id;
+  }
+
+  private hideTip(): void {
+    if (!this.tipFor) return;
+    this.tipFor = undefined;
+    this.tip.hidden = true;
+    delete this.hooks.host.dataset.albumTip;
   }
 
   private dispose(): void {
@@ -417,5 +498,6 @@ class Album {
     this.flip.dispose();
     delete this.hooks.host.dataset.album;
     delete this.hooks.host.dataset.albumCover;
+    delete this.hooks.host.dataset.albumTip;
   }
 }
