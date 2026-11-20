@@ -285,7 +285,6 @@ desktop.setApps(desktopApps({
     dismiss: () => { dogPending = 'dismiss'; saveDog(storage, false); },
     cancel: () => { saveDog(storage, dogPending === 'dismiss'); dogPending = undefined; },
     shutdown: () => desktop.close(),
-    keys: dogKeys,
     picture: `${import.meta.env.BASE_URL}pets/canela.webp`,
     click: () => sounds.play('ui'),
   },

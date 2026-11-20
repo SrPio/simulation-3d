@@ -1,5 +1,5 @@
 import type { AnalogMove, HoldAction, KeyboardInput, PressAction } from '../input/KeyboardInput.ts';
-import { ACTION_ICONS, type ActionIcon } from '../ui/silhouettes.ts';
+import { ACTION_ICONS, DOG_ICONS, type ActionIcon } from '../ui/silhouettes.ts';
 import { MESSAGES, type MessageKey } from '../core/i18n.ts';
 
 /** Joystick: below this share of its radius it does nothing; past `run` the character runs. */
@@ -70,8 +70,8 @@ export const PEDAL_ARROWS = {
   right: 'M88 50 L48 14 L48 37 L12 37 L12 63 L48 63 L48 86 Z',
   /** The snow hoverboard seen from the side: the deck with its kicked-up ends and the two glowing pads under it. */
   board: 'M6 40 Q10 52 22 54 L78 54 Q90 52 94 40 Q88 46 78 46 L22 46 Q12 46 6 40 Z M28 60 a8 6 0 1 0 0.1 0 Z M72 60 a8 6 0 1 0 0.1 0 Z',
-  /** Canela sitting, seen from the side: sit or follow. */
-  dog: 'M70 12 Q82 12 85 22 L93 26 Q96 33 89 36 L79 38 Q75 44 71 46 L71 58 Q73 70 71 83 L77 87 L76 91 L63 91 L62 74 Q58 81 51 86 L57 89 L56 92 L34 92 Q26 90 29 78 Q31 63 43 53 L29 33 Q28 28 33 29 L50 47 Q54 39 57 30 Q58 14 70 12 Z',
+  /** Canela sitting, seen from the side (her traced silhouette, as in her program's instructions): sit or follow. */
+  dog: DOG_ICONS.sit,
 } as const;
 
 /**
