@@ -1908,6 +1908,11 @@ export class CharacterViewer {
       this.dogBall = undefined;
     }
     const events = dogStep(dog, { character, ball, delta }, (from, step) => sweep(from, step, DOG.radius, this.dogBoxes, this.dogFloor));
+    // Bending down to it, her nose stops the last of its roll.
+    if (dog.mode === 'picking' && this.dogBall) {
+      this.dogBall.body.velocity.scale(Math.exp(-12 * delta), this.dogBall.body.velocity);
+      this.dogBall.body.angularVelocity.scale(Math.exp(-12 * delta), this.dogBall.body.angularVelocity);
+    }
     const y = groundAt(dog, this.outsideData);
     const at = new Vector3(dog.x, y, dog.z);
     for (const event of events) {

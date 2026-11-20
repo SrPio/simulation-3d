@@ -40,17 +40,25 @@ export const DOG = {
   /** Farther than this from the character (m), or stuck this long (s), she reappears beside them. */
   teleport: 24,
   stuck: 2.5,
-  /** Her mouth is this far ahead of her middle (m); a ball within `reach` of it, slower than `catchSpeed` (m/s) and
-   * lower than `catchHeight` over the ground (m), can be picked up. */
+  /** Her mouth is this far ahead of her middle (m); a ball within `reach` of it, slower than `catchSpeed` (m/s: all
+   * but still, so she never bends down beside a ball rolling on) and lower than `catchHeight` over the ground (m), can
+   * be picked up. Until then she trots along beside a rolling ball; if it gets away from her mouth (`reach` × `slip`)
+   * before she has it, she goes after it again. */
   mouth: 0.45,
   reach: 0.4,
-  catchSpeed: 2.5,
+  slip: 1.5,
+  catchSpeed: 0.6,
   catchHeight: 0.35,
   /** She puts the ball down this far from the character, on her side (m). */
   dropAt: 0.8,
   /** Appearing, the jump clip starts here (s): she comes down out of the air and sits. */
   appear: 0.55,
 } as const;
+
+/** How far a ball is from her mouth, on the ground (m). */
+function mouthTo(dog: DogState, ball: DogBall): number {
+  return Math.hypot(ball.x - (dog.x + Math.sin(dog.yaw) * DOG.mouth), ball.z - (dog.z + Math.cos(dog.yaw) * DOG.mouth));
+}
 
 export type DogMode = 'appearing' | 'following' | 'staying' | 'fetching' | 'picking' | 'returning' | 'dropping';
 
@@ -191,8 +199,7 @@ export function dogStep(dog: DogState, input: DogInput, move: (from: Point2, ste
         events.push('lost');
         break;
       }
-      const mouth = { x: dog.x + Math.sin(dog.yaw) * DOG.mouth, z: dog.z + Math.cos(dog.yaw) * DOG.mouth };
-      const reach = Math.hypot(ball.x - mouth.x, ball.z - mouth.z);
+      const reach = mouthTo(dog, ball);
       if (reach < DOG.reach && ball.speed < DOG.catchSpeed && ball.y < DOG.catchHeight) {
         dog.mode = 'picking';
         dog.timer = 0;
@@ -201,11 +208,17 @@ export function dogStep(dog: DogState, input: DogInput, move: (from: Point2, ste
       }
       const d = Math.hypot(ball.x - dog.x, ball.z - dog.z);
       target = { x: ball.x, z: ball.z };
-      // Flat out, then slowing as she gets there (but never stopping short).
-      want = Math.min(DOG.run, Math.max(1.2, (d - DOG.mouth * 0.6) * 3));
+      // Flat out, then slowing as she gets there (but never stopping short), keeping pace with a ball still rolling.
+      want = Math.min(DOG.run, Math.max(ball.speed + 0.3, d < DOG.mouth + DOG.reach ? 0.5 : 1.2, (d - DOG.mouth * 0.6) * 3));
       break;
     }
     case 'picking':
+      // Bending down to it, the ball must still be under her nose: one that rolled off is chased again.
+      if (!dog.carrying && ball && mouthTo(dog, ball) > DOG.reach * DOG.slip) {
+        dog.mode = 'fetching';
+        dog.timer = 0;
+        break;
+      }
       if (!dog.carrying && dog.timer >= DOG_CLIPS.pickup.grab) {
         if (!ball) {
           dog.mode = idleMode(dog);

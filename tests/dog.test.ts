@@ -91,6 +91,27 @@ test('a ball still flying fast is not picked up; one that vanishes is given up',
   assert.equal(dog.mode, 'following');
 });
 
+test('a ball still rolling: she trots along beside it and bends down only once it has all but stopped', () => {
+  const dog = dogAt({ x: 0, z: 0 }, 0);
+  fetchBall(dog);
+  // The ball rolls on ahead of her, slowing down by 0.4 m/s every second.
+  const ball: DogBall = { x: 0, y: 0, z: 3, speed: 1.8 };
+  let pickedAt = -1;
+  for (let t = 0; t < 8 && pickedAt < 0; t += 1 / 60) {
+    ball.speed = Math.max(0, ball.speed - 0.4 / 60);
+    ball.z += ball.speed / 60;
+    dogStep(dog, { character: { x: 0, z: -4, yaw: 0 }, ball, delta: 1 / 60 }, open);
+    if (dog.mode === 'picking') pickedAt = t;
+  }
+  assert.ok(pickedAt > 0, 'she picks it up in the end');
+  assert.ok(ball.speed < DOG.catchSpeed, `only once it is slow (${ball.speed.toFixed(2)} m/s)`);
+  // It rolls off from under her nose before she has it: she goes after it again.
+  ball.z += 1;
+  dogStep(dog, { character: { x: 0, z: -4, yaw: 0 }, ball, delta: 1 / 60 }, open);
+  assert.equal(dog.mode, 'fetching');
+  assert.ok(!dog.carrying);
+});
+
 test('far away or stuck against a wall she jumps back beside the character', () => {
   const dog = dogAt({ x: 60, z: 0 }, 0);
   const events = run(dog, 0.1);
