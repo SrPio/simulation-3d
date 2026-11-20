@@ -4,7 +4,7 @@ import { SOUND_FILES, type RecordedSound } from './soundFiles.ts';
  * layer clicking round, a neon sign lighting; for Halloween a pumpkin bursting, a candy ticking on the ground and the
  * cauldron's brew bubbling as the rider pops in or out; for Christmas a snowball bursting, a snowman crumbling, the
  * sleigh's bells and footsteps crunching in the snow or tapping on the frozen pond. */
-export type SynthSound = 'whoosh' | 'chirp' | 'pop' | 'twist' | 'neon' | 'splat' | 'candy' | 'bubble' | 'jingle' | 'stepSnow';
+export type SynthSound = 'whoosh' | 'chirp' | 'pop' | 'twist' | 'neon' | 'splat' | 'candy' | 'bubble' | 'jingle' | 'stepSnow' | 'bark';
 export type SoundName = RecordedSound | SynthSound;
 /** Continuous sounds whose level and pitch follow something: the office chair's casters, the soda fizzing, the hoverboard's hum. */
 export type LoopName = 'rolling' | 'fizz' | 'hover';
@@ -71,6 +71,8 @@ export const SOUNDS: Record<SoundName, SoundDef> = {
   snowSplat: impact(0, 0.12, [0.45, 0.9], [0.7, 0.88], 70),
   jingle: impact(0, 1, [0.2, 0.7], [0.94, 1.06], 90),
   stepSnow: fixed(0.4, [0.85, 1.15], 120),
+  // Canela: a short happy woof (twice when she comes).
+  bark: fixed(0.55, [0.92, 1.12], 400),
   ui: fixed(0.45, [1, 1], 40),
 };
 
@@ -234,6 +236,25 @@ export class Sounds {
       gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
       source.connect(filter).connect(gain);
       source.start(t, Math.random() * 0.5, 0.32);
+    } else if (name === 'bark') {
+      // A small dog's woof: a buzzy tone falling in pitch through a voice-like band, with a breath of noise, twice.
+      for (const [offset, level] of [[0, 1], [0.2, 0.8]]) {
+        const osc = context.createOscillator();
+        const voice = context.createBiquadFilter();
+        const note = context.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(520 * rate, t + offset);
+        osc.frequency.exponentialRampToValueAtTime(300 * rate, t + offset + 0.11);
+        voice.type = 'bandpass';
+        voice.frequency.value = 1100 * rate;
+        voice.Q.value = 1.6;
+        note.gain.setValueAtTime(0.0001, t + offset);
+        note.gain.exponentialRampToValueAtTime(volume * level, t + offset + 0.015);
+        note.gain.exponentialRampToValueAtTime(0.0001, t + offset + 0.13);
+        osc.connect(voice).connect(note).connect(master);
+        osc.start(t + offset);
+        osc.stop(t + offset + 0.15);
+      }
     } else if (name === 'chirp') {
       // Two quick rising cheeps.
       for (const offset of [0, 0.11]) {

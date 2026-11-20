@@ -15,7 +15,7 @@ import {
 import { getLanguage, onLanguage, t } from '../core/i18n.ts';
 import { KeyboardInput, type HoldAction, type PressAction } from '../input/KeyboardInput';
 import {
-  EXPECTED_BYTES, boxingFile, circuitFile, colombiaFile, disposeObjects, loadBoxing, loadColombia, laptopFile, loadCharacter, loadChick, loadCircuit, loadLaptop, loadOutside, loadRoom,
+  EXPECTED_BYTES, boxingFile, circuitFile, colombiaFile, disposeObjects, loadBoxing, loadColombia, laptopFile, loadCharacter, loadChick, loadModelFile, loadCircuit, loadLaptop, loadOutside, loadRoom,
   loadUnivalle, modelVersions, outsideFile, roomFile, univalleFile, experienceFile, loadExperience, halloweenFile, loadHalloween,
   christmasFile, loadChristmas, type ModelVersionId, type SceneId,
 } from '../core/loadAssets';
@@ -71,10 +71,13 @@ import { TargetGame, type Lane } from '../world/targets.ts';
 import { signAt } from '../world/signs.ts';
 import { KEY_SINK, onKey, pressStep, type FloorKey } from '../world/keyPress.ts';
 import { ChickRain } from '../scene/ChickRain.ts';
-import { BAG_PUSH, GIFT, LAPTOP, MAX_CHICKS, PropPhysics, type ChairPusher, type StaticBox, type TargetDisc, type TargetHit, type Thrown, type ThrownLaptop } from '../world/PropPhysics.ts';
+import { DogView } from '../scene/DogView.ts';
+import { Baseballs, DustPuff } from '../scene/Baseballs.ts';
+import { DOG, dogAt, dogStep, fetchBall, followSpot, placeDog, toggleStay, type DogBall, type DogState } from '../world/dogFollow.ts';
+import { BAG_PUSH, BASEBALL, GIFT, LAPTOP, MAX_CHICKS, PropPhysics, type ChairPusher, type StaticBox, type TargetDisc, type TargetHit, type Thrown, type ThrownLaptop, type ThrownPumpkin } from '../world/PropPhysics.ts';
 import { CandyBurst } from '../scene/CandyBurst.ts';
 import { HalloweenSky } from '../scene/HalloweenSky.ts';
-import type { Box2 } from '../world/collisions.ts';
+import { sweep, type Box2, type Floor } from '../world/collisions.ts';
 import { fontsReady } from '../core/fonts.ts';
 import { LIKE_KEY, LikeKey } from '../scene/LikeKey.ts';
 import { SeasonPins } from '../scene/SeasonPins.ts';
@@ -133,7 +136,12 @@ type ViewerOptions = {
   likes?: LikeCounter;
   /** Room only: the season pins lying on the map to be picked up (src/core/pins.ts pinsOnMap). */
   pins?: readonly Pin[];
+  /** Room only: Canela, the pet, is already with the character from the start (brought on an earlier visit). */
+  dog?: boolean;
 };
+
+/** Canela's model, fetched the first time she comes. */
+export const DOG_FILE = 'models/canela.glb';
 
 /** Where the like key stands on the outside ground (three.js x, z), past the end of the intro sentence. */
 export const LIKE_SPOT = { x: 17.4, z: -1.3 };
@@ -162,6 +170,8 @@ type ViewerEvents = {
   board?: () => void;
   /** A season pin was walked over and picked up (once each). */
   pin?: (id: string) => void;
+  /** Canela came (jumping in beside the character, or there from the start) or went home. */
+  dog?: (present: boolean) => void;
 };
 
 const LOCOMOTION = new Set(['idle', 'walk', 'run', 'jump']);
@@ -428,6 +438,19 @@ export class CharacterViewer {
   /** The Konami code's chick shower (the chick model is fetched the first time the code is typed). */
   private chickRain?: ChickRain;
   private chickLoading = false;
+  /** Canela: wanted here, her behaviour and her body (canela.glb, fetched when she first comes), coming in once the
+   * character stands up (`dogPending`), the ball she is after, the baseballs and the dust she lands in. */
+  private dogWanted = false;
+  private dogPending = false;
+  private dogLoading = false;
+  private dog?: DogState;
+  private dogView?: DogView;
+  private dogBall?: ThrownPumpkin;
+  private dogShadow = -1;
+  private dogBoxes: readonly Box2[] = [];
+  private dogFloor: Floor = 10;
+  private readonly baseballs = new Baseballs();
+  private readonly dust = new DustPuff();
   private fallenLetters = -1;
   /** Height of the character's feet: 0 on the room floor, the outside ground elsewhere. */
   private elevation = 0;
@@ -869,6 +892,8 @@ export class CharacterViewer {
     const floor = this.outsideData?.bounds ?? data.halfSize;
     const boxes = [...data.boxes, ...(this.outsideData?.boxes ?? []), this.chairBlock];
     this.controller = new CharacterController(spawn, boxes, floor);
+    this.dogBoxes = boxes;
+    this.dogFloor = floor;
     // The park benches outside are seats too (the bed's clips, the laptop on the lap).
     this.interaction = new InteractionController([...data.seats, ...(this.outsideData?.benches ?? [])], boxes, floor, CHARACTER_RADIUS);
     this.interaction.onLaptop = (open, place) => this.events.laptop?.(open, place);
@@ -1020,7 +1045,12 @@ export class CharacterViewer {
     this.bagShadow = this.chairShadow + 1 + MAX_CHICKS;
     // And the like key's last.
     this.likeShadow = this.options.likes ? this.bagShadow + this.bags.length : -1;
-    this.shadows = new BlobShadows(this.bagShadow + this.bags.length + (this.options.likes ? 1 : 0), data.groundY);
+    // Canela's after everything else.
+    this.dogShadow = this.bagShadow + this.bags.length + (this.options.likes ? 1 : 0);
+    this.shadows = new BlobShadows(this.dogShadow + 1, data.groundY);
+    this.shadows.hide(this.dogShadow);
+    this.scene.add(this.baseballs.root, this.dust.root);
+    if (this.options.dog) this.dogWanted = true;
     for (const [index, sign] of data.signs.entries()) {
       this.shadows.set(1 + index, sign.position.x, sign.position.z, sign.yaw, (sign.board?.width ?? 2) + 0.5, 0.55, 0.45);
     }
@@ -1334,7 +1364,7 @@ export class CharacterViewer {
       physics.onImpact = (impact) => {
         const source = impact.source;
         const name: SoundName = source === 'laptop' ? 'laptop' : source === 'pumpkin' ? 'splat' : source === 'candy' ? 'candy' : source === 'chick' ? 'chirp'
-          : source === 'bag' ? 'rubber' : source === 'snowball' ? 'snowSplat' : source === 'gift' ? 'cardboard' : pieceSound(this.pieceList[source]);
+          : source === 'bag' || source === 'baseball' ? 'rubber' : source === 'snowball' ? 'snowSplat' : source === 'gift' ? 'cardboard' : pieceSound(this.pieceList[source]);
         this.sound(name, impact.speed, impact.position);
       };
       // A fence breaking cracks like wood; a snowman coming apart thuds softly in the snow.
@@ -1403,6 +1433,10 @@ export class CharacterViewer {
   private readonly onPress = (action: PressAction): void => {
     if (action === 'konami') {
       void this.rainChicks();
+      return;
+    }
+    if (action === 'dog') {
+      if (this.ready) this.toggleDogStay();
       return;
     }
     if (action === 'open') {
@@ -1695,6 +1729,17 @@ export class CharacterViewer {
     const forward = throwDirection(this.controller.position, yaw, pose.position);
     const speed = throwSpeed(power);
     const jitter = () => (Math.random() - 0.5) * 2;
+    if (this.dog && this.dogWanted) {
+      // With Canela a baseball leaves the hand instead, and she runs after it at once.
+      const ball = this.physics.throwBaseball(pose.position, { x: forward.x * speed.forward, y: speed.up, z: forward.z * speed.forward },
+        { x: jitter() * 8, y: jitter() * 4, z: jitter() * 8 });
+      if (this.targetLane && this.targetGame.throwFrom(this.controller.position, this.targetLane)) {
+        this.countedThrows.add(ball);
+        this.reportTargets();
+      }
+      this.chaseBall(ball);
+      return;
+    }
     if (this.snowPlay) {
       // Christmas: a snowball leaves the hand instead, from the same place and as fast; it bursts where it lands.
       const ball = this.physics.throwSnowball(pose.position, { x: forward.x * speed.forward, y: speed.up, z: forward.z * speed.forward },
@@ -1733,6 +1778,165 @@ export class CharacterViewer {
     this.scene.add(base, lid);
     this.thrown.push({ laptop, base, lid, shrink: 0 });
     this.syncThrown(0);
+  }
+
+  /** Canela is here (or on her way in). */
+  get dogHere(): boolean {
+    return this.dogWanted;
+  }
+
+  /** Bring Canela: she jumps in beside the character, with a puff of dust, as soon as they stand free (after the laptop). */
+  inviteDog(): void {
+    if (this.dogWanted && this.dog) return;
+    this.dogWanted = true;
+    this.dogPending = true;
+  }
+
+  /** Send Canela home: she vanishes in a puff of dust. */
+  dismissDog(): void {
+    if (!this.dogWanted) return;
+    this.dogWanted = false;
+    this.dogPending = false;
+    if (this.dog && this.outsideData) this.dust.burst(new Vector3(this.dog.x, groundAt(this.dog, this.outsideData), this.dog.z));
+    this.dog = undefined;
+    this.dogBall = undefined;
+    this.baseballs.letGo();
+    if (this.dogView) {
+      this.dogView.root.removeFromParent();
+      this.dogView.hideShadow();
+    }
+    this.host.dataset.dog = 'none';
+    this.events.dog?.(false);
+  }
+
+  /** G: Canela sits and stays where she is, or gets up and follows again. */
+  private toggleDogStay(): void {
+    if (!this.dog) return;
+    toggleStay(this.dog);
+    this.host.dataset.dogStay = String(this.dog.stay);
+    if (!this.dog.stay) this.sound('bark', 1, new Vector3(this.dog.x, this.elevation, this.dog.z));
+  }
+
+  /** The character's place and facing, for Canela to keep to. */
+  private dogCharacter(): { x: number; z: number; yaw: number } | undefined {
+    if (!this.model) return undefined;
+    return { x: this.model.position.x, z: this.model.position.z, yaw: this.facing() };
+  }
+
+  /** Canela beside the character: where she can stand there, out of walls and furniture. */
+  private dogSpot(): { x: number; z: number } | undefined {
+    const character = this.dogCharacter();
+    if (!character) return undefined;
+    const spot = followSpot(character);
+    return sweep(character, { x: spot.x - character.x, z: spot.z - character.z }, DOG.radius, this.dogBoxes, this.dogFloor);
+  }
+
+  /** Put Canela beside the character, jumping in with a puff of dust (`appear`) or quietly sitting there. */
+  private bringDog(appear: boolean): void {
+    const character = this.dogCharacter();
+    const spot = this.dogSpot();
+    if (!character || !spot || !this.outsideData) return;
+    if (this.dog) placeDog(this.dog, spot, character.yaw, appear);
+    else this.dog = dogAt(spot, character.yaw, appear ? 'appearing' : 'following');
+    this.baseballs.letGo();
+    this.dogBall = undefined;
+    const y = groundAt(spot, this.outsideData);
+    this.dogView?.place(this.dog, y);
+    if (this.dogView && !this.dogView.root.parent) this.scene.add(this.dogView.root);
+    if (appear) {
+      this.dust.burst(new Vector3(spot.x, y, spot.z));
+      this.sound('whoosh', 1, new Vector3(spot.x, y, spot.z));
+    }
+  }
+
+  /** The baseball just thrown: Canela runs after it. */
+  private chaseBall(ball: ThrownPumpkin): void {
+    if (!this.dog) return;
+    fetchBall(this.dog);
+    if (this.dog.mode === 'fetching') this.dogBall = ball;
+  }
+
+  private async loadDog(): Promise<void> {
+    if (this.dogLoading || this.dogView) return;
+    this.dogLoading = true;
+    try {
+      const gltf = await loadModelFile(DOG_FILE, this.abort.signal);
+      if (this.disposed || !this.shadows) return;
+      this.assetRoots.push(gltf.scene);
+      this.dogView = new DogView(gltf.scene, gltf.animations, this.shadows, this.dogShadow);
+    } catch {
+      this.dogWanted = false;
+    } finally {
+      this.dogLoading = false;
+    }
+  }
+
+  /** Canela: comes in when wanted, follows, fetches and brings back the baseball; her body follows what she does. */
+  private updateDog(delta: number): void {
+    this.dust.update(delta);
+    this.baseballs.update(delta, this.reducedMotion);
+    const physics = this.physics;
+    if (physics) this.baseballs.sync(physics.baseballs, physics.retiredBalls);
+    const balls = String(physics?.baseballs.length ?? 0);
+    if (this.host.dataset.baseballs !== balls) this.host.dataset.baseballs = balls;
+    if (!this.dogWanted || !this.outsideData) return;
+    if (!this.dogView) {
+      void this.loadDog();
+      return;
+    }
+    const character = this.dogCharacter();
+    if (!character) return;
+    if (!this.dog) {
+      // Coming in after the laptop: only once the character stands free again. There from the start: quietly.
+      if (this.dogPending && this.interaction && this.interaction.phase !== 'free') return;
+      this.bringDog(this.dogPending);
+      this.dogPending = false;
+      this.host.dataset.dogStay = 'false';
+      this.events.dog?.(true);
+      if (!this.dog) return;
+    }
+    const dog = this.dog;
+    // A ball still rolling about (thrown while she was busy) is the next one she goes after.
+    if (physics && !this.dogBall && !dog.carrying && (dog.mode === 'following' || dog.mode === 'staying') && physics.baseballs.length) {
+      this.chaseBall(physics.baseballs[physics.baseballs.length - 1]);
+    }
+    let ball: DogBall | null = null;
+    if (this.dogBall && physics?.baseballs.includes(this.dogBall)) {
+      const { position: p, velocity: v } = this.dogBall.body;
+      ball = { x: p.x, y: p.y - BASEBALL.radius - groundAt({ x: p.x, z: p.z }, this.outsideData), z: p.z, speed: v.length() };
+    } else if (this.dogBall) {
+      this.dogBall = undefined;
+    }
+    const events = dogStep(dog, { character, ball, delta }, (from, step) => sweep(from, step, DOG.radius, this.dogBoxes, this.dogFloor));
+    const y = groundAt(dog, this.outsideData);
+    const at = new Vector3(dog.x, y, dog.z);
+    for (const event of events) {
+      if (event === 'grab' && this.dogBall && physics && this.dogView.mouth) {
+        physics.takeBaseball(this.dogBall);
+        this.baseballs.grab(this.dogBall, this.dogView.mouth);
+        this.dogBall = undefined;
+      } else if (event === 'drop') {
+        this.baseballs.drop(y);
+        this.dogView.replay();
+      } else if (event === 'lost') {
+        this.baseballs.letGo();
+        this.dogBall = undefined;
+      } else if (event === 'teleport') {
+        this.dogView.place(dog, y);
+        this.dust.burst(at);
+      } else if (event === 'landed') {
+        this.sound('bark', 1, at);
+      }
+    }
+    // The pickup clip plays again to put the ball down.
+    if (dog.mode === 'dropping' && dog.timer < delta * 1.5) this.dogView.replay();
+    this.dogView.update(delta, dog, y, this.reducedMotion);
+    const state = dog.mode === 'following' || dog.mode === 'staying' ? (dog.sitting ? 'sitting' : dog.speed > 0.05 ? 'following' : 'standing') : dog.mode;
+    if (this.host.dataset.dog !== state) this.host.dataset.dog = state;
+    const position = `${dog.x.toFixed(1)},${dog.z.toFixed(1)}`;
+    if (this.host.dataset.dogPosition !== position) this.host.dataset.dogPosition = position;
+    const carrying = dog.carrying ? 'carrying' : this.dogBall ? 'chasing' : 'none';
+    if (this.host.dataset.dogBall !== carrying) this.host.dataset.dogBall = carrying;
   }
 
   /** ↑ ↑ ↓ ↓ ← → ← → B A: chicks in sunglasses rain round the character (outside, once the physics is ready). */
@@ -1937,6 +2141,10 @@ export class CharacterViewer {
     this.placeForClip(this.activeClip);
     this.host.dataset.locomotion = 'idle';
     this.physics?.reset();
+    this.baseballs.clear();
+    this.dogBall = undefined;
+    if (this.dog && !this.dog.stay) this.bringDog(true);
+    else if (this.dog) this.dog.carrying = false;
     this.chickRain?.clear();
     this.candyBurst?.clear();
     this.snowPlay?.clear();
@@ -2894,6 +3102,7 @@ export class CharacterViewer {
       const smashed = String(this.candyBurst.smashes);
       if (this.host.dataset.smashed !== smashed) this.host.dataset.smashed = smashed;
     }
+    this.updateDog(delta);
     if (this.elevation < -1e-3 || groundAt({ x, z }, this.outsideData) < 0) {
       const fade = 1 - lift / 0.8;
       this.shadows.set(CHARACTER_SHADOW, x, z, 0, 0.8 * (1 - lift * 0.4), 0.8 * (1 - lift * 0.4), 0.5 * fade);
@@ -3744,6 +3953,9 @@ export class CharacterViewer {
     this.chargeMeter?.dispose();
     this.clearThrown();
     this.chickRain?.dispose();
+    this.dogView?.dispose();
+    this.baseballs.dispose();
+    this.dust.dispose();
     this.candyBurst?.dispose();
     this.sky?.dispose();
     this.ground?.dispose();

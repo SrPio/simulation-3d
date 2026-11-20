@@ -1,0 +1,37 @@
+{
+  "fps": 24,
+  "clips": {
+    "idle": {
+      "duration": 3.3333333333333335,
+      "loop": true
+    },
+    "walk": {
+      "duration": 1.0416666666666667,
+      "loop": true,
+      "speed": 0.9440717697143555
+    },
+    "run": {
+      "duration": 0.5416666666666666,
+      "loop": true,
+      "speed": 1.9420908093452454
+    },
+    "jump": {
+      "duration": 1.3333333333333333,
+      "loop": false,
+      "takeoff": 0.20833333333333334,
+      "landing": 0.9583333333333334,
+      "lift": 0.23874050378799438
+    },
+    "sit": {
+      "duration": 2.0,
+      "loop": true
+    },
+    "pickup": {
+      "duration": 0.875,
+      "loop": false,
+      "grab": 0.4166666666666667
+    }
+  },
+  "height": 0.8788321018218994,
+  "withers": 0.575
+}

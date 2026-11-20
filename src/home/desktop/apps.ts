@@ -3,6 +3,7 @@ import { DESKTOP_ICONS } from './Desktop.ts';
 import type { DesktopApp } from './WindowManager.ts';
 import { sledRunApp, type SledHooks } from '../../minigames/sledRun/SledRunApp.ts';
 import { albumApp, type AlbumHooks } from '../album/Album.ts';
+import { dogApp, type DogHooks } from './dogApp.ts';
 
 /** A minigame in the games folder; `app` opens its own window, missing while it is still being made. */
 export type GameCard = { id: string; title: string; copy: string; art: string; app?: string };
@@ -14,6 +15,8 @@ export type AppHooks = {
   sled: SledHooks;
   /** What the sticker album needs from the page. */
   album: AlbumHooks;
+  /** What Canela's program needs from the page. */
+  dog: DogHooks;
 };
 
 const silhouette = (d: string) => `<svg viewBox="0 0 100 100" aria-hidden="true"><path fill-rule="evenodd" d="${d}"/></svg>`;
@@ -59,6 +62,7 @@ export function desktopApps(hooks: AppHooks): DesktopApp[] {
       },
     },
     albumApp(hooks.album),
+    dogApp(hooks.dog),
     {
       ...sledRunApp(hooks.sled),
       inFolder: true,

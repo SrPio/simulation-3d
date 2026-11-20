@@ -96,6 +96,15 @@ export const PAD_ACTIONS: Partial<Record<PadButton, { press?: PressAction; hold?
   r3: { press: 'board' },
 };
 /** The Konami code on a pad: the cross pad, then ○/B and ✕/A. */
+/** Canela sits or follows when the right stick is pushed down past `on` (and counts again once back above `off`). */
+export const DOG_STICK = { on: 0.7, off: 0.4 } as const;
+
+/** Whether the right stick, now at `y` (down is positive), just went down for Canela; `held` is whether it was down. */
+export function dogStick(y: number, held: boolean): { press: boolean; held: boolean } {
+  if (!held && y > DOG_STICK.on) return { press: true, held: true };
+  return { press: false, held: held ? y > DOG_STICK.off : false };
+}
+
 export const PAD_KONAMI: readonly PadButton[] = ['up', 'up', 'down', 'down', 'left', 'right', 'left', 'right', 'circle', 'cross'];
 
 /**
@@ -142,6 +151,9 @@ export class GamepadInput {
     return found;
   }
 
+  /** The right stick is held down (for Canela), so one push is one command. */
+  private dogHeld = false;
+
   poll(): void {
     const input = this.input();
     const raw = this.pad();
@@ -178,6 +190,13 @@ export class GamepadInput {
       }
     }
     const { buttons, left } = state;
+    // The right stick pushed down: Canela sits or follows.
+    const stick = dogStick(state.right.y, this.dogHeld);
+    this.dogHeld = stick.held;
+    if (stick.press) {
+      used = true;
+      input.press('dog');
+    }
     // Walking: the stick or the cross pad. Driving the chair: the triggers push forwards and back when pressed harder.
     const pad = { forward: buttons.up - buttons.down, right: buttons.right - buttons.left };
     const triggers = buttons.r2 - buttons.l2;

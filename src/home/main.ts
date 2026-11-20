@@ -10,6 +10,7 @@ import { QUALITY, isQualityId, readPreferences, savePreferences } from '../core/
 import { StartScreen } from './StartScreen.ts';
 import { TouchControls } from './TouchControls.ts';
 import { NitroGauge } from './NitroGauge.ts';
+import { readDog, saveDog } from '../core/dog.ts';
 import { Toasts } from './Toasts.ts';
 import { StampBook, stampCount } from '../core/stamps.ts';
 import { PINS, PinBook, pinsOnMap } from '../core/pins.ts';
@@ -220,14 +221,27 @@ const page = app.querySelector<HTMLDivElement>('.room-page')!;
 const toasts = new Toasts(page, host);
 const cine = new URLSearchParams(window.location.search).has('cine');
 /** The laptop's screen: opens when the lid has finished opening, pauses the world, and closes the laptop when shut down. */
+/** Canela: what closing the laptop does (she comes, or goes home), set from her program on the desktop. */
+let dogPending: 'invite' | 'dismiss' | undefined;
 const desktop = new Desktop(page, host, {
   links: () => viewer?.signLinks ?? [],
   click: () => sounds.play('ui'),
   onClose: () => {
     viewer?.setPaused(false);
     viewer?.closeLaptop();
+    if (dogPending === 'invite') viewer?.inviteDog();
+    else if (dogPending === 'dismiss') viewer?.dismissDog();
+    dogPending = undefined;
   },
 });
+/** The keys that throw and make Canela sit or follow, for the input in use. */
+function dogKeys(): { throw: string; sit: string } {
+  const root = document.documentElement.dataset;
+  if (root.input === 'touch') return { throw: t('toast.dogThrowTouch'), sit: t('toast.dogSitTouch') };
+  if (root.input === 'gamepad') return { throw: root.gamepad === 'xbox' ? 'B' : '○', sit: t('toast.dogSitPad') };
+  return { throw: 'F', sit: 'G' };
+}
+let dogGreeted = false;
 /** The sticker album's stickers (what earns them: src/core/achievements.ts); each new one gets a toast. */
 const stamps = new StampBook(storage);
 host.dataset.stamps = String(stampCount(stamps.state).got);
@@ -264,6 +278,16 @@ desktop.setApps(desktopApps({
   launch: (id) => desktop.launch(id),
   album: { stamps, pins, season, host, reducedMotion: motionReduced, rustle: () => sounds.play('cloth'), stick: () => sounds.play('pop') },
   sled: { host, season, quality: () => preferences.quality, reducedMotion: motionReduced, sounds },
+  dog: {
+    present: () => viewer?.dogHere ?? false,
+    pending: () => dogPending,
+    invite: () => { dogPending = 'invite'; saveDog(storage, true); },
+    dismiss: () => { dogPending = 'dismiss'; saveDog(storage, false); },
+    cancel: () => { saveDog(storage, dogPending === 'dismiss'); dogPending = undefined; },
+    keys: dogKeys,
+    picture: `${import.meta.env.BASE_URL}pets/canela.webp`,
+    click: () => sounds.play('ui'),
+  },
 }));
 let laptopFound = readLaptopFound(storage);
 const hints = new HintRules();
@@ -455,10 +479,16 @@ function mount(): void {
     laptop: (open) => { if (live()) onLaptop(open); },
     board: () => { if (live()) toasts.show({ id: 'board', text: t('toast.board', { key: boardKey() }), icon: 'jump', duration: 9 }); },
     pin: (id) => { if (live()) pickPin(id); },
+    dog: (present) => {
+      if (!live() || !present || dogGreeted || !started) return;
+      dogGreeted = true;
+      toasts.show({ id: 'dog', text: t('toast.dog', dogKeys()), icon: 'throw', duration: 9 });
+    },
   }, {
     modelId: 'v4rig', view: 'three-quarter', light: LIGHT, wireframe: false, scene: 'room',
     quality: preferences.quality, reducedMotion: motionReduced(), cameraMode: camera, spawn: SPAWN, sounds, touch, halloween, christmas, likes,
     pins: pinsOnMap(pins.state, season),
+    dog: readDog(storage),
   });
   viewer.setInputEnabled(started);
   const mode = inputMode;
