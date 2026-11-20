@@ -73,7 +73,7 @@ import { KEY_SINK, onKey, pressStep, type FloorKey } from '../world/keyPress.ts'
 import { ChickRain } from '../scene/ChickRain.ts';
 import { DogView } from '../scene/DogView.ts';
 import { Baseballs, DustPuff } from '../scene/Baseballs.ts';
-import { DOG, dogAt, dogStep, fetchBall, followSpot, placeDog, toggleStay, type DogBall, type DogState } from '../world/dogFollow.ts';
+import { DOG, dogAt, dogStep, fetchBall, followSpot, placeDog, toggleStay, type DogBall, type DogRest, type DogState } from '../world/dogFollow.ts';
 import { BAG_PUSH, BASEBALL, GIFT, LAPTOP, MAX_CHICKS, PropPhysics, type ChairPusher, type StaticBox, type TargetDisc, type TargetHit, type Thrown, type ThrownLaptop, type ThrownPumpkin } from '../world/PropPhysics.ts';
 import { CandyBurst } from '../scene/CandyBurst.ts';
 import { HalloweenSky } from '../scene/HalloweenSky.ts';
@@ -142,6 +142,12 @@ type ViewerOptions = {
 
 /** Canela's model, fetched the first time she comes. */
 export const DOG_FILE = 'models/canela.glb';
+/** Canela's place on the bed while the character sits on it, in the seat's frame (m): to their left, back on the
+ * duvet, its top's height, and the floor spot in front of the bed she jumps up from. */
+const BED_REST = { left: 0.75, back: 0.75, height: 0.63, from: 0.2 } as const;
+/** Her place beside any other seat (the desk chair, a park bench): on the character's right in the seat's frame, which
+ * the isometric view shows on the left of the screen, a little ahead, on the floor. */
+const FLOOR_REST = { left: -0.85, ahead: 0.45 } as const;
 
 /** Where the like key stands on the outside ground (three.js x, z), past the end of the intro sentence. */
 export const LIKE_SPOT = { x: 17.4, z: -1.3 };
@@ -1817,6 +1823,26 @@ export class CharacterViewer {
     if (!this.dog.stay) this.sound('bark', 1, new Vector3(this.dog.x, this.elevation, this.dog.z));
   }
 
+  /** Where Canela rests while the character sits: up on the bed beside them (on the side away from the pillows), or
+   * on the floor beside any other seat that stays put. None while they stand or ride. */
+  private dogRest(): DogRest | undefined {
+    const interaction = this.interaction;
+    const spot = interaction?.seat;
+    if (!interaction || !spot || interaction.phase !== 'seated' || spot.seat === 'office') return undefined;
+    // In the seat's frame: ahead (sin, cos) the way the character faces, their left (cos, -sin).
+    const sin = Math.sin(spot.yaw);
+    const cos = Math.cos(spot.yaw);
+    const place = (left: number, ahead: number) => ({ x: spot.stand.x + cos * left + sin * ahead, z: spot.stand.z - sin * left + cos * ahead });
+    if (spot.seat === 'bed') {
+      return { at: place(BED_REST.left, -BED_REST.back), height: BED_REST.height, yaw: spot.yaw, from: place(BED_REST.left, BED_REST.from) };
+    }
+    const want = place(FLOOR_REST.left, FLOOR_REST.ahead);
+    // Slid out from the seat's nearest way in (the desk chair has one each side), so the seat itself is not in the way.
+    const from = [...spot.approaches].sort((a, b) => Math.hypot(a.x - want.x, a.z - want.z) - Math.hypot(b.x - want.x, b.z - want.z))[0] ?? spot.stand;
+    const at = sweep(from, { x: want.x - from.x, z: want.z - from.z }, DOG.radius, this.dogBoxes, this.dogFloor);
+    return { at, height: 0, yaw: spot.yaw, from: at };
+  }
+
   /** The character's place and facing, for Canela to keep to. */
   private dogCharacter(): { x: number; z: number; yaw: number } | undefined {
     if (!this.model) return undefined;
@@ -1831,16 +1857,18 @@ export class CharacterViewer {
     return sweep(character, { x: spot.x - character.x, z: spot.z - character.z }, DOG.radius, this.dogBoxes, this.dogFloor);
   }
 
-  /** Put Canela beside the character, jumping in with a puff of dust (`appear`) or quietly sitting there. */
-  private bringDog(appear: boolean): void {
+  /** Put Canela beside the character (or at `rest`, her place while they sit), jumping in with a puff of dust
+   * (`appear`) or quietly sitting there. */
+  private bringDog(appear: boolean, rest?: DogRest): void {
     const character = this.dogCharacter();
-    const spot = this.dogSpot();
+    const spot = rest?.at ?? this.dogSpot();
     if (!character || !spot || !this.outsideData) return;
-    if (this.dog) placeDog(this.dog, spot, character.yaw, appear);
-    else this.dog = dogAt(spot, character.yaw, appear ? 'appearing' : 'following');
+    const yaw = rest?.yaw ?? character.yaw;
+    if (!this.dog) this.dog = dogAt(spot, yaw, appear ? 'appearing' : 'following');
+    placeDog(this.dog, spot, yaw, appear, rest);
     this.baseballs.letGo();
     this.dogBall = undefined;
-    const y = groundAt(spot, this.outsideData);
+    const y = groundAt(spot, this.outsideData) + this.dog.lift;
     this.dogView?.place(this.dog, y);
     if (this.dogView && !this.dogView.root.parent) this.scene.add(this.dogView.root);
     if (appear) {
@@ -1853,7 +1881,7 @@ export class CharacterViewer {
   private chaseBall(ball: ThrownPumpkin): void {
     if (!this.dog) return;
     fetchBall(this.dog);
-    if (this.dog.mode === 'fetching') this.dogBall = ball;
+    if (this.dog.mode === 'fetching' || this.dog.hop?.then === 'fetching') this.dogBall = ball;
   }
 
   private async loadDog(): Promise<void> {
@@ -1887,9 +1915,11 @@ export class CharacterViewer {
     const character = this.dogCharacter();
     if (!character) return;
     if (!this.dog) {
-      // Coming in after the laptop: only once the character stands free again. There from the start: quietly.
-      if (this.dogPending && this.interaction && this.interaction.phase !== 'free') return;
-      this.bringDog(this.dogPending);
+      // Coming in after the laptop: straight to her place by the seat (up on the bed) while the character still sits,
+      // or beside them once they stand free again (not while they walk on or off a seat). There from the start: quietly.
+      const rest = this.dogRest();
+      if (this.dogPending && this.interaction && this.interaction.phase !== 'free' && !rest) return;
+      this.bringDog(this.dogPending, rest);
       this.dogPending = false;
       this.host.dataset.dogStay = 'false';
       this.events.dog?.(true);
@@ -1907,13 +1937,13 @@ export class CharacterViewer {
     } else if (this.dogBall) {
       this.dogBall = undefined;
     }
-    const events = dogStep(dog, { character, ball, delta }, (from, step) => sweep(from, step, DOG.radius, this.dogBoxes, this.dogFloor));
+    const events = dogStep(dog, { character, ball, delta, rest: this.dogRest(), spot: this.dogSpot() }, (from, step) => sweep(from, step, DOG.radius, this.dogBoxes, this.dogFloor));
     // Bending down to it, her nose stops the last of its roll.
     if (dog.mode === 'picking' && this.dogBall) {
       this.dogBall.body.velocity.scale(Math.exp(-12 * delta), this.dogBall.body.velocity);
       this.dogBall.body.angularVelocity.scale(Math.exp(-12 * delta), this.dogBall.body.angularVelocity);
     }
-    const y = groundAt(dog, this.outsideData);
+    const y = groundAt(dog, this.outsideData) + dog.lift;
     const at = new Vector3(dog.x, y, dog.z);
     for (const event of events) {
       if (event === 'grab' && this.dogBall && physics && this.dogView.mouth) {
@@ -1921,8 +1951,8 @@ export class CharacterViewer {
         this.baseballs.grab(this.dogBall, this.dogView.mouth);
         this.dogBall = undefined;
       } else if (event === 'drop') {
+        // Halfway through the bend, as her mouth reaches the ground (the clip itself started when she began dropping).
         this.baseballs.drop(y);
-        this.dogView.replay();
       } else if (event === 'lost') {
         this.baseballs.letGo();
         this.dogBall = undefined;

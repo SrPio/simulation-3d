@@ -5,7 +5,7 @@ import {
 import { BASEBALL, type ThrownPumpkin } from '../world/PropPhysics.ts';
 
 /** A ball Canela put down stays this long (s), then shrinks away over `shrink` s. */
-export const BALL_LINGER = { stay: 4, shrink: 0.45 } as const;
+export const BALL_LINGER = { stay: 0.3, shrink: 0.3 } as const;
 
 /** A baseball's cover: white leather with the two red stitched seams curling round it. */
 function cover(): CanvasTexture {

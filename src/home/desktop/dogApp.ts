@@ -12,6 +12,8 @@ export type DogHooks = {
   invite: () => void;
   dismiss: () => void;
   cancel: () => void;
+  /** Shut the laptop down now (she comes, or goes home, as it closes). */
+  shutdown: () => void;
   /** The keys to name: throwing and sit/follow, for the current input. */
   keys: () => { throw: string; sit: string };
   /** Her picture (under public/). */
@@ -33,8 +35,10 @@ export function dogApp(hooks: DogHooks): DesktopApp {
         const present = hooks.present();
         const text = pending === 'invite' ? t('dog.coming') : pending === 'dismiss' ? t('dog.leaving')
           : present ? t('dog.here', hooks.keys()) : t('dog.ask');
-        const buttons = pending ? [['cancel', pending === 'invite' ? t('dog.cancel') : t('dog.stay')]]
-          : present ? [['dismiss', t('dog.home')]] : [['invite', t('dog.yes')], ['close', t('dog.no')]];
+        // The first button is the main one: once she is asked for (or sent home), shutting down shows it happen.
+        const buttons = pending === 'invite' ? [['shutdown', t('dog.showMe')], ['cancel', t('dog.cancel')]]
+          : pending === 'dismiss' ? [['shutdown', t('dog.goodbye')], ['cancel', t('dog.stay')]]
+            : present ? [['close', t('dog.close')], ['dismiss', t('dog.home')]] : [['invite', t('dog.yes')], ['close', t('dog.no')]];
         body.innerHTML = `
           <img class="desk-dog-picture" src="${hooks.picture}" alt="${t('dog.picture')}">
           <p>${text}</p>
@@ -47,6 +51,7 @@ export function dogApp(hooks: DogHooks): DesktopApp {
             if (action === 'invite') hooks.invite();
             else if (action === 'dismiss') hooks.dismiss();
             else if (action === 'cancel') hooks.cancel();
+            else if (action === 'shutdown') return hooks.shutdown();
             else if (action === 'close') body.closest('.desk-window')?.querySelector<HTMLButtonElement>('[data-action="close"]')?.click();
             draw();
             body.querySelector<HTMLButtonElement>('.desk-dog-button')?.focus();

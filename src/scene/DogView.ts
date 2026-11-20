@@ -49,6 +49,7 @@ export class DogView {
   private wagPhase = 0;
   /** Seconds of ear time, for the wind's flutter. */
   private flapPhase = 0;
+  private appearing = false;
   private excitement = 0;
   private lastX = 0;
   private lastZ = 0;
@@ -129,7 +130,8 @@ export class DogView {
     const previous = this.current ? this.actions.get(this.current) : undefined;
     const fade = clip === 'sit' || this.current === 'sit' ? FADE.sit : FADE.normal;
     action.reset();
-    if (clip === 'jump') action.time = DOG.appear;
+    // Appearing she comes down out of the jump's top; jumping on or off the bed she takes off from the start.
+    if (clip === 'jump') action.time = this.appearing ? DOG.appear : 0;
     action.play();
     if (previous && previous !== action) action.crossFadeFrom(previous, fade, false);
     this.current = clip;
@@ -142,6 +144,7 @@ export class DogView {
 
   update(delta: number, dog: DogState, y: number, reducedMotion: boolean): void {
     const { clip, rate } = dogClip(dog);
+    this.appearing = dog.mode === 'appearing';
     this.play(clip, rate);
     this.root.position.set(dog.x, y, dog.z);
     this.root.rotation.y = dog.yaw;

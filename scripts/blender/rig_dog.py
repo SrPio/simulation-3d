@@ -151,36 +151,70 @@ def smooth01(x):
     return x * x * (3 - 2 * x)
 
 
+# How far round each leg's bones its skin reaches (m): all the leg's within `inner`, none past `outer`, and how far
+# above the leg's top joint it fades into the body (`top`, `band`). Outside that the body bones carry the skin, so the
+# belly, chest and flanks bend with the trunk instead of being dragged by the legs (they tore when she sat).
+# Up in the trunk (above `split`, where the leg leaves the body) a leg never reaches in past `inside` from the middle
+# line, so the belly and the brisket between the legs stay the trunk's.
+LEG_REACH = {'f': {'inner': 0.05, 'outer': 0.09, 'top': 0.03, 'band': 0.07, 'split': 0.3, 'inside': 0.045},
+             'h': {'inner': 0.065, 'outer': 0.11, 'top': 0.04, 'band': 0.08, 'split': 0.32, 'inside': 0.06}}
+# Within a leg the bones share the skin more softly than the trunk's, so a bent knee or hock rounds off instead of
+# pinching into a sliver.
+LEG_SOFT = 3e-4
+
+
+def inverse_square(points, names, power=2, soft=1e-4):
+    """Each bone's share by inverse distance to its segment (to 2 × `power`), normalised among `names`; a lower power
+    and a larger `soft` spread a joint's bend over more of the skin."""
+    raw = {}
+    for name in names:
+        head_, tail_, _, _ = BONES[name]
+        d = segment_distance(points, head_, tail_)
+        raw[name] = 1 / (d * d + soft) ** power
+    total = sum(raw.values()) + 1e-12
+    return {name: w / total for name, w in raw.items()}
+
+
 def body_weights(points):
-    """Weights per bone for the body's vertices: legs, tail and neck only where they belong; the head rigid."""
+    """Weights per bone for the body's vertices: the trunk's bones everywhere, each leg only near its own bones (fading
+    smoothly into the trunk), tail and neck only where they belong; the head rigid."""
     x, y, z = points[:, 0], points[:, 1], points[:, 2]
-    allowed = {}
-    for name in BONES:
-        if name.startswith('ear') or name == 'root':
-            continue
-        if name.startswith(('f_', 'h_')):
-            s = 1 if name.endswith('.L') else -1
-            front = name.startswith('f_')
-            mask = (x * s > 0.02) & ((y < -0.04) if front else (y > 0.04)) & (z < (0.42 if front else 0.46))
+    # The trunk: pelvis, spine and chest, with the neck in front and the tail behind faded in softly.
+    trunk = ['pelvis', 'spine', 'chest', 'neck1', 'neck2', 'tail1', 'tail2', 'tail3']
+    share = inverse_square(points, trunk)
+    neck = smooth01((-0.06 - y) / 0.05) * smooth01((z - 0.44) / 0.05)
+    tail = smooth01((y - 0.22) / 0.03) * smooth01((z - 0.45) / 0.03) * smooth01((0.09 - np.abs(x)) / 0.02)
+    for name in trunk:
+        if name.startswith('neck'):
+            share[name] = share[name] * neck
         elif name.startswith('tail'):
-            mask = (y > 0.22) & (z > 0.45) & (np.abs(x) < 0.09)
-        elif name.startswith('neck'):
-            mask = (y < -0.06) & (z > 0.44)
-        elif name == 'head':
-            continue
-        else:
-            mask = np.ones(len(points), bool)
-        allowed[name] = mask
+            share[name] = share[name] * tail
+    total = sum(share.values()) + 1e-12
+    weights = {name: w / total for name, w in share.items()}
+    # Each leg takes the skin round its bones, blended over a band, and hands the rest back to the trunk.
+    legs = {}
+    for side, s in (('L', 1), ('R', -1)):
+        for kind, chain in (('f', ['f_upper', 'f_lower', 'f_paw']), ('h', ['h_thigh', 'h_shin', 'h_hock', 'h_paw'])):
+            names = [f'{bone}.{side}' for bone in chain]
+            reach = LEG_REACH[kind]
+            d = np.min([segment_distance(points, *BONES[name][:2]) for name in names], axis=0)
+            top = BONES[names[0]][0][2]
+            near = smooth01((reach['outer'] - d) / (reach['outer'] - reach['inner']))
+            near *= smooth01((top + reach['top'] - z) / reach['band'])
+            below = smooth01((reach['split'] - z) / 0.05)
+            near *= np.maximum(below, smooth01((x * s - reach['inside']) / 0.035))
+            legs[(side, kind)] = (near, inverse_square(points, names, power=2, soft=LEG_SOFT))
+    # Where two legs reach the same skin (they never quite do), the nearer wins.
+    leg_total = np.clip(sum(near for near, _ in legs.values()), 0, 1)
+    scale = leg_total / (sum(near for near, _ in legs.values()) + 1e-12)
+    weights = {name: w * (1 - leg_total) for name, w in weights.items()}
+    for near, shares in legs.values():
+        for name, w in shares.items():
+            weights[name] = near * scale * w
     # The head moves as one: everything above the neck and in front of it, blended over a short band.
     head = smooth01((z - 0.6) / 0.08) * smooth01((-0.11 - y) / 0.06)
     head = np.maximum(head, smooth01((-0.3 - y) / 0.03) * (z > 0.55))
-    raw = {}
-    for name, mask in allowed.items():
-        head_, tail_, _, _ = BONES[name]
-        d = segment_distance(points, head_, tail_)
-        raw[name] = np.where(mask, 1 / (d * d + 1e-4) ** 2, 0)
-    total = sum(raw.values()) + 1e-12
-    weights = {name: w / total * (1 - head) for name, w in raw.items()}
+    weights = {name: w * (1 - head) for name, w in weights.items()}
     weights['head'] = head
     # Keep the four strongest per vertex.
     names = list(weights)
@@ -304,10 +338,11 @@ def length(name):
     return (Vector(BONES[name][1]) - Vector(BONES[name][0])).length
 
 
-def posed(rig, pitch=0.0, pivot=(0, -0.2, 0.40), drop=0.0, bend=None, hind_paw=None, hock_flat=False):
+def posed(rig, pitch=0.0, pivot=(0, -0.2, 0.40), drop=0.0, bend=None, hind_paw=None, hock_flat=False, splay=0.0, knee_out=0.0):
     """A still pose: the body turned by `pitch` about X round `pivot` and lowered by `drop`, the bones in `bend`
     (name -> radians about X) turned with what hangs from them, and the legs reaching their paws by IK: the front
-    paws stay where they stand, the hind ones go to `hind_paw` (y), their hocks lying flat when `hock_flat`."""
+    paws stay where they stand, the hind ones go to `hind_paw` (y) and `splay` (m) further out, their hocks lying flat
+    when `hock_flat`, the knees turned out by `knee_out` (so a folded thigh lies beside the belly, not into it)."""
     rest_m = rest(rig)
     body = Matrix.Translation((0, 0, -drop)) @ Matrix.Translation(pivot) @ Matrix.Rotation(pitch, 4, 'X') @ Matrix.Translation(-Vector(pivot))
     pose = {}
@@ -330,9 +365,9 @@ def posed(rig, pitch=0.0, pivot=(0, -0.2, 0.40), drop=0.0, bend=None, hind_paw=N
         hip = pose[thigh].translation.copy()
         ankle = Vector(BONES[hpaw][0])
         if hind_paw is not None:
-            ankle = Vector((ankle.x, hind_paw, ankle.z))
+            ankle = Vector((ankle.x + s * splay, hind_paw, ankle.z))
         heel = ankle + (Vector((0, length(hock) * 0.97, 0.03)) if hock_flat else Vector((0, 0.005, length(hock))))
-        knee, heel = two_bone(hip, heel, length(thigh), length(shin), Vector((0, -1, 0.3)))
+        knee, heel = two_bone(hip, heel, length(thigh), length(shin), Vector((s * knee_out, -1, 0.3)))
         pose[thigh] = aimed(rest_m, thigh, hip, knee)
         pose[shin] = aimed(rest_m, shin, knee, heel)
         pose[hock] = aimed(rest_m, hock, heel, ankle)
@@ -343,7 +378,9 @@ def posed(rig, pitch=0.0, pivot=(0, -0.2, 0.40), drop=0.0, bend=None, hind_paw=N
     return pose
 
 
-SIT = {'pitch': -0.66, 'drop': 0.035, 'hind_paw': 0.12, 'hock_flat': True,
+# Sitting pitches the body about a point low in the chest, by the elbows, so the brisket rises in front of the legs
+# instead of swinging forward through them (pitched about the shoulders the skin tore between the front legs).
+SIT = {'pitch': -0.66, 'pivot': (0, -0.2, 0.28), 'drop': 0.0, 'hind_paw': 0.12, 'hock_flat': True,
        'bend': {'neck1': 0.34, 'head': 0.24}}
 PICKUP = {'pitch': 0.2, 'pivot': (0, 0.2, 0.43), 'drop': 0.09, 'bend': {'neck1': 0.62, 'neck2': 0.3, 'head': 0.2}}
 

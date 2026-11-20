@@ -3,7 +3,9 @@ import type { Point2 } from './collisions.ts';
 /**
  * Canela's behaviour, pure: she follows the character (to a spot behind and beside them, sitting down by herself when
  * they stand still a while), stays sitting where she was told to, runs after a thrown baseball, picks it up, brings it
- * back and puts it down at the character's feet. The viewer moves her body with collisions (`move`), plays the clip
+ * back and puts it down at the character's feet. While the character sits somewhere she goes to a resting place the
+ * viewer gives (`DogRest`): a spot on the floor beside the seat, or up on the bed beside them, jumped onto from the
+ * floor and jumped down from when they get up. The viewer moves her body with collisions (`move`), plays the clip
  * `dogClip` names and swings her ears and tail.
  */
 
@@ -53,6 +55,10 @@ export const DOG = {
   dropAt: 0.8,
   /** Appearing, the jump clip starts here (s): she comes down out of the air and sits. */
   appear: 0.55,
+  /** Jumping up onto (or down from) a raised resting place: the jump clip played this much faster, and the extra
+   * arc (m) over the straight line between the two heights. */
+  hopRate: 1.15,
+  hopArc: 0.25,
 } as const;
 
 /** How far a ball is from her mouth, on the ground (m). */
@@ -60,7 +66,12 @@ function mouthTo(dog: DogState, ball: DogBall): number {
   return Math.hypot(ball.x - (dog.x + Math.sin(dog.yaw) * DOG.mouth), ball.z - (dog.z + Math.cos(dog.yaw) * DOG.mouth));
 }
 
-export type DogMode = 'appearing' | 'following' | 'staying' | 'fetching' | 'picking' | 'returning' | 'dropping';
+export type DogMode = 'appearing' | 'following' | 'staying' | 'fetching' | 'picking' | 'returning' | 'dropping'
+  | 'climbing' | 'perched' | 'leaping';
+
+/** Where she rests while the character sits: `at`, `height` over the ground (the bed's top) facing `yaw`; a raised
+ * place is jumped onto from `from` on the floor. */
+export type DogRest = { at: Point2; height: number; yaw: number; from: Point2 };
 
 export type DogState = {
   x: number;
@@ -78,12 +89,23 @@ export type DogState = {
   timer: number;
   stuck: number;
   carrying: boolean;
+  /** Height over the ground (m): up on a raised resting place, or on the way up or down. */
+  lift: number;
+  /** The jump on or off a raised place: from where to where, the heights, and what she does after jumping down. */
+  hop?: { from: Point2; to: Point2; fromHeight: number; toHeight: number; yaw: number; then: DogMode };
 };
 
 /** The ball she is after, where it is (y over the ground) and how fast it goes. */
 export type DogBall = { x: number; y: number; z: number; speed: number };
 
-export type DogInput = { character: { x: number; z: number; yaw: number }; ball: DogBall | null; delta: number };
+export type DogInput = {
+  character: { x: number; z: number; yaw: number }; ball: DogBall | null; delta: number;
+  /** While the character sits: where she rests (none when they stand). */
+  rest?: DogRest;
+  /** Her spot beside the character where she can really stand (the viewer slides `followSpot` out of furniture and
+   * walls); `followSpot` when not given. */
+  spot?: Point2;
+};
 
 /** What happened this step: she took the ball in her mouth, put it down, lost it, or jumped back beside the character. */
 export type DogEvent = 'grab' | 'drop' | 'lost' | 'teleport' | 'landed';
@@ -91,7 +113,7 @@ export type DogEvent = 'grab' | 'drop' | 'lost' | 'teleport' | 'landed';
 export function dogAt(position: Point2, yaw: number, mode: DogMode = 'following'): DogState {
   return {
     x: position.x, z: position.z, yaw, speed: 0, mode, stay: false, sitting: mode !== 'appearing', still: DOG.restSit,
-    timer: 0, stuck: 0, carrying: false,
+    timer: 0, stuck: 0, carrying: false, lift: 0,
   };
 }
 
@@ -116,14 +138,21 @@ export function toggleStay(dog: DogState): void {
 /** A ball was thrown: she goes after it whatever she was doing (except coming down from a jump). */
 export function fetchBall(dog: DogState): void {
   if (dog.mode === 'appearing' || dog.mode === 'picking' || dog.mode === 'dropping' || dog.carrying) return;
+  // Up on the bed she jumps down first, then runs after it; on the way up or down she finishes the jump.
+  if (dog.mode === 'perched') return leapDown(dog, 'fetching');
+  if (dog.mode === 'climbing' || dog.mode === 'leaping') {
+    if (dog.hop) dog.hop.then = 'fetching';
+    return;
+  }
   dog.mode = 'fetching';
   dog.sitting = false;
   dog.timer = 0;
   dog.stuck = 0;
 }
 
-/** Put her somewhere at once (beside the character), coming down from a little jump. */
-export function placeDog(dog: DogState, at: Point2, yaw: number, appear = true): void {
+/** Put her somewhere at once (beside the character), coming down from a little jump; given a raised resting place
+ * (`perch`, the bed while the character sits on it) she comes down onto it and sits there. */
+export function placeDog(dog: DogState, at: Point2, yaw: number, appear = true, perch?: DogRest): void {
   dog.x = at.x;
   dog.z = at.z;
   dog.yaw = yaw;
@@ -131,7 +160,13 @@ export function placeDog(dog: DogState, at: Point2, yaw: number, appear = true):
   dog.stuck = 0;
   dog.timer = 0;
   dog.carrying = false;
-  dog.mode = appear ? 'appearing' : dog.stay ? 'staying' : 'following';
+  dog.lift = 0;
+  dog.hop = undefined;
+  if (perch && perch.height > 0) {
+    dog.lift = perch.height;
+    dog.hop = { from: perch.from, to: perch.at, fromHeight: 0, toHeight: perch.height, yaw: perch.yaw, then: 'following' };
+  }
+  dog.mode = appear ? 'appearing' : dog.hop ? 'perched' : dog.stay ? 'staying' : 'following';
   dog.sitting = !appear;
   dog.still = DOG.restSit;
 }
@@ -144,6 +179,37 @@ function idleMode(dog: DogState): DogMode {
   return dog.stay ? 'staying' : 'following';
 }
 
+/** How long a jump on or off a raised place takes (s), and when she leaves and touches the ground in it. */
+const HOP = {
+  duration: DOG_CLIPS.jump.duration / DOG.hopRate,
+  takeoff: DOG_CLIPS.jump.takeoff / DOG.hopRate,
+  landing: DOG_CLIPS.jump.landing / DOG.hopRate,
+};
+
+function leapDown(dog: DogState, then: DogMode): void {
+  const hop = dog.hop;
+  if (!hop) return;
+  dog.hop = { from: hop.to, to: hop.from, fromHeight: hop.toHeight, toHeight: hop.fromHeight, yaw: hop.yaw + Math.PI, then };
+  dog.mode = 'leaping';
+  dog.timer = 0;
+  dog.sitting = false;
+  dog.speed = 0;
+}
+
+/** Along a jump: still before take-off, an arc between the two places in the air, there after landing. */
+function hopStep(dog: DogState): boolean {
+  const hop = dog.hop!;
+  const f = Math.min(1, Math.max(0, (dog.timer - HOP.takeoff) / (HOP.landing - HOP.takeoff)));
+  const ease = f * f * (3 - 2 * f);
+  dog.x = hop.from.x + (hop.to.x - hop.from.x) * ease;
+  dog.z = hop.from.z + (hop.to.z - hop.from.z) * ease;
+  // Up, she rises early to clear the edge; down, she keeps her height a while and drops.
+  const rise = hop.toHeight > hop.fromHeight ? 1 - (1 - f) * (1 - f) : f * f;
+  dog.lift = hop.fromHeight + (hop.toHeight - hop.fromHeight) * rise + DOG.hopArc * 4 * f * (1 - f);
+  dog.yaw += angleTo(dog.yaw, f < 1 ? Math.atan2(hop.to.x - hop.from.x, hop.to.z - hop.from.z) : hop.yaw) * 0.25;
+  return dog.timer >= HOP.duration;
+}
+
 /**
  * One step. `move` slides her from where she is by a step, with collisions, and returns where she ends up.
  */
@@ -153,9 +219,38 @@ export function dogStep(dog: DogState, input: DogInput, move: (from: Point2, ste
   const { character, ball } = input;
   dog.timer += dt;
 
+  if (dog.mode === 'climbing') {
+    if (hopStep(dog)) {
+      dog.mode = 'perched';
+      dog.sitting = true;
+      dog.timer = 0;
+      dog.yaw = dog.hop!.yaw;
+      events.push('landed');
+    }
+    return events;
+  }
+  if (dog.mode === 'leaping') {
+    if (hopStep(dog)) {
+      const then = dog.hop!.then;
+      dog.lift = 0;
+      dog.hop = undefined;
+      dog.mode = then === 'fetching' && input.ball ? 'fetching' : idleMode(dog);
+      dog.sitting = false;
+      dog.still = 0;
+      dog.timer = 0;
+    }
+    return events;
+  }
+  if (dog.mode === 'perched') {
+    // Up there beside the character until they get up (or she is told to stay put, where she is).
+    const rest = input.rest;
+    if (!rest || rest.height <= 0 || Math.hypot(rest.at.x - dog.x, rest.at.z - dog.z) > 0.3) leapDown(dog, idleMode(dog));
+    return events;
+  }
+
   if (dog.mode === 'appearing') {
     if (dog.timer >= DOG_CLIPS.jump.duration - DOG.appear) {
-      dog.mode = idleMode(dog);
+      dog.mode = dog.hop ? 'perched' : idleMode(dog);
       dog.sitting = true;
       dog.still = DOG.restSit;
       dog.timer = 0;
@@ -164,9 +259,10 @@ export function dogStep(dog: DogState, input: DogInput, move: (from: Point2, ste
     return events;
   }
 
+  const rest = input.rest;
   const far = Math.hypot(character.x - dog.x, character.z - dog.z) > DOG.teleport;
   if ((far && dog.mode !== 'staying') || dog.stuck > DOG.stuck) {
-    const spot = followSpot(character);
+    const spot = input.spot ?? followSpot(character);
     const lost = dog.carrying || dog.mode === 'fetching' || dog.mode === 'picking';
     placeDog(dog, spot, character.yaw);
     if (lost) events.push('lost');
@@ -180,14 +276,27 @@ export function dogStep(dog: DogState, input: DogInput, move: (from: Point2, ste
   let face: number | undefined;
   switch (dog.mode) {
     case 'following': {
-      const spot = followSpot(character);
+      // The character sitting: to the resting place (to the foot of it, for a raised one), else beside them.
+      const raised = rest && rest.height > 0;
+      const spot = rest ? (raised ? rest.from : rest.at) : input.spot ?? followSpot(character);
       const d = Math.hypot(spot.x - dog.x, spot.z - dog.z);
       const moving = dog.speed > 0.05;
-      if (d > (moving ? DOG.settle : dog.sitting ? DOG.rise : DOG.start)) {
+      if (raised && d < DOG.settle + 0.1) {
+        // At the foot of it, facing it: up she jumps.
+        dog.hop = { from: { x: dog.x, z: dog.z }, to: rest.at, fromHeight: 0, toHeight: rest.height, yaw: rest.yaw, then: 'following' };
+        dog.mode = 'climbing';
+        dog.timer = 0;
+        dog.speed = 0;
+        dog.sitting = false;
+        break;
+      }
+      if (d > (moving || rest ? DOG.settle : dog.sitting ? DOG.rise : DOG.start)) {
         target = spot;
         want = Math.min(DOG.run, Math.max(0.9, (d - DOG.settle) * 2.2));
       }
-      face = Math.atan2(character.x - dog.x, character.z - dog.z);
+      face = rest && !raised ? rest.yaw : Math.atan2(character.x - dog.x, character.z - dog.z);
+      // Come to rest beside a sitting character, she sits down soon instead of standing there.
+      if (rest && !target) dog.still = Math.max(dog.still, DOG.restSit - 0.6);
       break;
     }
     case 'staying':
@@ -304,6 +413,8 @@ export function dogStep(dog: DogState, input: DogInput, move: (from: Point2, ste
 /** The clip she plays now and how fast it runs, so her paws keep pace with the ground. */
 export function dogClip(dog: DogState): { clip: DogClip; rate: number } {
   if (dog.mode === 'appearing') return { clip: 'jump', rate: 1 };
+  if (dog.mode === 'climbing' || dog.mode === 'leaping') return { clip: 'jump', rate: DOG.hopRate };
+  if (dog.mode === 'perched') return { clip: 'sit', rate: 1 };
   if (dog.mode === 'picking' || dog.mode === 'dropping') return { clip: 'pickup', rate: 1 };
   if (dog.speed < 0.05) return { clip: dog.sitting ? 'sit' : 'idle', rate: 1 };
   if (dog.speed <= DOG.walk) return { clip: 'walk', rate: Math.min(2.2, Math.max(0.5, dog.speed / DOG_CLIPS.walk.speed)) };
@@ -314,6 +425,7 @@ export function dogClip(dog: DogState): { clip: DogClip; rate: number } {
 export function dogExcitement(dog: DogState): number {
   if (dog.mode === 'fetching' || dog.mode === 'returning' || dog.carrying) return 1;
   if (dog.mode === 'picking' || dog.mode === 'dropping' || dog.mode === 'appearing') return 0.8;
+  if (dog.mode === 'climbing' || dog.mode === 'leaping') return 0.7;
   if (dog.speed > 0.05) return 0.55;
   return dog.sitting ? 0.2 : 0.35;
 }

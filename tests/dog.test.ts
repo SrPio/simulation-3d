@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { DOG, DOG_CLIPS, dogAt, dogClip, dogStep, fetchBall, followSpot, placeDog, toggleStay, type DogBall, type DogEvent, type DogState } from '../src/world/dogFollow.ts';
+import { DOG, DOG_CLIPS, dogAt, dogClip, dogStep, fetchBall, followSpot, placeDog, toggleStay, type DogBall, type DogEvent, type DogRest, type DogState } from '../src/world/dogFollow.ts';
 import { sweep, type Box2, type Point2 } from '../src/world/collisions.ts';
 import { DOG_KEY, readDog, saveDog } from '../src/core/dog.ts';
 import { DOG_STICK, dogStick } from '../src/input/GamepadInput.ts';
@@ -110,6 +110,74 @@ test('a ball still rolling: she trots along beside it and bends down only once i
   dogStep(dog, { character: { x: 0, z: -4, yaw: 0 }, ball, delta: 1 / 60 }, open);
   assert.equal(dog.mode, 'fetching');
   assert.ok(!dog.carrying);
+});
+
+test('the character sits on the bed: she jumps up beside them, sits, and jumps down when they get up', () => {
+  const dog = dogAt({ x: 2, z: 0 }, 0);
+  const character = { x: 0, z: -1.5, yaw: 0 };
+  const rest: DogRest = { at: { x: 0.75, z: -2.25 }, height: 0.63, yaw: 0, from: { x: 0.75, z: -1.3 } };
+  const step = (seconds: number, seated: boolean) => {
+    const events: DogEvent[] = [];
+    for (let t = 0; t < seconds; t += 1 / 60) events.push(...dogStep(dog, { character, ball: null, delta: 1 / 60, rest: seated ? rest : undefined }, open));
+    return events;
+  };
+  let heights: number[] = [];
+  for (let t = 0; t < 6 && dog.mode !== 'perched'; t += 1 / 60) {
+    dogStep(dog, { character, ball: null, delta: 1 / 60, rest }, open);
+    heights.push(dog.lift);
+  }
+  assert.equal(dog.mode, 'perched', 'up on the bed');
+  assert.ok(Math.hypot(dog.x - rest.at.x, dog.z - rest.at.z) < 1e-6 && Math.abs(dog.lift - rest.height) < 1e-6);
+  assert.ok(Math.max(...heights) > rest.height + 0.1, 'she jumps up over the edge');
+  assert.equal(dogClip(dog).clip, 'sit');
+  step(3, true);
+  assert.equal(dog.mode, 'perched', 'she stays up while they sit');
+  // They get up: she jumps down to the floor in front of the bed and follows again.
+  heights = [];
+  for (let t = 0; t < 3 && dog.mode !== 'following'; t += 1 / 60) {
+    dogStep(dog, { character, ball: null, delta: 1 / 60 }, open);
+    heights.push(dog.lift);
+  }
+  assert.equal(dog.mode, 'following');
+  assert.equal(dog.lift, 0);
+  assert.ok(Math.hypot(dog.x - rest.from.x, dog.z - rest.from.z) < DOG.settle + 0.15, 'down where she jumped up from');
+  // A ball thrown while she is up there: she jumps down first, then runs after it.
+  step(4, true);
+  assert.equal(dog.mode, 'perched');
+  fetchBall(dog);
+  assert.equal(dog.mode, 'leaping');
+  const ball: DogBall = { x: 3, y: 0, z: 2, speed: 0 };
+  for (let t = 0; t < 2 && dog.mode === 'leaping'; t += 1 / 60) dogStep(dog, { character, ball, delta: 1 / 60, rest }, open);
+  assert.equal(dog.mode, 'fetching');
+});
+
+test('invited while the character sits on the bed, she comes down right onto it beside them and sits', () => {
+  const dog = dogAt({ x: 0, z: 0 }, 0, 'appearing');
+  const rest: DogRest = { at: { x: 0.75, z: -2.25 }, height: 0.63, yaw: 0, from: { x: 0.75, z: -1.3 } };
+  placeDog(dog, rest.at, rest.yaw, true, rest);
+  assert.equal(dog.mode, 'appearing');
+  assert.equal(dog.lift, rest.height, 'up at the height of the bed');
+  // The character still sits there: she lands on the bed and stays.
+  const events: DogEvent[] = [];
+  for (let t = 0; t < DOG_CLIPS.jump.duration + 1; t += 1 / 60) {
+    events.push(...dogStep(dog, { character: { x: 0, z: -1.5, yaw: 0 }, ball: null, delta: 1 / 60, rest }, open));
+  }
+  assert.ok(events.includes('landed'));
+  assert.equal(dog.mode, 'perched');
+  assert.equal(dogClip(dog).clip, 'sit');
+  // The character gets up: she jumps down to the floor in front of the bed.
+  for (let t = 0; t < 3 && dog.mode !== 'following'; t += 1 / 60) dogStep(dog, { character: { x: 0, z: -1, yaw: 0 }, ball: null, delta: 1 / 60 }, open);
+  assert.equal(dog.mode, 'following');
+  assert.ok(Math.hypot(dog.x - rest.from.x, dog.z - rest.from.z) < 1e-6 && dog.lift === 0);
+});
+
+test('beside any other seat she goes to her spot on the floor and sits there', () => {
+  const dog = dogAt({ x: 4, z: 4 }, 0);
+  const rest: DogRest = { at: { x: 1, z: 1 }, height: 0, yaw: 1, from: { x: 1, z: 1 } };
+  for (let t = 0; t < 6; t += 1 / 60) dogStep(dog, { character: { x: 0, z: 0, yaw: 0 }, ball: null, delta: 1 / 60, rest }, open);
+  assert.ok(Math.hypot(dog.x - 1, dog.z - 1) < DOG.settle + 0.05);
+  assert.ok(dog.sitting);
+  assert.equal(dog.lift, 0);
 });
 
 test('far away or stuck against a wall she jumps back beside the character', () => {
