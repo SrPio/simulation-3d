@@ -12,15 +12,18 @@ import type { BlobShadows } from './BlobShadows.ts';
  */
 
 /**
- * The ears are soft flaps: each is a chain of three bones whose joints are pulled towards where they hang from the head
- * by springs, softer down the flap (`stiffness`, 1/s², from the first joint below the root to the tip), damped
- * (`damping`, 1/s) and kept at their lengths, so the flap lags, bends and folds instead of swinging as one stiff piece.
- * They stay on the head: a joint moves out from the cheek at most `out` (m) and never into it (`into`), nor rises more
- * than `rise` (m) above the root. Running streams them back and up (`lift`, m at the tip at `liftSpeed` m/s) and
- * bounces them with the stride (`flap`, m at the tip).
+ * The ears are soft flaps: each is a chain of three bones, and each joint below the root hangs off where it rests on the
+ * head by a damped spring (`stiffness`, 1/s², softer towards the tip; `damping`, 1/s), the bones kept at their
+ * lengths, so the flap lags, bends and folds instead of swinging as one stiff piece. What moves them is physics, not a
+ * set wave: the head's jolts throw the joints the other way (`inertia`, the share of the head's acceleration a joint
+ * feels, the jolts capped at `jolt` m/s²), and the air pushes against each joint's speed through it (`drag`, 1/s,
+ * more towards the tip), so running streams the flaps back and every stride shakes them a little. At speed the air
+ * also flutters them (`flutter`, m/s² at the tip at `liftSpeed` m/s). They stay on the head: a joint moves out from
+ * the cheek at most `out` (m) and never into it (`into`), nor rises more than `rise` (m) above the root.
  */
 export const EAR = {
-  stiffness: [150, 70, 38], damping: 7, out: 0.035, into: 0.004, rise: 0.02, lift: 0.11, liftSpeed: 5, flap: 0.025,
+  stiffness: [240, 160, 110], damping: 6, inertia: 0.7, jolt: 45, drag: [0.8, 1.6, 2.6], flutter: 1.8, liftSpeed: 5,
+  out: 0.05, into: 0.004, rise: 0.03,
 } as const;
 /** The tail: wag (radians either side, beats per second) from calm to excited, and how far it lies back when she sits. */
 export const TAIL = { wag: [0.12, 0.55], rate: [1.6, 6.5], sitDroop: -0.55, sitWag: 0.12, ease: 5 } as const;
@@ -31,7 +34,7 @@ const FADE = { normal: 0.22, sit: 0.45 } as const;
  * the joints' rest places in the head's frame (root first, tip last) and the moving joints in the world. */
 type Ear = {
   bones: Bone[]; rest: Quaternion[]; along: Vector3[]; lengths: number[]; hang: Vector3[]; outward: number;
-  joints: Vector3[]; velocity: Vector3[]; ready: boolean;
+  joints: Vector3[]; offsets: Vector3[]; velocity: Vector3[]; targets: Vector3[]; pace: Vector3[]; ready: boolean;
 };
 
 export class DogView {
@@ -44,6 +47,7 @@ export class DogView {
   private readonly tail: { bone: Bone; rest: Quaternion; up: Vector3; side: Vector3 }[] = [];
   private droop = 0;
   private wagPhase = 0;
+  /** Seconds of ear time, for the wind's flutter. */
   private flapPhase = 0;
   private excitement = 0;
   private lastX = 0;
@@ -90,7 +94,8 @@ export class DogView {
       this.ears.push({
         bones: chain, rest: chain.map((bone) => bone.quaternion.clone()), along,
         lengths: chain.map((_, i) => places[i].distanceTo(places[i + 1])), hang, outward: Math.sign(hang[0].x) || 1,
-        joints: places, velocity: places.map(() => new Vector3()), ready: false,
+        joints: places, offsets: places.map(() => new Vector3()), velocity: places.map(() => new Vector3()),
+        targets: places.map((place) => place.clone()), pace: places.map(() => new Vector3()), ready: false,
       });
     }
     // Tail: its bones, and the dog's up and sideways axes in the frame of what each one hangs from.
@@ -183,17 +188,20 @@ export class DogView {
     const steps = Math.max(1, Math.min(8, Math.ceil(delta / (1 / 120))));
     const dt = Math.min(delta, 0.1) / steps;
     const run = Math.min(1, speed / EAR.liftSpeed);
-    // In the head's frame +Z is forwards: running streams the flaps back and up, and the stride bounces them.
-    this.flapPhase = (this.flapPhase + delta * (2 + speed * 1.1) * Math.PI * 2) % (Math.PI * 2);
-    const stream = EAR.lift * run;
-    const bounce = EAR.flap * run * Math.sin(this.flapPhase);
+    this.flapPhase += delta;
+    const time = this.flapPhase;
     const local = new Vector3();
     const world = new Quaternion();
     const restWorld = new Quaternion();
     const swing = new Quaternion();
     const rest = new Vector3();
     const now = new Vector3();
-    for (const ear of this.ears) {
+    const up = new Vector3();
+    const pace = new Vector3();
+    const jolt = new Vector3();
+    const force = new Vector3();
+    const before = new Vector3();
+    for (const [side, ear] of this.ears.entries()) {
       for (const [i, bone] of ear.bones.entries()) bone.quaternion.copy(ear.rest[i]);
       ear.bones[0].updateMatrixWorld(true);
       if (reducedMotion) {
@@ -201,37 +209,50 @@ export class DogView {
         continue;
       }
       const last = ear.hang.length - 1;
-      const targets = ear.hang.map((place, i) => {
-        local.copy(place);
-        local.z -= stream * (i / last);
-        local.y += (stream * 0.45 + bounce) * (i / last);
-        return head.localToWorld(local.clone());
-      });
+      // Where the joints rest on the head now.
+      const targets = ear.hang.map((place) => head.localToWorld(place.clone()));
       if (!ear.ready) {
-        for (const [i, joint] of ear.joints.entries()) joint.copy(targets[i]);
-        for (const velocity of ear.velocity) velocity.set(0, 0, 0);
+        for (const [i, from] of ear.targets.entries()) from.copy(targets[i]);
+        for (const vector of [...ear.offsets, ...ear.velocity, ...ear.pace]) vector.set(0, 0, 0);
         ear.ready = true;
       }
-      const top = ear.hang[0].y + EAR.rise;
-      for (let step = 0; step < steps; step++) {
-        ear.joints[0].copy(targets[0]);
-        for (let i = 1; i <= last; i++) {
-          const pull = targets[i].clone().sub(ear.joints[i]).multiplyScalar(EAR.stiffness[i - 1])
-            .addScaledVector(ear.velocity[i], -EAR.damping);
-          ear.velocity[i].addScaledVector(pull, dt);
-          ear.joints[i].addScaledVector(ear.velocity[i], dt);
-        }
-        for (let i = 1; i <= last; i++) {
-          // Each bone keeps its length from the joint above, and the flap stays against the head.
-          const arm = ear.joints[i].clone().sub(ear.joints[i - 1]).normalize();
-          ear.joints[i].copy(ear.joints[i - 1]).addScaledVector(arm, ear.lengths[i - 1]);
-          head.worldToLocal(local.copy(ear.joints[i]));
-          const off = (local.x - ear.hang[i].x) * ear.outward;
-          local.x = ear.hang[i].x + ear.outward * Math.min(EAR.out, Math.max(-EAR.into, off));
-          local.y = Math.min(local.y, top);
-          ear.joints[i].copy(head.localToWorld(local));
+      up.set(0, 1, 0).transformDirection(head.matrixWorld);
+      const frame = Math.max(delta, 1e-4);
+      for (let i = 1; i <= last; i++) {
+        // How fast the place it rests on moves, and how hard it was jolted since the last frame.
+        pace.subVectors(targets[i], ear.targets[i]).divideScalar(frame);
+        jolt.subVectors(pace, ear.pace[i]).divideScalar(frame).clampLength(0, EAR.jolt);
+        ear.pace[i].copy(pace);
+        const offset = ear.offsets[i];
+        const velocity = ear.velocity[i];
+        const gust = Math.sin(time * 17 + side * 2.1 + i) * 0.6 + Math.sin(time * 29 + side * 4.3 + i * 2) * 0.4;
+        for (let step = 0; step < steps; step++) {
+          // Spring and damping hold it on its place; the jolt throws it back, the air pushes against its speed.
+          force.copy(offset).multiplyScalar(-EAR.stiffness[i - 1]).addScaledVector(velocity, -EAR.damping)
+            .addScaledVector(jolt, -EAR.inertia)
+            .addScaledVector(pace, -EAR.drag[i - 1]).addScaledVector(velocity, -EAR.drag[i - 1])
+            .addScaledVector(up, EAR.flutter * run * run * gust * (i / last));
+          velocity.addScaledVector(force, dt);
+          offset.addScaledVector(velocity, dt);
         }
       }
+      // Each bone keeps its length from the joint above, and the flap stays against the head; what that takes away
+      // from a joint's swing is taken from its speed too.
+      ear.joints[0].copy(targets[0]);
+      for (let i = 1; i <= last; i++) {
+        before.addVectors(targets[i], ear.offsets[i]);
+        const joint = ear.joints[i];
+        const arm = before.clone().sub(ear.joints[i - 1]).normalize();
+        joint.copy(ear.joints[i - 1]).addScaledVector(arm, ear.lengths[i - 1]);
+        head.worldToLocal(local.copy(joint));
+        const off = (local.x - ear.hang[i].x) * ear.outward;
+        local.x = ear.hang[i].x + ear.outward * Math.min(EAR.out, Math.max(-EAR.into, off));
+        joint.copy(head.localToWorld(local));
+        joint.y = Math.min(joint.y, ear.joints[0].y + EAR.rise);
+        ear.velocity[i].addScaledVector(local.subVectors(joint, before), 1 / frame);
+        ear.offsets[i].subVectors(joint, targets[i]);
+      }
+      for (const [i, from] of ear.targets.entries()) from.copy(targets[i]);
       // Turn each bone, root first, from where its next joint lies at rest to where it is now.
       for (const [i, bone] of ear.bones.entries()) {
         bone.parent!.getWorldQuaternion(world);
