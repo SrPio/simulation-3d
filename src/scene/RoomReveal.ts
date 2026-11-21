@@ -4,29 +4,38 @@ import { REVEAL_RADIUS } from '../world/reveal.ts';
 type Uniforms = {
   uRevealCenter: { value: Vector2 };
   uRevealRadius: { value: number };
-  uRevealDepth: { value: number };
+  uRevealPoint: { value: Vector3 };
+  uRevealForward: { value: Vector2 };
   uRevealAmount: { value: number };
 };
 
 const VERTEX_HEAD = /* glsl */ `
-varying float vRevealDepth;
+uniform vec3 uRevealPoint;
+uniform vec2 uRevealForward;
+varying float vRevealAhead;
+varying float vRevealHeight;
 `;
+// Measured in plan, not along the view: the camera looks down, so a wall's foot lies deeper than its top and a depth
+// test kept the feet of the two back walls, a peak where they meet.
 const VERTEX_BODY = /* glsl */ `
-vRevealDepth = -mvPosition.z;
+vec4 revealWorld = modelMatrix * vec4(transformed, 1.0);
+vRevealAhead = dot(revealWorld.xz - uRevealPoint.xz, uRevealForward);
+vRevealHeight = revealWorld.y;
 `;
 const FRAGMENT_HEAD = /* glsl */ `
 uniform vec2 uRevealCenter;
 uniform float uRevealRadius;
-uniform float uRevealDepth;
 uniform float uRevealAmount;
-varying float vRevealDepth;
+varying float vRevealAhead;
+varying float vRevealHeight;
 // Interleaved gradient noise: the window's edge breaks up into a fine screen-door pattern instead of a hard line.
+#define REVEAL_FLOOR 0.03
 float revealDither(vec2 pixel) {
   return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
 }
 `;
 const FRAGMENT_BODY = /* glsl */ `
-if (uRevealAmount > 0.0 && vRevealDepth < uRevealDepth) {
+if (uRevealAmount > 0.0 && vRevealAhead < 0.0 && vRevealHeight > REVEAL_FLOOR) {
   float distanceToCentre = distance(gl_FragCoord.xy, uRevealCenter);
   float radius = uRevealRadius * uRevealAmount;
   // Fully open in the middle, thinning out over the outer third of the circle.
@@ -37,14 +46,15 @@ if (uRevealAmount > 0.0 && vRevealDepth < uRevealDepth) {
 
 /**
  * A see-through window in the room around the character while the room stands between it and the camera: every room
- * material leaves out the fragments in front of the character inside a circle around it on screen, with a dithered
- * edge. Shadows are untouched (the shadow pass has its own materials). One set of uniforms is shared by all of them.
+ * material leaves out the fragments above the floor that are nearer the camera than the character in plan, inside a
+ * circle around it on screen, with a dithered edge. Shadows are untouched (the shadow pass has its own materials). One set of uniforms is shared by all of them.
  */
 export class RoomReveal {
   private readonly uniforms: Uniforms = {
     uRevealCenter: { value: new Vector2() },
     uRevealRadius: { value: 0 },
-    uRevealDepth: { value: 0 },
+    uRevealPoint: { value: new Vector3() },
+    uRevealForward: { value: new Vector2(0, -1) },
     uRevealAmount: { value: 0 },
   };
   private readonly patched = new Set<Material>();
@@ -88,8 +98,15 @@ export class RoomReveal {
     uniforms.uRevealAmount.value = amount;
     if (amount <= 0) return;
     camera.updateMatrixWorld();
-    this.point.copy(chest).applyMatrix4(camera.matrixWorldInverse);
-    uniforms.uRevealDepth.value = -this.point.z;
+    uniforms.uRevealPoint.value.copy(chest);
+    // Horizontal direction away from the camera: along the view for an orthographic camera, from the camera to the
+    // character for a perspective one.
+    const away = this.edge;
+    if ((camera as { isPerspectiveCamera?: boolean }).isPerspectiveCamera) {
+      away.setFromMatrixPosition(camera.matrixWorld).subVectors(chest, away);
+    } else camera.getWorldDirection(away);
+    const length = Math.hypot(away.x, away.z);
+    if (length > 1e-6) uniforms.uRevealForward.value.set(away.x / length, away.z / length);
     this.right.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
     this.edge.copy(chest).addScaledVector(this.right, REVEAL_RADIUS).project(camera);
     this.point.copy(chest).project(camera);
